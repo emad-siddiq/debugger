@@ -1,78 +1,95 @@
-# Visual Studio Code - Open Source ("Code - OSS")
-[![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-[![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
-[![Gitter](https://img.shields.io/badge/chat-on%20gitter-yellow.svg)](https://gitter.im/Microsoft/vscode)
+# Burrow — a Go-first IDE
 
-## The Repository
+A native, Go-first IDE + debugger. A fork of
+[Code - OSS](https://github.com/microsoft/vscode) (upstream README preserved as
+[`README.upstream.md`](README.upstream.md)) stripped to Go development and
+rebuilt around first-class Delve debugging, Go data-structure visualization, an
+integrated HTTP workbench, a database explorer, offline Go docs, and an
+agent-bootstrapped codebase Oracle.
 
-This repository ("`Code - OSS`") is where we (Microsoft) develop the [Visual Studio Code](https://code.visualstudio.com) product together with the community. Not only do we work on code and issues here, but we also publish our [roadmap](https://github.com/microsoft/vscode/wiki/Roadmap), [monthly iteration plans](https://github.com/microsoft/vscode/wiki/Iteration-Plans), and our [endgame plans](https://github.com/microsoft/vscode/wiki/Running-the-Endgame). This source code is available to everyone under the standard [MIT license](https://github.com/microsoft/vscode/blob/main/LICENSE.txt).
+> Replaces the container-based "backend debugger" (code-server) of the
+> `debugger` stack with a host-native app. Lives at `debugger/burrow/` (this dir)
+> as an independent git repo. Full 15-task plan:
+> [`docs/architecture/`](docs/architecture/00-overview.md) (salvaged from the
+> now-deleted `debugger/backend/`).
 
-## Visual Studio Code
+## Status
 
-<p align="center">
-  <img alt="VS Code in action" src="https://github.com/user-attachments/assets/56af271c-949d-454c-a3ea-16188c063414">
-</p>
+**Task 01 — fork bootstrap & branding: done + verified.**
 
-[Visual Studio Code](https://code.visualstudio.com) is a distribution of the `Code - OSS` repository with Microsoft-specific customizations released under a traditional [Microsoft product license](https://code.visualstudio.com/License/).
+- [x] Fork pinned to upstream `1.128.0` (see [`UPSTREAM.md`](UPSTREAM.md))
+- [x] Burrow identity in `product.json`; telemetry/voice endpoints removed
+- [x] Governance: patch ledger, `BUILDING.md`, third-party notices, `Makefile`
+- [x] First built-in extension `extensions/burrow-core` (+ patch `0001`)
+- [x] `npm ci` + build + branded app boots; `burrow-core` activates
 
-[Visual Studio Code](https://code.visualstudio.com) combines the simplicity of a code editor with what developers need for their core edit-build-debug cycle. It provides comprehensive code editing, navigation, and understanding support along with lightweight debugging, a rich extensibility model, and lightweight integration with existing tools.
+**Task 02 — strip to Go-only: bulk done + boot-verified.**
 
-Visual Studio Code is updated monthly with new features and bug fixes. You can download it for Windows, macOS, and Linux on [Visual Studio Code's website](https://code.visualstudio.com/Download). To get the latest releases every day, install the [Insiders build](https://code.visualstudio.com/insiders).
+- [x] `tools/inventory.js` → [`STRIP.md`](STRIP.md) keep/remove ledger (32 keep / 64 remove)
+- [x] 64 built-in extension dirs deleted (99 → 35): non-Go languages, web,
+      notebooks, JS task-runners, accounts/remote, surplus themes, Node debugger
+- [x] Build re-wired to match (patches `0002`); js-debug dropped from `product.json`
+- [x] Leaf contributions stripped — surveys, issue reporter, remote tunnel (patch `0003`)
+- [ ] Non-leaf contributions (marketplace view, sync, remote, notebook core, walkthroughs)
+- [ ] Settings/command/menu pruning · terminal defaults · startup-budget numbers
+- [ ] **Deferred:** full Copilot/chat excision (`defaultChatAgent` is load-bearing here)
 
-## Contributing
+Later tasks (03–14) add the Go toolchain, Delve engine, right-hand debug
+inspector, visualizers, docs viewer, Oracle, HTTP workbench, DB explorer, tests,
+design system, packaging, and the stack cutover.
 
-There are many ways in which you can participate in this project, for example:
+## Layout
 
-* [Submit bugs and feature requests](https://github.com/microsoft/vscode/issues), and help us verify as they are checked in
-* Review [source code changes](https://github.com/microsoft/vscode/pulls)
-* Review the [documentation](https://github.com/microsoft/vscode-docs) and make pull requests for anything from typos to new content.
+| Path | What |
+|------|------|
+| `product.json` | Burrow identity + kill-switches (layer 1: config) |
+| `patches/` | numbered core-source patch ledger (layer 3) |
+| `extensions/burrow-*` | Burrow's built-in extensions (layer 4 — most new code) |
+| `build/burrow/` | Burrow-specific build tooling (e.g. `check-ledger.js`) |
+| `UPSTREAM.md` | the upstream pin + rebase procedure |
+| `BUILDING.md` | how to build (Node pin, `make deps/dev/dist`) |
 
-If you are interested in fixing issues and contributing directly to the code base,
-please see the document [How to Contribute](https://github.com/microsoft/vscode/wiki/How-to-Contribute), which covers the following:
+Everything else is upstream VS Code, changed only through the four layers
+documented in [`UPSTREAM.md`](UPSTREAM.md).
 
-* [How to build and run from source](https://github.com/microsoft/vscode/wiki/How-to-Contribute)
-* [The development workflow, including debugging and running tests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#debugging)
-* [Coding guidelines](https://github.com/microsoft/vscode/wiki/Coding-Guidelines)
-* [Submitting pull requests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests)
-* [Finding an issue to work on](https://github.com/microsoft/vscode/wiki/How-to-Contribute#where-to-contribute)
-* [Contributing to translations](https://aka.ms/vscodeloc)
+## Launch
 
-## Feedback
+Requires Node **24.17.0** (`.nvmrc`). This repo installed it outside Homebrew
+(brew was broken) at `~/.local/burrow-node` — put it on `PATH` first:
 
-* Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/vscode)
-* [Request a new feature](CONTRIBUTING.md)
-* Upvote [popular feature requests](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-* [File an issue](https://github.com/microsoft/vscode/issues)
-* Connect with the extension author community on [GitHub Discussions](https://github.com/microsoft/vscode-discussions/discussions) or [Slack](https://aka.ms/vscode-dev-community)
-* Follow [@code](https://x.com/code) and let us know what you think!
+```sh
+cd ~/Projects/debugger/burrow
+export PATH="$HOME/.local/burrow-node/current/bin:$PATH"   # or: fnm use
+node -v                                                    # must print v24.17.0
 
-See our [wiki](https://github.com/microsoft/vscode/wiki/Feedback-Channels) for a description of each of these channels and information on some other available community-driven channels.
+make deps    # first time only — npm ci (Electron + native modules, slow)
+make dev     # compiles if needed, then launches the branded "Burrow — Go IDE" app
+```
 
-## Related Projects
+`make dev` runs `scripts/code.sh`, which opens the current folder. To open a Go
+project, pass it after the flags — or just `File → Open Folder` once it's up:
 
-Many of the core components and extensions to VS Code live in their own repositories on GitHub. For example, the [node debug adapter](https://github.com/microsoft/vscode-node-debug) and the [mono debug adapter](https://github.com/microsoft/vscode-mono-debug) repositories are separate from each other. For a complete list, please visit the [Related Projects](https://github.com/microsoft/vscode/wiki/Related-Projects) page on our [wiki](https://github.com/microsoft/vscode/wiki).
+```sh
+./scripts/code.sh /path/to/your/go/project
+```
 
-## Bundled Extensions
+**Run it from a normal Terminal, not from inside VS Code.** VS Code's integrated
+terminal exports `ELECTRON_RUN_AS_NODE` + `VSCODE_*`, which make the Electron app
+boot as plain Node and crash (`… does not provide an export named 'Menu'`). If
+you must launch from within VS Code, scrub those first:
 
-VS Code includes a set of built-in extensions located in the [extensions](extensions) folder, including grammars and snippets for many languages. Extensions that provide rich language support (inline suggestions, Go to Definition) for a language have the suffix `language-features`. For example, the `json` extension provides coloring for `JSON` and the `json-language-features` extension provides rich language support for `JSON`.
+```sh
+for v in $(env | grep -oE '^(VSCODE|ELECTRON)[A-Z_]*' | sort -u); do unset "$v"; done
+./scripts/code.sh
+```
 
-## Development Container
+On macOS also keep `--user-data-dir` short (e.g. `/tmp/bw`) — the instance IPC
+socket overflows the 103-char unix-socket limit under deep paths.
 
-This repository includes a Visual Studio Code Dev Containers / GitHub Codespaces development container.
+### Package a standalone .app
 
-* For [Dev Containers](https://aka.ms/vscode-remote/download/containers), use the **Dev Containers: Clone Repository in Container Volume...** command which creates a Docker volume for better disk I/O on macOS and Windows.
-  * If you already have VS Code and Docker installed, you can also click [here](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/microsoft/vscode) to get started. This will cause VS Code to automatically install the Dev Containers extension if needed, clone the source code into a container volume, and spin up a dev container for use.
+```sh
+make dist    # gulp vscode-darwin-<arch> → .build/electron/Burrow — Go IDE.app
+```
 
-* For Codespaces, install the [GitHub Codespaces](https://marketplace.visualstudio.com/items?itemName=GitHub.codespaces) extension in VS Code, and use the **Codespaces: Create New Codespace** command.
-
-Docker / the Codespace should have at least **4 cores and 6 GB of RAM (8 GB recommended)** to run a full build. See the [development container README](.devcontainer/README.md) for more information.
-
-## Code of Conduct
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+See [`BUILDING.md`](BUILDING.md) for the full toolchain notes.

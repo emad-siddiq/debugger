@@ -1,0 +1,45 @@
+{
+	"name": "burrow-core",
+	"displayName": "Burrow Core",
+	"description": "Burrow identity and shared services for the Go IDE. First built-in extension — proves the layer-4 path (see ../../patches/README.md).",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-core",
+		"watch": "gulp watch-extension:burrow-core"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.about",
+				"title": "About Burrow",
+				"category": "Burrow"
+			}
+		],
+		"configurationDefaults": {
+			"terminal.integrated.defaultProfile.osx": "bash",
+			"terminal.integrated.defaultProfile.linux": "bash",
+			"terminal.integrated.inheritEnv": true,
+			"editor.minimap.enabled": false,
+			"workbench.welcomePage.experimentalOnboarding": false,
+			"chat.commandCenter.enabled": false
+		}
+	}
+}
