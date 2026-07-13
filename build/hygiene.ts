@@ -32,8 +32,15 @@ interface VinylFileWithLines extends VinylFile {
  * Returns an error message if mismatched, or undefined if OK.
  */
 export function checkCopilotEnginesVersion(repoRoot: string): string | undefined {
+	// Burrow (task 02 strip): the copilot extension is removed. With no
+	// extensions/copilot/package.json there is nothing to version-check — return
+	// clean rather than throwing on the missing file.
+	const copilotPkgPath = path.join(repoRoot, 'extensions/copilot/package.json');
+	if (!fs.existsSync(copilotPkgPath)) {
+		return undefined;
+	}
 	const rootPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-	const copilotPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'extensions/copilot/package.json'), 'utf8'));
+	const copilotPkg = JSON.parse(fs.readFileSync(copilotPkgPath, 'utf8'));
 	const expected = `^${rootPkg.version}`;
 	const actual = copilotPkg?.engines?.vscode;
 	if (actual !== expected) {
