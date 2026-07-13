@@ -379,8 +379,9 @@ import './contrib/themes/browser/themes.contribution.js';
 import './contrib/update/browser/update.contribution.js';
 
 // Surveys
-import './contrib/surveys/browser/nps.contribution.js';
-import './contrib/surveys/browser/languageSurveys.contribution.js';
+// burrow(strip 02): NPS + language-survey nags removed (patch 0003)
+// import './contrib/surveys/browser/nps.contribution.js';
+// import './contrib/surveys/browser/languageSurveys.contribution.js';
 
 // Welcome
 import './contrib/welcomeGettingStarted/browser/gettingStarted.contribution.js';
@@ -415,7 +416,9 @@ import './contrib/languageStatus/browser/languageStatus.contribution.js';
 import './contrib/authentication/browser/authentication.contribution.js';
 
 // User Data Sync
-import './contrib/userDataSync/browser/userDataSync.contribution.js';
+// burrow(strip 02): Settings Sync UI removed — no configurationSync backend
+// in this OSS base anyway (patch 0003)
+// import './contrib/userDataSync/browser/userDataSync.contribution.js';
 
 // User Data Profiles
 import './contrib/userDataProfile/browser/userDataProfile.contribution.js';

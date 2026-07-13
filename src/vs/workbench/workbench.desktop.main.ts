@@ -129,10 +129,12 @@ import './contrib/extensions/electron-browser/extensions.contribution.js';
 import './contrib/extensions/electron-browser/devtoolsExtensionHost.contribution.js';
 
 // Issues
-import './contrib/issue/electron-browser/issue.contribution.js';
+// burrow(strip 02): issue reporter — not a Go-IDE surface (patch 0003)
+// import './contrib/issue/electron-browser/issue.contribution.js';
 
 // Surveys
-import './contrib/surveys/browser/survey.contribution.js';
+// burrow(strip 02): CES survey nag removed (patch 0003)
+// import './contrib/surveys/browser/survey.contribution.js';
 
 // Process Explorer
 import './contrib/processExplorer/electron-browser/processExplorer.contribution.js';
@@ -147,7 +149,8 @@ import './contrib/terminal/electron-browser/terminal.contribution.js';
 import './contrib/themes/browser/themes.test.contribution.js';
 import './services/themes/electron-browser/themes.contribution.js';
 // User Data Sync
-import './contrib/userDataSync/electron-browser/userDataSync.contribution.js';
+// burrow(strip 02): Settings Sync UI removed (patch 0003)
+// import './contrib/userDataSync/electron-browser/userDataSync.contribution.js';
 
 // Tags
 import './contrib/tags/electron-browser/workspaceTagsService.js';
@@ -180,7 +183,8 @@ import './contrib/mergeEditor/electron-browser/mergeEditor.contribution.js';
 import './contrib/multiDiffEditor/browser/multiDiffEditor.contribution.js';
 
 // Remote Tunnel
-import './contrib/remoteTunnel/electron-browser/remoteTunnel.contribution.js';
+// burrow(strip 02): remote tunnel access (code-server-era) removed (patch 0003)
+// import './contrib/remoteTunnel/electron-browser/remoteTunnel.contribution.js';
 
 // Chat
 import './contrib/chat/electron-browser/chat.contribution.js';
