@@ -46,11 +46,13 @@ Each patch is `NNNN-short-slug.md`:
 | [0001](0001-register-burrow-core-extension.md) | Curate the extension compilation list (burrow-core; strip) | 01, 02 | build/gulpfile.extensions.ts | ~24 lines | active |
 | [0002](0002-strip-unwire-removed-extensions.md) | Unwire removed extensions from the build | 02 | build/lib/extensions.ts, package.json, build/hygiene.ts | ~20 lines | active |
 | [0003](0003-strip-leaf-contributions.md) | Strip leaf workbench contributions (surveys, issue, tunnel, sync) | 02 | workbench.common.main.ts, workbench.desktop.main.ts | 7 imports | active |
+| [0004](0004-rd-debug-aux-bar-default.md) | Run & Debug defaults to the right auxiliary bar (RD) | 05 | debug.contribution.ts, debugService.ts, debugSession.ts | ~6 lines | active |
 
 Task 02 (strip to Go-only) deletes 64 built-in extension dirs (layer 2, no
 ledger entry each) and drops the js-debug `builtInExtensions` from `product.json`
 (layer 1 config). The only core-source touches it needs are the two build-wiring
 patches above — both pure deletions/guards that keep the build pointed only at
 extensions that still exist. The Copilot/chat product-config + `contrib/chat`
-excision is deferred (see 0002 → "Not done here"). The next core patches land in
-task 03 (scheme-bar toolbar host) and task 05 (right-hand debug layout).
+excision is deferred (see 0002 → "Not done here"). Patch 0004 lands the task 05
+RD slice (Run & Debug defaults to the right aux bar); the next core patch is task
+03's scheme-bar toolbar host.
