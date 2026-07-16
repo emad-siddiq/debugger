@@ -43,9 +43,8 @@
 		"configurationDefaults": {
 			"terminal.integrated.defaultProfile.osx": "bash",
 			"terminal.integrated.defaultProfile.linux": "bash",
-			"terminal.integrated.inheritEnv": true,
 			"editor.minimap.enabled": false,
-			"workbench.welcomePage.experimentalOnboarding": false,
+			"workbench.startupEditor": "none",
 			"chat.commandCenter.enabled": false
 		}
 	}
