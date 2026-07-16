@@ -33,6 +33,13 @@
 				"category": "Burrow"
 			}
 		],
+		"keybindings": [
+			{
+				"command": "workbench.action.toggleAuxiliaryBar",
+				"key": "ctrl+alt+d",
+				"mac": "cmd+alt+d"
+			}
+		],
 		"configurationDefaults": {
 			"terminal.integrated.defaultProfile.osx": "bash",
 			"terminal.integrated.defaultProfile.linux": "bash",
