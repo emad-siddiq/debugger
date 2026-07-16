@@ -21,6 +21,10 @@ Adds `'extensions/burrow-core/tsconfig.json'` to the `compilations` array
 (alphabetically first). Every future `extensions/burrow-*` written in TS adds
 one analogous line here — this entry covers the pattern, not just the one file.
 
+**Task 15 extension:** `'extensions/burrow-frontend-debugger/tsconfig.json'`
+(the frontend-debugger editor panel + sidecar host, architecture task 15) is
+added between burrow-core and burrow-go-debug, same rule.
+
 **Task 02 extension:** the same array is the curated source of truth for which
 TS extensions compile, so the strip prunes it in lockstep with deleting dirs —
 the 22 entries for removed extensions (css/html-language-features, emmet, github,

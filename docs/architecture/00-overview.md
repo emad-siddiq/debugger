@@ -74,6 +74,7 @@ the fallback until task 14 cuts over** — no gap in the stack.
 │   db-explorer    schema tree, ERD, pandas-style data grid           (task 10)      │
 │   go-test        test explorer, coverage, bench, fuzz               (task 11)      │
 │   nodewatch      ported Routes/Drills/Trace/mode-toggle integration (task 14)      │
+│   frontend-debugger  visual React tool panel + tools/ sidecar        (task 15)      │
 └────────────────────────────────────────────────────────────────────────────────────┘
         │ localhost:5432 (db)   │ :6060 launcher API   │ :6080/:6200 sibling tools
 ┌───────┴───────────────────────┴──────────────────────┴────────────────────────────┐
@@ -99,6 +100,7 @@ the fallback until task 14 cuts over** — no gap in the stack.
 | [12](12-design-system.md) | Design system | Xcode-calibre theme, layout, typography | 02 | ~2 wk |
 | [13](13-packaging-signing-updates.md) | Packaging & updates | Signed .app, releases, update channel | 01 | ~1 wk |
 | [14](14-stack-migration.md) | Stack migration | `ide` container retired; launcher/digest/extension ported | 04, 09 | ~2 wk |
+| [15](15-frontend-debugger.md) | Frontend debugger | `tools/` sidecar + editor panel; reveal bridge; full-screen | 01 | ~1 wk |
 
 ## Milestones
 

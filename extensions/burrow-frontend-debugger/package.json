@@ -1,0 +1,104 @@
+{
+	"name": "burrow-frontend-debugger",
+	"displayName": "Burrow Frontend Debugger",
+	"description": "Visual React component debugger as an editor panel: embeds the target app via the tools/frontend-debugger sidecar and bridges component/CSS reveals into the editor. See docs/architecture/15-frontend-debugger.md.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-frontend-debugger",
+		"watch": "gulp watch-extension:burrow-frontend-debugger"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.frontendDebugger.open",
+				"title": "Open Frontend Debugger",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.frontendDebugger.toggleMode",
+				"title": "Frontend Debugger: Toggle Mock/Live",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.frontendDebugger.restart",
+				"title": "Frontend Debugger: Restart Sidecar",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.frontendDebugger.stop",
+				"title": "Frontend Debugger: Stop Sidecar",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.frontendDebugger.showLogs",
+				"title": "Frontend Debugger: Show Logs",
+				"category": "Burrow"
+			}
+		],
+		"configuration": {
+			"title": "Frontend Debugger",
+			"properties": {
+				"burrow.frontendDebugger.targetDir": {
+					"type": "string",
+					"default": "",
+					"description": "Absolute path to the target Vite frontend. Empty = auto-detect (<workspace>/nodewatch/frontend if it exists, else the workspace folder)."
+				},
+				"burrow.frontendDebugger.repoRoot": {
+					"type": "string",
+					"default": "",
+					"description": "Target repo root (so @shared resolves). Empty = first workspace folder."
+				},
+				"burrow.frontendDebugger.backendTarget": {
+					"type": "string",
+					"default": "http://localhost:8080",
+					"description": "Live-mode proxy target (the Go backend under debug)."
+				},
+				"burrow.frontendDebugger.mode": {
+					"type": "string",
+					"enum": [
+						"mock",
+						"live"
+					],
+					"default": "mock",
+					"description": "Data mode at sidecar boot. Runtime flips via the status bar are ephemeral."
+				},
+				"burrow.frontendDebugger.uiPort": {
+					"type": "number",
+					"default": 6080,
+					"description": "Debugger UI/API port. Falls back to a free port if taken."
+				},
+				"burrow.frontendDebugger.targetPort": {
+					"type": "number",
+					"default": 5180,
+					"description": "Embedded target dev-server port. Falls back to a free port if taken."
+				},
+				"burrow.frontendDebugger.targetBase": {
+					"type": "string",
+					"default": "/watch/app/",
+					"description": "Base path the target app is served under."
+				},
+				"burrow.frontendDebugger.toolPath": {
+					"type": "string",
+					"default": "",
+					"description": "Override the sidecar location. Empty = <repo>/tools/frontend-debugger."
+				}
+			}
+		}
+	}
+}
