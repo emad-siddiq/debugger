@@ -1,0 +1,170 @@
+{
+	"name": "burrow-go-debug",
+	"displayName": "Burrow Go Debug",
+	"description": "Minimal Go debugging for Burrow via `dlv dap` (Delve). Bridges the workbench debug UI to a host-installed Delve DAP server. IX prerequisite (WO-2); the full engine is architecture task 04.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Debuggers"
+	],
+	"activationEvents": [
+		"onDebugResolve:go",
+		"onDebugDynamicConfigurations:go"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-debug",
+		"watch": "gulp watch-extension:burrow-go-debug"
+	},
+	"contributes": {
+		"breakpoints": [
+			{
+				"language": "go"
+			}
+		],
+		"debuggers": [
+			{
+				"type": "go",
+				"label": "Go (Delve)",
+				"languages": [
+					"go"
+				],
+				"configurationAttributes": {
+					"launch": {
+						"properties": {
+							"program": {
+								"type": "string",
+								"description": "Package folder or built binary to debug.",
+								"default": "${workspaceFolder}"
+							},
+							"mode": {
+								"type": "string",
+								"enum": [
+									"debug",
+									"test",
+									"exec"
+								],
+								"description": "'debug' builds and runs the package, 'test' builds and runs its tests, 'exec' runs a prebuilt binary.",
+								"default": "debug"
+							},
+							"args": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								},
+								"description": "Command-line arguments passed to the debugged program.",
+								"default": []
+							},
+							"env": {
+								"type": "object",
+								"description": "Environment variables for the debugged program.",
+								"default": {}
+							},
+							"cwd": {
+								"type": "string",
+								"description": "Working directory for the debugged program.",
+								"default": "${workspaceFolder}"
+							},
+							"buildFlags": {
+								"type": "string",
+								"description": "Flags passed to the Go compiler (e.g. -race, -tags).",
+								"default": ""
+							},
+							"stopOnEntry": {
+								"type": "boolean",
+								"description": "Pause at program entry instead of running to the first breakpoint.",
+								"default": false
+							},
+							"showLog": {
+								"type": "boolean",
+								"description": "Show Delve's own logging in the debug console.",
+								"default": false
+							}
+						}
+					},
+					"attach": {
+						"required": [
+							"mode"
+						],
+						"properties": {
+							"mode": {
+								"type": "string",
+								"enum": [
+									"local",
+									"remote"
+								],
+								"description": "'local' attaches to a process by pid, 'remote' connects to a headless dlv.",
+								"default": "local"
+							},
+							"processId": {
+								"type": [
+									"number",
+									"string"
+								],
+								"description": "Process id to attach to (local mode).",
+								"default": 0
+							},
+							"host": {
+								"type": "string",
+								"description": "Host of a remote headless dlv (remote mode).",
+								"default": "127.0.0.1"
+							},
+							"port": {
+								"type": "number",
+								"description": "Port of a remote headless dlv (remote mode).",
+								"default": 2345
+							},
+							"stopOnEntry": {
+								"type": "boolean",
+								"default": false
+							}
+						}
+					}
+				},
+				"initialConfigurations": [
+					{
+						"name": "Debug Go program",
+						"type": "go",
+						"request": "launch",
+						"mode": "debug",
+						"program": "${workspaceFolder}"
+					}
+				],
+				"configurationSnippets": [
+					{
+						"label": "Go: Launch package",
+						"description": "Build and debug the Go package in the workspace folder.",
+						"body": {
+							"name": "Debug Go program",
+							"type": "go",
+							"request": "launch",
+							"mode": "debug",
+							"program": "^\"\\${workspaceFolder}\""
+						}
+					},
+					{
+						"label": "Go: Attach to process",
+						"description": "Attach Delve to a running Go process.",
+						"body": {
+							"name": "Attach to Go process",
+							"type": "go",
+							"request": "attach",
+							"mode": "local",
+							"processId": 0
+						}
+					}
+				]
+			}
+		]
+	}
+}

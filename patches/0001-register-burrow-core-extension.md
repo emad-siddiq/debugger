@@ -21,6 +21,10 @@ Adds `'extensions/burrow-core/tsconfig.json'` to the `compilations` array
 (alphabetically first). Every future `extensions/burrow-*` written in TS adds
 one analogous line here — this entry covers the pattern, not just the one file.
 
+**WO-2 extension:** `'extensions/burrow-go-debug/tsconfig.json'` (the `dlv dap`
+adapter, architecture task 04 slice) is added right after burrow-core, following
+this same rule — `burrow-*` entries grouped and alphabetized at the top.
+
 **Task 15 extension:** `'extensions/burrow-frontend-debugger/tsconfig.json'`
 (the frontend-debugger editor panel + sidecar host, architecture task 15) is
 added between burrow-core and burrow-go-debug, same rule.

@@ -58,6 +58,7 @@ function onExtensionCompilationEnd(): void {
 const compilations = [
 	'extensions/burrow-core/tsconfig.json',
 	'extensions/burrow-frontend-debugger/tsconfig.json',
+	'extensions/burrow-go-debug/tsconfig.json',
 	'extensions/configuration-editing/tsconfig.json',
 	'extensions/debug-server-ready/tsconfig.json',
 	'extensions/extension-editing/tsconfig.json',

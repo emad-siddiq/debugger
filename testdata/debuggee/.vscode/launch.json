@@ -1,0 +1,23 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug debuggee (break in add)",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}",
+			"env": {
+				"BURROW_DEBUG_BREAK": "1"
+			}
+		},
+		{
+			"name": "Debug debuggee (stop on entry)",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}",
+			"stopOnEntry": true
+		}
+	]
+}
