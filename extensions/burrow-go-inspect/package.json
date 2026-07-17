@@ -1,0 +1,63 @@
+{
+	"name": "burrow-go-inspect",
+	"displayName": "Burrow Go Inspector",
+	"description": "The Go value inspector for Burrow: a path-addressed DAP value model with type-aware one-line summaries. IX slice WO-3 (architecture task 05.3); the Miller-column UI, value pane, and stock-tree retirement are the later IX WOs.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Debuggers"
+	],
+	"activationEvents": [
+		"onDebug"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-inspect",
+		"watch": "gulp watch-extension:burrow-go-inspect",
+		"test": "node test/summary.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.inspect.refresh",
+				"title": "Refresh Inspector (Preview)",
+				"category": "Burrow",
+				"icon": "$(refresh)"
+			}
+		],
+		"views": {
+			"debug": [
+				{
+					"id": "burrowInspectorPreview",
+					"name": "Inspector (Preview)",
+					"when": "inDebugMode && debugType == go"
+				}
+			]
+		},
+		"menus": {
+			"view/title": [
+				{
+					"command": "burrow.inspect.refresh",
+					"when": "view == burrowInspectorPreview",
+					"group": "navigation"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "burrow.inspect.refresh",
+					"when": "inDebugMode && debugType == go"
+				}
+			]
+		}
+	}
+}

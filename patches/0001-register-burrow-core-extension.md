@@ -25,6 +25,10 @@ one analogous line here — this entry covers the pattern, not just the one file
 adapter, architecture task 04 slice) is added right after burrow-core, following
 this same rule — `burrow-*` entries grouped and alphabetized at the top.
 
+**WO-3 extension:** `'extensions/burrow-go-inspect/tsconfig.json'` (the IX value
+inspector — path-addressed DAP model + summary renderer, architecture task 05.3)
+is added right after burrow-go-debug, same rule.
+
 **Task 15 extension:** `'extensions/burrow-frontend-debugger/tsconfig.json'`
 (the frontend-debugger editor panel + sidecar host, architecture task 15) is
 added between burrow-core and burrow-go-debug, same rule.
