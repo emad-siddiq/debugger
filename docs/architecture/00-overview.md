@@ -66,6 +66,7 @@ the fallback until task 14 cuts over** — no gap in the stack.
 │                                                                                    │
 │  built-in extensions (extensions/burrow-*):                                        │
 │   go-core        toolchain mgmt, scheme bar (build/run/test), gopls, modules       │
+│   go-nav         qualified-symbol (pkg.Symbol) Search-Everywhere    (task 16)      │
 │   go-debug       dlv DAP wiring, breakpoints, goroutines            (task 04)      │
 │   go-inspect     data-structure visualizers over DAP                (task 06)      │
 │   go-docs        offline stdlib + module docs, hover→fullscreen     (task 07)      │
@@ -101,14 +102,16 @@ the fallback until task 14 cuts over** — no gap in the stack.
 | [13](13-packaging-signing-updates.md) | Packaging & updates | Signed .app, releases, update channel | 01 | ~1 wk |
 | [14](14-stack-migration.md) | Stack migration | `ide` container retired; launcher/digest/extension ported | 04, 09 | ~2 wk |
 | [15](15-frontend-debugger.md) | Frontend debugger | `tools/` sidecar + editor panel; reveal bridge; full-screen | 01 | ~1 wk |
+| [16](16-code-navigation.md) | Qualified-symbol navigation | `pkg.Symbol` / `pkg` Search-Everywhere jump to definition | 03 | ~1.5 wk |
 
 ## Milestones
 
 - **M0 — it builds** (01, 02): branded fork, stripped, launches on macOS.
 - **M1 — daily-drivable** (03, 04, 11-core, 13-minimal): edit/build/run/debug/test
   the NodeWatch backend end-to-end on the host. *Parity with code-server setup.*
-- **M2 — the differentiators** (05, 06, 07, 12): right-hand debug inspector,
-  visualizers, docs, design pass. *Better than VS Code for Go.*
+- **M2 — the differentiators** (05, 06, 07, 12, 16): right-hand debug inspector,
+  visualizers, docs, qualified-symbol navigation, design pass. *Better than VS
+  Code for Go.*
 - **M3 — the integrated tools** (09, 10, 11-full): HTTP workbench, DB explorer,
   full test UX. *Replaces Postman + pgweb.*
 - **M4 — the brain & the cutover** (08, 13-full, 14): Oracle, signed releases,
