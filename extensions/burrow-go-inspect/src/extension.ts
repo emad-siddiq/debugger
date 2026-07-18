@@ -16,6 +16,7 @@ import {
 	TreeDataProvider,
 	TreeItem,
 	TreeItemCollapsibleState,
+	TreeView,
 	commands,
 	debug,
 	window,
@@ -23,31 +24,45 @@ import {
 import { DapScope, InspectorModel, InspectorNode, PAGE_SIZE } from './model';
 import { DapVariable, GoKind } from './summary';
 
-// burrow-go-inspect is the first IX slice (WO-3, architecture task 05.3): the
-// path-addressed DAP value model + the per-Go-type summary renderer. This entry
-// point wires them to a read-only "Inspector (preview)" tree in the Run & Debug
-// container so the data layer is provable against a live `dlv dap` session
-// (WO-2). The tree is scaffolding — the Miller-column inspector, value pane, and
-// retirement of the stock Variables tree are the later IX WOs (task 05.4–05.8).
+// burrow-go-inspect — the IX inspector (architecture task 05). WO-3 landed the
+// path-addressed DAP value model + per-Go-type summary renderer; WO-4 turns the
+// presentation from an expanding tree into the **anti-tree**: a breadcrumb + a
+// single flat column where drilling into a composite REPLACES the level instead
+// of indenting it (task 05.4 — "constant visual depth no matter how deep the
+// data; no recursive indentation, ever"). Rendered natively (no core patch, real
+// keyboard). Literal side-by-side Miller columns + the rich value pane are the
+// next IX slices (05.4 columns / 05.5), where the webview-vs-core-view fork bites.
 
 const GO_DEBUG_TYPE = 'go';
 
-/** The tree renders scopes, values, and "load more" pagers over the active model. */
-type TreeNode =
-	| { readonly kind: 'scope'; readonly scope: DapScope }
-	| { readonly kind: 'value'; readonly node: InspectorNode }
-	| { readonly kind: 'page'; readonly parentRef: number; readonly path: readonly string[]; readonly start: number; readonly total: number }
-	| { readonly kind: 'message'; readonly text: string };
+/** One hop in the drill path: a scope or composite value we've descended into. */
+interface DrillTarget {
+	readonly label: string;
+	readonly variablesReference: number;
+	readonly path: readonly string[];
+	readonly indexedVariables?: number;
+}
 
-class InspectorTreeProvider implements TreeDataProvider<TreeNode> {
+/** A rendered row: navigation affordances, scope roots, values, or a status line. */
+type Row =
+	| { readonly kind: 'message'; readonly text: string }
+	| { readonly kind: 'back' }
+	| { readonly kind: 'scope'; readonly scope: DapScope }
+	| { readonly kind: 'value'; readonly node: InspectorNode };
+
+class InspectorNavProvider implements TreeDataProvider<Row> {
 
 	private readonly _onDidChangeTreeData = new EventEmitter<void>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+	/** The drill path from the frame's scopes to the current level (empty = scopes). */
+	private stack: DrillTarget[] = [];
+	private view: TreeView<Row> | undefined;
+
 	constructor(private readonly models: Map<string, InspectorModel>) { }
 
-	refresh(): void {
-		this._onDidChangeTreeData.fire();
+	attach(view: TreeView<Row>): void {
+		this.view = view;
 	}
 
 	private activeModel(): InspectorModel | undefined {
@@ -55,80 +70,112 @@ class InspectorTreeProvider implements TreeDataProvider<TreeNode> {
 		return session ? this.models.get(session.id) : undefined;
 	}
 
-	async getChildren(element?: TreeNode): Promise<TreeNode[]> {
+	private updateBreadcrumb(): void {
+		if (this.view) {
+			this.view.message = this.stack.length ? this.stack.map(t => t.label).join('  ›  ') : undefined;
+		}
+	}
+
+	refresh(): void {
+		this.updateBreadcrumb();
+		this._onDidChangeTreeData.fire();
+	}
+
+	/** New stop or frame change: the old refs/path no longer apply — return to the scopes. */
+	resetToRoot(): void {
+		this.stack = [];
+		this.refresh();
+	}
+
+	drill(target: DrillTarget): void {
+		this.stack.push(target);
+		this.refresh();
+	}
+
+	up(): void {
+		this.stack.pop();
+		this.refresh();
+	}
+
+	home(): void {
+		this.stack = [];
+		this.refresh();
+	}
+
+	async getChildren(element?: Row): Promise<Row[]> {
+		if (element) {
+			return []; // flat by design — drilling replaces the level, never nests.
+		}
 		const model = this.activeModel();
 		if (!model) {
-			return element ? [] : [{ kind: 'message', text: 'No active Go debug session.' }];
+			return [{ kind: 'message', text: 'No active Go debug session.' }];
 		}
-		if (!element) {
-			const frameId = await model.activeFrameId();
-			if (frameId === undefined) {
-				return [{ kind: 'message', text: 'Session running — stop at a breakpoint to inspect.' }];
+		try {
+			if (this.stack.length === 0) {
+				const frameId = await model.activeFrameId();
+				if (frameId === undefined) {
+					return [{ kind: 'message', text: 'Session running — stop at a breakpoint to inspect.' }];
+				}
+				const scopes = await model.scopes(frameId);
+				return scopes.filter(scope => !scope.expensive).map(scope => ({ kind: 'scope', scope }));
 			}
-			const scopes = await model.scopes(frameId);
-			return scopes.filter(scope => !scope.expensive).map(scope => ({ kind: 'scope', scope }));
-		}
-		if (element.kind === 'scope') {
-			return this.page(model, element.scope.variablesReference, [element.scope.name], 0, element.scope.indexedVariables ?? 0);
-		}
-		if (element.kind === 'value') {
-			const v = element.node.variable;
-			if (v.variablesReference === 0) {
-				return [];
+			const top = this.stack[this.stack.length - 1];
+			const nodes = await model.children(top.variablesReference, top.path, 0, PAGE_SIZE);
+			const rows: Row[] = [{ kind: 'back' }, ...nodes.map(node => ({ kind: 'value', node } as Row))];
+			const total = top.indexedVariables ?? 0;
+			if (total > PAGE_SIZE && nodes.length === PAGE_SIZE) {
+				rows.push({ kind: 'message', text: `Showing first ${PAGE_SIZE} of ${total} (paging: a later IX slice).` });
 			}
-			return this.page(model, v.variablesReference, element.node.path, 0, v.indexedVariables ?? 0);
+			return rows;
+		} catch (err) {
+			return [{ kind: 'message', text: `Could not read this level: ${err instanceof Error ? err.message : String(err)}` }];
 		}
-		if (element.kind === 'page') {
-			return this.page(model, element.parentRef, element.path, element.start, element.total);
-		}
-		return [];
 	}
 
-	/** One indexed page of children, plus a `page` pager node when more remain. */
-	private async page(model: InspectorModel, ref: number, path: readonly string[], start: number, total: number): Promise<TreeNode[]> {
-		const nodes = await model.children(ref, path, start, PAGE_SIZE);
-		const out: TreeNode[] = nodes.map(node => ({ kind: 'value', node }));
-		const shown = start + nodes.length;
-		if (total > shown && nodes.length === PAGE_SIZE) {
-			out.push({ kind: 'page', parentRef: ref, path, start: shown, total });
-		}
-		return out;
-	}
-
-	getTreeItem(element: TreeNode): TreeItem {
+	getTreeItem(element: Row): TreeItem {
 		switch (element.kind) {
 			case 'message': {
 				const item = new TreeItem(element.text);
 				item.contextValue = 'message';
 				return item;
 			}
-			case 'page': {
-				const remaining = element.total - element.start;
-				const item = new TreeItem(`Load ${Math.min(PAGE_SIZE, remaining)} more… (${element.start}/${element.total})`, TreeItemCollapsibleState.Collapsed);
-				item.iconPath = new ThemeIcon('ellipsis');
-				item.contextValue = 'page';
+			case 'back': {
+				const item = new TreeItem('◀ Back', TreeItemCollapsibleState.None);
+				item.iconPath = new ThemeIcon('arrow-left');
+				item.command = { command: 'burrow.inspect.up', title: 'Back' };
+				item.contextValue = 'back';
 				return item;
 			}
 			case 'scope': {
-				const item = new TreeItem(element.scope.name, TreeItemCollapsibleState.Expanded);
+				const { scope } = element;
+				const item = new TreeItem(scope.name, TreeItemCollapsibleState.None);
+				item.description = '›';
 				item.iconPath = new ThemeIcon('symbol-namespace');
+				item.command = drillCommand({ label: scope.name, variablesReference: scope.variablesReference, path: [scope.name], indexedVariables: scope.indexedVariables });
 				item.contextValue = 'scope';
 				return item;
 			}
 			case 'value': {
 				const { variable, summary, changed, path } = element.node;
-				const state = summary.expandable ? TreeItemCollapsibleState.Collapsed : TreeItemCollapsibleState.None;
-				const item = new TreeItem(variable.name, state);
-				// A leading `●` (amber) marks a value that changed since the last stop
-				// (task 05: "changed-since-last-stop values tint amber").
-				item.description = (changed ? '● ' : '') + summary.text;
+				const drillable = summary.expandable && variable.variablesReference > 0;
+				const item = new TreeItem(variable.name, TreeItemCollapsibleState.None);
+				// A leading `●` (amber) marks a value that changed since the last stop;
+				// a trailing `›` marks a value you can drill into (task 05: amber tint).
+				item.description = `${changed ? '● ' : ''}${summary.text}${drillable ? '  ›' : ''}`;
 				item.iconPath = new ThemeIcon(iconFor(summary.kind), changed ? new ThemeColor('charts.yellow') : undefined);
 				item.tooltip = tooltipFor(variable, changed, path);
+				if (drillable) {
+					item.command = drillCommand({ label: variable.name, variablesReference: variable.variablesReference, path: [...path], indexedVariables: variable.indexedVariables });
+				}
 				item.contextValue = changed ? 'value-changed' : 'value';
 				return item;
 			}
 		}
 	}
+}
+
+function drillCommand(target: DrillTarget): TreeItem['command'] {
+	return { command: 'burrow.inspect.drill', title: 'Drill Into', arguments: [target] };
 }
 
 /** A codicon id per Go kind — purely cosmetic, so unknown kinds fall back safely. */
@@ -167,7 +214,7 @@ function iconFor(kind: GoKind): string {
 function tooltipFor(v: DapVariable, changed: boolean, path: readonly string[]): MarkdownString {
 	const md = new MarkdownString();
 	md.appendMarkdown(`**${v.name}**  \`${v.type ?? '?'}\`\n\n`);
-	md.appendMarkdown(`${path.join(' ▸ ')}\n\n`);
+	md.appendMarkdown(`${path.join(' › ')}\n\n`);
 	md.appendCodeblock(v.value, 'go');
 	if (changed) {
 		md.appendMarkdown('\n_changed since last stop_');
@@ -177,22 +224,24 @@ function tooltipFor(v: DapVariable, changed: boolean, path: readonly string[]): 
 
 export function activate(context: ExtensionContext): void {
 	const models = new Map<string, InspectorModel>();
-	const provider = new InspectorTreeProvider(models);
+	const provider = new InspectorNavProvider(models);
+	const view = window.createTreeView('burrowInspectorPreview', { treeDataProvider: provider });
+	provider.attach(view);
 
 	const trackerFactory: DebugAdapterTrackerFactory = {
 		createDebugAdapterTracker(session: DebugSession): ProviderResult<DebugAdapterTracker> {
 			return {
 				onDidSendMessage(message): void {
-					// A `stopped` event is a new inspection point: bump the model's stop
-					// sequence so the next read rolls its change-diff snapshot. The model
-					// is looked up per-message, not captured — the tracker can be created
-					// before onDidStartDebugSession has registered the model.
+					// A `stopped` event is a new inspection point: roll the model's change-diff
+					// snapshot (via onStopped) and return the navigator to the scopes. The model
+					// is looked up per-message — the tracker can be created before
+					// onDidStartDebugSession has registered it.
 					const event = message as { type?: string; event?: string };
 					if (event.type === 'event' && event.event === 'stopped') {
 						const model = models.get(session.id);
 						if (model) {
 							model.onStopped();
-							provider.refresh();
+							provider.resetToRoot();
 						}
 					}
 				},
@@ -201,7 +250,7 @@ export function activate(context: ExtensionContext): void {
 	};
 
 	context.subscriptions.push(
-		window.registerTreeDataProvider('burrowInspectorPreview', provider),
+		view,
 		debug.onDidStartDebugSession(session => {
 			if (session.type === GO_DEBUG_TYPE) {
 				models.set(session.id, new InspectorModel(session));
@@ -209,17 +258,20 @@ export function activate(context: ExtensionContext): void {
 		}),
 		debug.onDidTerminateDebugSession(session => {
 			models.delete(session.id);
-			provider.refresh();
+			provider.resetToRoot();
 		}),
-		// Frame switches re-read the same stop (no snapshot roll — that only
-		// happens on `stopped`), so a plain refresh is right here.
-		debug.onDidChangeActiveStackItem(() => provider.refresh()),
+		// A frame switch invalidates the current drill path (refs are frame-scoped),
+		// so re-root the navigator on the newly focused frame.
+		debug.onDidChangeActiveStackItem(() => provider.resetToRoot()),
 		debug.registerDebugAdapterTrackerFactory(GO_DEBUG_TYPE, trackerFactory),
+		commands.registerCommand('burrow.inspect.drill', (target: DrillTarget) => provider.drill(target)),
+		commands.registerCommand('burrow.inspect.up', () => provider.up()),
+		commands.registerCommand('burrow.inspect.home', () => provider.home()),
 		commands.registerCommand('burrow.inspect.refresh', () => provider.refresh()),
 	);
 }
 
 export function deactivate(): void {
-	// Models are dropped on session terminate; the tree provider and its
-	// listeners are disposed via context.subscriptions.
+	// Models are dropped on session terminate; the tree view and its listeners are
+	// disposed via context.subscriptions.
 }
