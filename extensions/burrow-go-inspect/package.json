@@ -1,7 +1,7 @@
 {
 	"name": "burrow-go-inspect",
 	"displayName": "Burrow Go Inspector",
-	"description": "The Go value inspector for Burrow: a path-addressed DAP value model with type-aware one-line summaries (WO-3), a constant-depth breadcrumb drill navigator (WO-4), and a Miller-column + value-pane webview prototype (WO-5, architecture task 05.4/05.5). Picking one inspector and retiring the stock tree are the later IX WOs.",
+	"description": "The Go value inspector for Burrow (architecture task 05): a path-addressed DAP value model + type-aware summaries (WO-3) rendered as a Miller-column + value-pane webview (WO-5) — the chosen inspector after WO-6 retired the WO-4 native tree. Retiring the stock VS Code Variables view is core patch 0006.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -27,80 +27,13 @@
 		"test": "node test/summary.test.js && node test/literal.test.js"
 	},
 	"contributes": {
-		"commands": [
-			{
-				"command": "burrow.inspect.home",
-				"title": "Inspector: Go to Scopes",
-				"category": "Burrow",
-				"icon": "$(home)"
-			},
-			{
-				"command": "burrow.inspect.up",
-				"title": "Inspector: Back One Level",
-				"category": "Burrow",
-				"icon": "$(arrow-left)"
-			},
-			{
-				"command": "burrow.inspect.refresh",
-				"title": "Refresh Inspector (Preview)",
-				"category": "Burrow",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "burrow.inspect.drill",
-				"title": "Inspector: Drill Into Value",
-				"category": "Burrow"
-			}
-		],
 		"views": {
 			"debug": [
 				{
-					"id": "burrowInspectorPreview",
-					"name": "Inspector (Preview)",
-					"when": "inDebugMode && debugType == go"
-				},
-				{
 					"id": "burrowInspectorMiller",
-					"name": "Inspector (Miller Preview)",
+					"name": "Inspector (Preview)",
 					"type": "webview",
 					"when": "inDebugMode && debugType == go"
-				}
-			]
-		},
-		"menus": {
-			"view/title": [
-				{
-					"command": "burrow.inspect.up",
-					"when": "view == burrowInspectorPreview",
-					"group": "navigation@1"
-				},
-				{
-					"command": "burrow.inspect.home",
-					"when": "view == burrowInspectorPreview",
-					"group": "navigation@2"
-				},
-				{
-					"command": "burrow.inspect.refresh",
-					"when": "view == burrowInspectorPreview",
-					"group": "navigation@3"
-				}
-			],
-			"commandPalette": [
-				{
-					"command": "burrow.inspect.refresh",
-					"when": "inDebugMode && debugType == go"
-				},
-				{
-					"command": "burrow.inspect.home",
-					"when": "inDebugMode && debugType == go"
-				},
-				{
-					"command": "burrow.inspect.up",
-					"when": "inDebugMode && debugType == go"
-				},
-				{
-					"command": "burrow.inspect.drill",
-					"when": "false"
 				}
 			]
 		}

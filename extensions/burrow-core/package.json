@@ -40,6 +40,19 @@
 				"mac": "cmd+alt+d"
 			}
 		],
+		"configuration": {
+			"title": "Burrow",
+			"properties": {
+				"burrow.inspector.hideStockVariables": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Hide the stock **Variables** view while debugging Go — the Burrow Go inspector (Miller columns + value pane) replaces it. Set to `false` to bring the stock Variables tree back alongside the inspector.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
 		"configurationDefaults": {
 			"terminal.integrated.defaultProfile.osx": "bash",
 			"terminal.integrated.defaultProfile.linux": "bash",

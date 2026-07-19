@@ -11,7 +11,8 @@
 // and a value pane below (full value, copy-as-Go-literal, Watch / Break-on-write
 // mounts). Depth on screen is always ≤ breadcrumb + two columns — no recursive
 // indentation, ever. It reuses the WO-3 model (paths, summaries, change-diff) and
-// owns no DAP connection. WO-4's native tree stays alongside so WO-6 can pick one.
+// owns no DAP connection. WO-6 made this the sole Burrow inspector (the WO-4 native
+// tree was retired); it registers as the "Inspector (Preview)" view.
 
 import {
 	CancellationToken,
