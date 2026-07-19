@@ -26,6 +26,7 @@ import {
 } from 'vscode';
 import { InspectorModel, InspectorNode, PAGE_SIZE } from './model';
 import { toGoLiteral } from './literal';
+import { nonce, valuePaneCss } from './webview';
 
 /** One committed hop in the drill path (a scope or a composite we descended into). */
 interface Level {
@@ -98,6 +99,9 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	/** Column-1 items for the current render, so message handlers resolve by index. */
 	private currentItems: Item[] = [];
 
+	/** Set by the extension to route the value pane's "Watch" button to the Watch view. */
+	onWatch: ((expression: string) => void) | undefined;
+
 	constructor(private readonly models: Map<string, InspectorModel>) { }
 
 	resolveWebviewView(view: WebviewView, _ctx: WebviewViewResolveContext, _token: CancellationToken): void {
@@ -152,14 +156,20 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			case 'copyLiteral':
 				await this.copySelectedLiteral();
 				return;
-			case 'watch':
+			case 'watch': {
+				// Route the selected value's re-evaluable expression to the Watch view.
+				const item = this.currentItems[this.selectedIndex];
+				const expr = item?.variable?.evaluateName ?? item?.name;
+				if (expr && this.onWatch) {
+					this.onWatch(expr);
+					window.showInformationMessage(`Watching ${expr}.`);
+				}
+				return;
+			}
 			case 'breakOnWrite':
-				// Watchpoints / watch expressions are task 04 + a later IX slice; the
-				// value pane mounts the buttons now so the surface is complete.
-				window.showInformationMessage(
-					message.type === 'watch'
-						? 'Watch: wiring lands with the Watch view (task 05.6).'
-						: 'Break on write: wiring lands with dlv watchpoints (task 04).');
+				// dlv watchpoints are task 04; the value pane mounts the button now so
+				// the surface is complete.
+				window.showInformationMessage('Break on write: wiring lands with dlv watchpoints (task 04).');
 				return;
 		}
 	}
@@ -266,8 +276,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	}
 
 	private html(): string {
-		const nonce = makeNonce();
-		const csp = `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';`;
+		const n = nonce();
+		const csp = `default-src 'none'; style-src 'nonce-${n}'; script-src 'nonce-${n}';`;
 		// Self-contained: inline CSS/JS (no bundler in this extension). Colors come
 		// from the workbench's webview CSS variables so it themes automatically.
 		return /* html */ `<!DOCTYPE html>
@@ -276,7 +286,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	<meta charset="UTF-8">
 	<meta http-equiv="Content-Security-Policy" content="${csp}">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<style nonce="${nonce}">
+	<style nonce="${n}">
 		:root { color-scheme: light dark; }
 		body { margin: 0; padding: 0; font: var(--vscode-font-size) var(--vscode-font-family); color: var(--vscode-foreground); }
 		#breadcrumb { padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); white-space: nowrap; overflow-x: auto; font-size: 12px; }
@@ -296,15 +306,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		.row .chev { flex: 0 0 auto; opacity: .6; }
 		.row .dot { color: var(--vscode-charts-yellow); flex: 0 0 auto; }
 		.preview .row { cursor: default; }
-		#value { border-top: 1px solid var(--vscode-panel-border); padding: 6px 8px; }
-		#value .head { font-size: 12px; margin-bottom: 4px; }
-		#value .type { opacity: .7; }
-		#value pre { margin: 0 0 6px; padding: 4px 6px; background: var(--vscode-textCodeBlock-background); border-radius: 3px; white-space: pre-wrap; word-break: break-all; max-height: 8em; overflow: auto; }
-		#value .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-		#value button { font: inherit; padding: 2px 8px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border-radius: 2px; cursor: pointer; }
-		#value button:hover { background: var(--vscode-button-secondaryHoverBackground); }
 		#empty { padding: 12px; opacity: .7; }
-		[hidden] { display: none !important; }
+		${valuePaneCss()}
 	</style>
 </head>
 <body>
@@ -312,7 +315,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	<div id="columns"></div>
 	<div id="value" hidden></div>
 	<div id="empty" hidden></div>
-	<script nonce="${nonce}">
+	<script nonce="${n}">
 		const vscode = acquireVsCodeApi();
 		const $breadcrumb = document.getElementById('breadcrumb');
 		const $columns = document.getElementById('columns');
@@ -486,13 +489,4 @@ function toWireRow(item: Item): WireRow {
 
 function clamp(n: number, lo: number, hi: number): number {
 	return Math.max(lo, Math.min(hi, n));
-}
-
-function makeNonce(): string {
-	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-	let out = '';
-	for (let i = 0; i < 32; i++) {
-		out += chars.charAt(Math.floor(Math.random() * chars.length));
-	}
-	return out;
 }

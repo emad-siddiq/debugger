@@ -1,0 +1,2 @@
+# dlv's compiled debug binary (created by `dlv dap` / `dlv debug`) — never commit it.
+__debug_bin*

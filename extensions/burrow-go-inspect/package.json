@@ -24,7 +24,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-inspect",
 		"watch": "gulp watch-extension:burrow-go-inspect",
-		"test": "node test/summary.test.js && node test/literal.test.js"
+		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js"
 	},
 	"contributes": {
 		"views": {
@@ -32,6 +32,12 @@
 				{
 					"id": "burrowInspectorMiller",
 					"name": "Inspector (Preview)",
+					"type": "webview",
+					"when": "inDebugMode && debugType == go"
+				},
+				{
+					"id": "burrowWatch",
+					"name": "Watch (Preview)",
 					"type": "webview",
 					"when": "inDebugMode && debugType == go"
 				}

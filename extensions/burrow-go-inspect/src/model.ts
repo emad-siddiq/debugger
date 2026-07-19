@@ -5,6 +5,7 @@
 
 import { DebugSession, DebugStackFrame, DebugThread, debug } from 'vscode';
 import { DapVariable, Summary, briefFromChildren, summarize } from './summary';
+import { watchVariableFrom } from './watchmap';
 
 // model.ts — the path-addressed value model over one debug session's DAP
 // connection (IX, architecture task 05.3: "path-addressed value model over DAP,
@@ -75,6 +76,22 @@ export class InspectorModel {
 		}
 		const trace = await this.request('stackTrace', { threadId, startFrame: 0, levels: 1 });
 		return trace?.stackFrames?.[0]?.id;
+	}
+
+	/**
+	 * Evaluate a watch expression in a frame (DAP `evaluate`, `context: 'watch'`),
+	 * mapped to a `DapVariable` so the same summary renderer applies. Returns
+	 * `undefined` when the expression is invalid in this frame (dlv rejects it) —
+	 * the Watch view grays those out rather than erroring (task 05.6).
+	 */
+	async evaluate(expression: string, frameId: number): Promise<DapVariable | undefined> {
+		this.rollIfNewStop();
+		try {
+			const res = await this.request('evaluate', { expression, frameId, context: 'watch' });
+			return watchVariableFrom(expression, res);
+		} catch {
+			return undefined; // invalid-in-this-frame — caller grays it out.
+		}
 	}
 
 	/** The non-expensive scopes (Arguments, Locals, …) of a frame. */
