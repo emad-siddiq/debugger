@@ -23,6 +23,7 @@ import {
 } from 'vscode';
 import { DapScope, InspectorModel, InspectorNode, PAGE_SIZE } from './model';
 import { DapVariable, GoKind } from './summary';
+import { MillerInspectorProvider } from './miller';
 
 // burrow-go-inspect — the IX inspector (architecture task 05). WO-3 landed the
 // path-addressed DAP value model + per-Go-type summary renderer; WO-4 turns the
@@ -228,6 +229,12 @@ export function activate(context: ExtensionContext): void {
 	const view = window.createTreeView('burrowInspectorPreview', { treeDataProvider: provider });
 	provider.attach(view);
 
+	// The Miller-column webview inspector (WO-5) — the layer-4 prototype of the
+	// task 05 webview-vs-core fork. It runs ALONGSIDE the native tree above so the
+	// two can be compared before WO-6 picks one and retires the other (task 05.8).
+	// Both share the same model map and the same stop/frame reset triggers below.
+	const miller = new MillerInspectorProvider(models);
+
 	const trackerFactory: DebugAdapterTrackerFactory = {
 		createDebugAdapterTracker(session: DebugSession): ProviderResult<DebugAdapterTracker> {
 			return {
@@ -242,6 +249,7 @@ export function activate(context: ExtensionContext): void {
 						if (model) {
 							model.onStopped();
 							provider.resetToRoot();
+							miller.reset();
 						}
 					}
 				},
@@ -251,6 +259,8 @@ export function activate(context: ExtensionContext): void {
 
 	context.subscriptions.push(
 		view,
+		miller,
+		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
 		debug.onDidStartDebugSession(session => {
 			if (session.type === GO_DEBUG_TYPE) {
 				models.set(session.id, new InspectorModel(session));
@@ -259,10 +269,14 @@ export function activate(context: ExtensionContext): void {
 		debug.onDidTerminateDebugSession(session => {
 			models.delete(session.id);
 			provider.resetToRoot();
+			miller.reset();
 		}),
 		// A frame switch invalidates the current drill path (refs are frame-scoped),
-		// so re-root the navigator on the newly focused frame.
-		debug.onDidChangeActiveStackItem(() => provider.resetToRoot()),
+		// so re-root both inspectors on the newly focused frame.
+		debug.onDidChangeActiveStackItem(() => {
+			provider.resetToRoot();
+			miller.reset();
+		}),
 		debug.registerDebugAdapterTrackerFactory(GO_DEBUG_TYPE, trackerFactory),
 		commands.registerCommand('burrow.inspect.drill', (target: DrillTarget) => provider.drill(target)),
 		commands.registerCommand('burrow.inspect.up', () => provider.up()),
