@@ -1,0 +1,76 @@
+{
+	"name": "burrow-go-test",
+	"displayName": "Burrow Go Tests",
+	"description": "First-class Go tests for Burrow (architecture task 11): a native Test Explorer populated by scanning the workspace for `func Test*`/`Benchmark*`/`Fuzz*`/`Example*`, with real `go test -run <name> -json ./<pkg>` execution reporting pass/fail live into the test UI. First slice — discovery + run; coverage, bench history, fuzz corpus, watch mode and debug come later.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Testing"
+	],
+	"activationEvents": [
+		"onLanguage:go",
+		"workspaceContains:**/*_test.go"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-test",
+		"watch": "gulp watch-extension:burrow-go-test",
+		"test": "node test/discovery.test.js && node test/command.test.js && node test/events.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.test.refresh",
+				"title": "Refresh Go Tests",
+				"category": "Burrow",
+				"icon": "$(refresh)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.test.refresh",
+				"key": "shift+cmd+t",
+				"mac": "shift+cmd+t",
+				"when": "editorLangId == go"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "burrow.test.refresh"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Go Tests",
+			"properties": {
+				"burrow.test.goExecutable": {
+					"type": "string",
+					"default": "go",
+					"description": "Path to the `go` binary used to discover and run tests.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.test.race": {
+					"type": "boolean",
+					"default": false,
+					"description": "Run every test with the race detector (`-race`), honoring the scheme bar's race toggle.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,86 @@
+{
+	"name": "burrow-go-viz",
+	"displayName": "Burrow Go Value Visualizers",
+	"description": "Go value visualizers for the Burrow inspector (architecture task 06): a priority-ordered type-matcher registry plus the first slice's []byte / []uint8 hex-ASCII webview (with auto-detected text/JSON and a base64 toggle) that the task 05 inspector value pane can host. Reuses the task 05 path-addressed DAP/summary model; owns no DAP connection.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Debuggers"
+	],
+	"activationEvents": [
+		"onDebug"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-viz",
+		"watch": "gulp watch-extension:burrow-go-viz",
+		"test": "node test/hexdump.test.js && node test/registry.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.viz.hexdump",
+				"title": "Visualize Value as Hex / ASCII",
+				"category": "Burrow",
+				"icon": "$(file-binary)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.viz.hexdump",
+				"key": "shift+cmd+h",
+				"mac": "shift+cmd+h",
+				"when": "inDebugMode && debugType == go"
+			}
+		],
+		"menus": {
+			"debug/toolBar": [
+				{
+					"command": "burrow.viz.hexdump",
+					"group": "navigation@98",
+					"when": "debugType == go"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "burrow.viz.hexdump",
+					"when": "inDebugMode && debugType == go"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Value Visualizers",
+			"properties": {
+				"burrow.viz.maxBytes": {
+					"type": "number",
+					"default": 4096,
+					"minimum": 16,
+					"description": "How many bytes the []byte hex/ASCII visualizer fetches for a value. Large bodies show a bounded head (windowed paging is a later task 06 slice).",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
+		"views": {
+			"debug": [
+				{
+					"id": "burrowVizPane",
+					"name": "Value Visualizer (Preview)",
+					"type": "webview",
+					"when": "inDebugMode && debugType == go"
+				}
+			]
+		}
+	}
+}

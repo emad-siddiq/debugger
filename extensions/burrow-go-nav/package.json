@@ -1,0 +1,85 @@
+{
+	"name": "burrow-go-nav",
+	"displayName": "Burrow Go Navigation",
+	"description": "Qualified-symbol navigation for Burrow (architecture task 16): a Search-Everywhere QuickPick that parses `pkg.Symbol` / `pkg.Type.Method` / bare `Symbol` / lone `pkg` queries, resolves them through gopls (`vscode.executeWorkspaceSymbolProvider`) plus a `go list -json` package index, and jumps to the definition — the qualifier VS Code's ⌘T can't express.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Programming Languages",
+		"Other"
+	],
+	"activationEvents": [
+		"onCommand:burrow.nav.goToSymbol",
+		"onLanguage:go"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-nav",
+		"watch": "gulp watch-extension:burrow-go-nav",
+		"test": "node test/query.test.js && node test/packageindex.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.nav.goToSymbol",
+				"title": "Go to Symbol…",
+				"category": "Go"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.nav.goToSymbol",
+				"key": "alt+cmd+o",
+				"mac": "alt+cmd+o",
+				"win": "ctrl+alt+o",
+				"linux": "ctrl+alt+o"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "burrow.nav.goToSymbol"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Navigation",
+			"properties": {
+				"burrow.nav.goBinary": {
+					"type": "string",
+					"default": "go",
+					"description": "Path to the `go` binary used to build the package index (`go list -json`). Defaults to `go` on PATH.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.nav.packageScope": {
+					"type": "string",
+					"enum": [
+						"workspace",
+						"all"
+					],
+					"enumDescriptions": [
+						"Index only the workspace module (`go list -json ./...`) — fast, covers your own packages.",
+						"Index the workspace module plus dependencies and stdlib (`go list -json ./... all`) — slower to warm, resolves stdlib and vendored packages as jump targets."
+					],
+					"default": "workspace",
+					"description": "How wide to build the `go list` package index used to map symbols to packages and to resolve lone-package targets.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

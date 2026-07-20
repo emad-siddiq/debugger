@@ -1,0 +1,117 @@
+{
+	"name": "burrow-db",
+	"displayName": "Burrow Database Explorer",
+	"description": "The Postgres explorer for Burrow (architecture task 10): connect from a setting or DATABASE_URL, browse schemas/tables via information_schema, and run a read-only SELECT into a pandas-style results grid. First slice — connection layer + catalog tree + query-to-grid webview.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onView:burrowDbExplorer",
+		"onCommand:burrow.db.runQuery"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-db",
+		"watch": "gulp watch-extension:burrow-db",
+		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.db.runQuery",
+				"title": "Run SQL Query…",
+				"category": "Burrow DB",
+				"icon": "$(play)"
+			},
+			{
+				"command": "burrow.db.refresh",
+				"title": "Refresh",
+				"category": "Burrow DB",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "burrow.db.openTable",
+				"title": "Open Table",
+				"category": "Burrow DB"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.db.runQuery",
+				"key": "shift+cmd+d",
+				"mac": "shift+cmd+d"
+			}
+		],
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-db",
+					"title": "Database",
+					"icon": "$(database)"
+				}
+			]
+		},
+		"views": {
+			"burrow-db": [
+				{
+					"id": "burrowDbExplorer",
+					"name": "Explorer"
+				}
+			]
+		},
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "burrow.db.openTable",
+					"when": "false"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.db.runQuery",
+					"when": "view == burrowDbExplorer",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.db.refresh",
+					"when": "view == burrowDbExplorer",
+					"group": "navigation@2"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Database Explorer",
+			"properties": {
+				"burrow.db.connectionString": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Postgres connection URL (`postgres://user:pass@host:5432/db`). When empty, Burrow falls back to the `DATABASE_URL` environment variable — the NodeWatch contract means the right database is known once a scheme exists.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.db.previewRowLimit": {
+					"type": "number",
+					"default": 100,
+					"minimum": 1,
+					"description": "Row limit appended to the SELECT that opens when you click a table in the explorer.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

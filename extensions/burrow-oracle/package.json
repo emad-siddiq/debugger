@@ -1,0 +1,116 @@
+{
+	"name": "burrow-oracle",
+	"displayName": "Burrow Codebase Oracle",
+	"description": "The Codebase Oracle for Burrow (architecture task 08): a first-run agent walk that writes structured codebase notes, a `go list -json ./...` package walk rendered in a webview, and notes-on-highlight anchored to symbols and surfaced on the gopls hover. This first slice ships the package walk and per-workspace notes for real; the agent walk is a wired bootstrap that stages the external agent CLI.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished",
+		"onLanguage:go"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-oracle",
+		"watch": "gulp watch-extension:burrow-oracle",
+		"test": "node test/golist.test.js && node test/symbols.test.js && node test/notes.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.oracle.walkPackages",
+				"title": "Walk Go Packages",
+				"category": "Oracle",
+				"icon": "$(list-tree)"
+			},
+			{
+				"command": "burrow.oracle.noteOnHighlight",
+				"title": "Note on Highlight",
+				"category": "Oracle",
+				"icon": "$(note)"
+			},
+			{
+				"command": "burrow.oracle.showNotes",
+				"title": "Show Notes for Selection",
+				"category": "Oracle"
+			},
+			{
+				"command": "burrow.oracle.bootstrap",
+				"title": "Bootstrap the Oracle (Agent Walk)",
+				"category": "Oracle"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.oracle.noteOnHighlight",
+				"key": "shift+cmd+n",
+				"mac": "shift+cmd+n",
+				"when": "editorTextFocus && editorLangId == go"
+			}
+		],
+		"menus": {
+			"editor/context": [
+				{
+					"command": "burrow.oracle.noteOnHighlight",
+					"group": "burrow@1",
+					"when": "editorLangId == go"
+				},
+				{
+					"command": "burrow.oracle.showNotes",
+					"group": "burrow@2",
+					"when": "editorLangId == go"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.oracle.walkPackages",
+					"group": "navigation",
+					"when": "view == burrowOracleWalk"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Oracle",
+			"properties": {
+				"burrow.oracle.hoverNotes": {
+					"type": "boolean",
+					"default": true,
+					"description": "Append the Oracle note for the symbol under the cursor to its gopls hover, so codebase knowledge shows up where your eyes already are.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.oracle.agentCommand": {
+					"type": "string",
+					"default": "claude -p",
+					"description": "The agent CLI template the bootstrap stages in the terminal for the first-run codebase walk. Execution stays external — Burrow never embeds an agent or holds API keys.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
+		"views": {
+			"explorer": [
+				{
+					"id": "burrowOracleWalk",
+					"name": "Oracle Walk",
+					"type": "webview",
+					"when": "workspaceFolderCount != 0"
+				}
+			]
+		}
+	}
+}

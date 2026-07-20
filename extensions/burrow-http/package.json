@@ -1,0 +1,87 @@
+{
+	"name": "burrow-http",
+	"displayName": "Burrow HTTP Workbench",
+	"description": "The file-backed, Postman-class HTTP client for Burrow (architecture task 09): parse `.http` files (###-separated requests, @vars, {{var}} interpolation), send a request over Node's native fetch, and render status + timing + headers + body — via an in-editor Send codelens and an editor-area workbench webview.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:http",
+		"workspaceContains:**/*.http"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-http",
+		"watch": "gulp watch-extension:burrow-http",
+		"test": "node test/httpFile.test.js && node test/send.test.js && node test/render.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.http.openWorkbench",
+				"title": "Open HTTP Workbench",
+				"category": "Burrow",
+				"icon": "$(globe)"
+			},
+			{
+				"command": "burrow.http.send",
+				"title": "Send Request",
+				"category": "Burrow",
+				"icon": "$(play)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.http.send",
+				"key": "shift+cmd+h",
+				"mac": "shift+cmd+h",
+				"when": "editorLangId == http"
+			}
+		],
+		"menus": {
+			"editor/title": [
+				{
+					"command": "burrow.http.openWorkbench",
+					"group": "navigation@99",
+					"when": "editorLangId == http || resourceExtname == .http"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "burrow.http.send",
+					"when": "editorLangId == http || resourceExtname == .http"
+				},
+				{
+					"command": "burrow.http.openWorkbench",
+					"when": "editorLangId == http || resourceExtname == .http"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow HTTP Workbench",
+			"properties": {
+				"burrow.http.timeoutMs": {
+					"type": "number",
+					"default": 30000,
+					"minimum": 0,
+					"description": "Abort an in-flight HTTP request after this many milliseconds. Set to 0 to disable the timeout.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

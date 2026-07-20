@@ -1,0 +1,83 @@
+{
+	"name": "burrow-go-docs",
+	"displayName": "Burrow Go Docs",
+	"description": "Offline Go documentation for Burrow (architecture task 07): a command + hover affordance that shells the workspace Go toolchain (go doc <pkg>/<pkg>.<sym>) and renders version-true docs in a maximized, Esc/✕-dismissable fullscreen webview viewer.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"activationEvents": [
+		"onLanguage:go",
+		"onCommand:burrow.goDocs.open"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-docs",
+		"watch": "gulp watch-extension:burrow-go-docs",
+		"test": "node test/godoc.test.js && node test/runner.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.goDocs.open",
+				"title": "Open Go Docs…",
+				"category": "Burrow",
+				"icon": "$(book)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.goDocs.open",
+				"key": "shift+ctrl+0",
+				"mac": "shift+cmd+0",
+				"when": "editorLangId == go"
+			}
+		],
+		"menus": {
+			"editor/context": [
+				{
+					"command": "burrow.goDocs.open",
+					"group": "navigation@99",
+					"when": "editorLangId == go"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "burrow.goDocs.open"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Go Docs",
+			"properties": {
+				"burrow.goDocs.goPath": {
+					"type": "string",
+					"default": "go",
+					"description": "Path to the `go` binary used to extract documentation. Defaults to `go` on PATH.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.goDocs.showAll": {
+					"type": "boolean",
+					"default": false,
+					"description": "Pass `-all` to `go doc` for the exhaustive package/type dump instead of the concise synopsis.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}
