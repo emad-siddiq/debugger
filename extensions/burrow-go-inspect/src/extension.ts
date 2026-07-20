@@ -19,6 +19,7 @@ import { InspectorModel } from './model';
 import { MillerInspectorProvider } from './miller';
 import { WatchProvider } from './watch';
 import { FramesProvider } from './frames';
+import { registerBreakpointsCommand } from './breakpoints';
 
 // burrow-go-inspect — the IX inspector (architecture task 05). The slices:
 //   WO-3  path-addressed DAP value model + per-Go-type summary renderer (model.ts, summary.ts)
@@ -77,6 +78,7 @@ export function activate(context: ExtensionContext): void {
 		miller,
 		watch,
 		frames,
+		registerBreakpointsCommand(),
 		window.registerWebviewViewProvider(FramesProvider.viewId, frames),
 		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
 		window.registerWebviewViewProvider(WatchProvider.viewId, watch),

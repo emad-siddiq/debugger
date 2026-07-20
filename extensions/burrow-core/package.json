@@ -66,6 +66,14 @@
 					"tags": [
 						"burrow"
 					]
+				},
+				"burrow.inspector.hideStockBreakpoints": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Hide the permanent **Breakpoints** view — breakpoint management moves to a popover (the **Burrow: Breakpoints…** command, `⇧⌘B`, and the 🐞 button on the debug toolbar). Set to `false` to bring the permanent Breakpoints pane back.",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
 		},

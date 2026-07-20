@@ -27,6 +27,37 @@
 		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js && node test/inlinemap.test.js && node test/goroutines.test.js && node test/framerows.test.js"
 	},
 	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.breakpoints.manage",
+				"title": "Breakpoints…",
+				"category": "Burrow",
+				"icon": "$(debug-breakpoint)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "burrow.breakpoints.manage",
+				"key": "shift+cmd+b",
+				"mac": "shift+cmd+b",
+				"when": "debuggersAvailable"
+			}
+		],
+		"menus": {
+			"debug/toolBar": [
+				{
+					"command": "burrow.breakpoints.manage",
+					"group": "navigation@99",
+					"when": "debugType == go"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "burrow.breakpoints.manage",
+					"when": "debuggersAvailable"
+				}
+			]
+		},
 		"configuration": {
 			"title": "Burrow Inspector",
 			"properties": {
