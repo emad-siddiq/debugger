@@ -28,11 +28,18 @@ import { InspectorModel, InspectorNode, PAGE_SIZE } from './model';
 import { toGoLiteral } from './literal';
 import { nonce, valuePaneCss } from './webview';
 
+/** How long a render request waits for its duplicates before it runs. */
+const COALESCE_MS = 8;
+
 /** One committed hop in the drill path (a scope or a composite we descended into). */
 interface Level {
 	readonly label: string;
 	readonly variablesReference: number;
 	readonly path: readonly string[];
+	/** Total indexed children (slice/array/map length); paged when it exceeds a page. */
+	readonly indexed?: number;
+	/** First index shown for a paged level — the pager's window into the collection. */
+	pageStart: number;
 }
 
 /** A resolved row in a column — a scope root or a value, unified for the webview. */
@@ -44,8 +51,17 @@ interface Item {
 	readonly drillable: boolean;
 	readonly variablesReference: number;
 	readonly path: readonly string[];
+	/** Total indexed children, carried so drilling knows to page (slices/maps). */
+	readonly indexed?: number;
 	/** Present for value rows (not scopes) — feeds the value pane + copy-as-literal. */
 	readonly variable?: InspectorNode['variable'];
+}
+
+/** The window a paged column is showing, for the pager strip. */
+interface WirePage {
+	readonly start: number;
+	readonly shown: number;
+	readonly total: number;
 }
 
 // ---- wire protocol (host → webview) ----------------------------------------
@@ -61,6 +77,8 @@ interface WireColumn {
 	readonly title: string;
 	readonly rows: WireRow[];
 	readonly selectedIndex: number;
+	/** Set only for a paged level — drives the "101–200 of 50,000" strip. */
+	readonly page?: WirePage;
 }
 interface WireValue {
 	readonly name: string;
@@ -71,7 +89,7 @@ interface WireValue {
 }
 type WireState =
 	| { readonly type: 'empty'; readonly reason: string }
-	| { readonly type: 'state'; readonly breadcrumb: string[]; readonly columns: WireColumn[]; readonly value?: WireValue };
+	| { readonly type: 'state'; readonly breadcrumb: string[]; readonly columns: WireColumn[]; readonly value?: WireValue; readonly trace?: string };
 
 // ---- wire protocol (webview → host) ----------------------------------------
 
@@ -83,7 +101,10 @@ type Inbound =
 	| { readonly type: 'jump'; readonly depth: number }
 	| { readonly type: 'copyLiteral' }
 	| { readonly type: 'watch' }
-	| { readonly type: 'breakOnWrite' };
+	| { readonly type: 'breakOnWrite' }
+	| { readonly type: 'pageBy'; readonly pages: number }
+	| { readonly type: 'pageTo'; readonly index: number }
+	| { readonly type: 'painted'; readonly trace: string; readonly ms: number; readonly how: 'paint' | 'timeout' };
 
 export class MillerInspectorProvider implements WebviewViewProvider, Disposable {
 
@@ -102,7 +123,20 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	/** Set by the extension to route the value pane's "Watch" button to the Watch view. */
 	onWatch: ((expression: string) => void) | undefined;
 
-	constructor(private readonly models: Map<string, InspectorModel>) { }
+	// Perf tracing (task 05.8: "stop → painted inspector < 150 ms"). The host stamps
+	// a start time and a label onto each render; the webview reports back the moment
+	// the DOM it produced has actually been painted. Timing from here — rather than
+	// from a CDP driver — is the only way to measure what the user waits for: it
+	// spans the DAP round-trips, the postMessage hop AND layout.
+	private traces = new Map<string, { readonly label: string; readonly t0: number }>();
+	private traceSeq = 0;
+	private pendingRender: { readonly label: string; readonly t0: number } | undefined;
+
+	private readonly perf = window.createOutputChannel('Burrow Inspector Perf');
+
+	constructor(private readonly models: Map<string, InspectorModel>) {
+		this.disposables.push(this.perf);
+	}
 
 	resolveWebviewView(view: WebviewView, _ctx: WebviewViewResolveContext, _token: CancellationToken): void {
 		this.view = view;
@@ -117,7 +151,32 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	reset(): void {
 		this.stack = [];
 		this.selectedIndex = 0;
-		void this.render();
+		this.scheduleRender('stop');
+	}
+
+	/**
+	 * Collapse a burst of refresh requests into one render (task 05.8).
+	 *
+	 * One stop reaches us twice — the adapter tracker sees the `stopped` event and
+	 * `onDidChangeActiveStackItem` fires for the frame the debugger focuses — and
+	 * each render is a full DAP pass (scopes, the selected scope's children, a
+	 * `variables` round-trip per pointer summary). Rendering both doubled the work
+	 * a user waits through for a result the second render throws away.
+	 *
+	 * The trace clock starts with the FIRST request in the burst, not with the
+	 * render, so coalescing can't flatter the measurement by hiding its own delay.
+	 */
+	private scheduleRender(label: string): void {
+		if (!this.pendingRender) {
+			this.pendingRender = { label, t0: Date.now() };
+			setTimeout(() => {
+				const pending = this.pendingRender;
+				this.pendingRender = undefined;
+				if (pending) {
+					void this.render(pending.label, pending.t0);
+				}
+			}, COALESCE_MS);
+		}
 	}
 
 	private activeModel(): InspectorModel | undefined {
@@ -137,10 +196,10 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			case 'drill': {
 				const item = this.currentItems[message.index];
 				if (item?.drillable) {
-					this.stack.push({ label: item.name, variablesReference: item.variablesReference, path: item.path });
+					this.stack.push({ label: item.name, variablesReference: item.variablesReference, path: item.path, indexed: item.indexed, pageStart: 0 });
 					this.selectedIndex = 0;
 				}
-				await this.render();
+				await this.render('drill');
 				return;
 			}
 			case 'up':
@@ -171,7 +230,53 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				// the surface is complete.
 				window.showInformationMessage('Break on write: wiring lands with dlv watchpoints (task 04).');
 				return;
+			case 'pageBy':
+				this.movePage(message.pages * PAGE_SIZE);
+				await this.render('page');
+				return;
+			case 'pageTo':
+				// Land on the page CONTAINING the index, so "jump to 12345" shows it in
+				// context rather than making it row 0 of an arbitrary window.
+				this.seekPage(Math.floor(message.index / PAGE_SIZE) * PAGE_SIZE);
+				await this.render('page');
+				return;
+			case 'painted': {
+				const trace = this.traces.get(message.trace);
+				this.traces.delete(message.trace);
+				if (trace) {
+					const total = Math.round(Date.now() - trace.t0);
+					this.perf.appendLine(`${trace.label}\t${total} ms host→${message.how === 'paint' ? 'painted' : 'DOM (window not compositing — upper bound)'} (webview ${Math.round(message.ms)} ms)`);
+					// Echo it back so the last sample is readable from the DOM. The perf
+					// DoD ("stop → painted < 150 ms") is checked by an out-of-process
+					// driver, which can see the webview but not the output channel.
+					void this.view?.webview.postMessage({ type: 'perf', label: trace.label, ms: total, how: message.how });
+				}
+				return;
+			}
 		}
+	}
+
+	/** The paged level currently supplying column 1, if any. */
+	private pagedLevel(): Level | undefined {
+		const top = this.stack[this.stack.length - 1];
+		return top && isPaged(top) ? top : undefined;
+	}
+
+	private movePage(delta: number): void {
+		const level = this.pagedLevel();
+		if (level) {
+			this.seekPage(level.pageStart + delta);
+		}
+	}
+
+	private seekPage(start: number): void {
+		const level = this.pagedLevel();
+		if (!level) {
+			return;
+		}
+		const last = Math.max(0, Math.floor(((level.indexed ?? 0) - 1) / PAGE_SIZE) * PAGE_SIZE);
+		level.pageStart = clamp(start, 0, last);
+		this.selectedIndex = 0;
 	}
 
 	private async copySelectedLiteral(): Promise<void> {
@@ -204,16 +309,27 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				}));
 		}
 		const top = this.stack[this.stack.length - 1];
-		const nodes = await model.children(top.variablesReference, top.path, 0, PAGE_SIZE);
-		return nodes.map(itemFromNode);
+		return (await this.readLevel(model, top, top.pageStart)).map(itemFromNode);
 	}
 
-	private async render(): Promise<void> {
+	/** A level's rows: one page for a large collection, everything otherwise. */
+	private async readLevel(model: InspectorModel, level: { variablesReference: number; path: readonly string[]; indexed?: number }, start: number): Promise<InspectorNode[]> {
+		if (!isPaged(level)) {
+			return model.children(level.variablesReference, level.path);
+		}
+		return model.page(level.variablesReference, level.path, start, PAGE_SIZE);
+	}
+
+	private async render(label = 'render', t0 = Date.now()): Promise<void> {
 		if (!this.view) {
 			return;
 		}
+		// The clock starts BEFORE building: the DAP round-trips buildState makes are
+		// part of what the user waits for, so they have to be inside the measurement.
+		const trace = `t${this.traceSeq++}`;
+		this.traces.set(trace, { label, t0 });
 		const state = await this.buildState();
-		void this.view.webview.postMessage(state);
+		void this.view.webview.postMessage(state.type === 'state' ? { ...state, trace } : state);
 	}
 
 	private async buildState(): Promise<WireState> {
@@ -235,12 +351,19 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			this.selectedIndex = clamp(this.selectedIndex, 0, items.length - 1);
 			const selected = items[this.selectedIndex];
 
-			const column1: WireColumn = { title: this.columnTitle(), rows: items.map(toWireRow), selectedIndex: this.selectedIndex };
+			const paged = this.pagedLevel();
+			const column1: WireColumn = {
+				title: this.columnTitle(),
+				rows: items.map(toWireRow),
+				selectedIndex: this.selectedIndex,
+				page: paged ? { start: paged.pageStart, shown: items.length, total: paged.indexed ?? items.length } : undefined,
+			};
 			const columns: WireColumn[] = [column1];
 
-			// Column 2 previews the selected composite's children (read-only peek).
+			// Column 2 previews the selected composite's children (read-only peek) —
+			// first page only; you page it once you drill in.
 			if (selected.drillable) {
-				const childNodes = await model.children(selected.variablesReference, selected.path, 0, PAGE_SIZE);
+				const childNodes = await this.readLevel(model, selected, 0);
 				columns.push({ title: selected.name, rows: childNodes.map(itemFromNode).map(toWireRow), selectedIndex: -1 });
 			}
 
@@ -306,6 +429,11 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		.row .chev { flex: 0 0 auto; opacity: .6; }
 		.row .dot { color: var(--vscode-charts-yellow); flex: 0 0 auto; }
 		.preview .row { cursor: default; }
+		.pager { display: flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); opacity: .85; }
+		.pager button { font: inherit; padding: 0 5px; cursor: pointer; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 2px; }
+		.pager button:disabled { opacity: .4; cursor: default; }
+		.pager .range { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.pager input { width: 7ch; font: inherit; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); }
 		#empty { padding: 12px; opacity: .7; }
 		${valuePaneCss()}
 	</style>
@@ -323,6 +451,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		const $empty = document.getElementById('empty');
 		let selected = 0;      // selected index in column 1
 		let colCount = 1;      // rows in column 1 (for keyboard clamping)
+		let paged = false;     // column 1 is a window over a large collection
+		let $jump = null;      // the pager's jump-to-index input, when present
 
 		function post(msg) { vscode.postMessage(msg); }
 
@@ -377,6 +507,36 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			return li;
 		}
 
+		// A paged column gets a strip: where you are, prev/next, and jump-to-index.
+		// Without it a 100-row window over 50,000 elements looks exactly like a
+		// 100-element collection — the UI would be lying about the data.
+		function renderPager(page) {
+			const bar = document.createElement('div');
+			bar.className = 'pager';
+			const last = page.start + page.shown;
+			const range = document.createElement('span');
+			range.className = 'range';
+			range.textContent = (page.start + 1).toLocaleString() + '–' + last.toLocaleString() + ' of ' + page.total.toLocaleString();
+			const prev = button('‹', () => post({ type: 'pageBy', pages: -1 }));
+			prev.disabled = page.start === 0;
+			const next = button('›', () => post({ type: 'pageBy', pages: 1 }));
+			next.disabled = last >= page.total;
+			const jump = document.createElement('input');
+			jump.type = 'number';
+			jump.min = '0';
+			jump.max = String(page.total - 1);
+			jump.placeholder = 'index';
+			jump.title = 'Jump to index (Enter)';
+			jump.onkeydown = e => {
+				if (e.key === 'Enter' && jump.value !== '') { post({ type: 'pageTo', index: Number(jump.value) }); }
+				if (e.key === 'Escape') { jump.blur(); }
+				e.stopPropagation();
+			};
+			$jump = jump;
+			bar.append(prev, range, next, jump);
+			return bar;
+		}
+
 		function renderColumn(col, isPrimary) {
 			const wrap = document.createElement('div');
 			wrap.className = 'col' + (isPrimary ? '' : ' preview');
@@ -384,6 +544,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			title.className = 'col-title';
 			title.textContent = col.title;
 			wrap.appendChild(title);
+			if (isPrimary && col.page) { wrap.appendChild(renderPager(col.page)); }
 			const ul = document.createElement('ul');
 			ul.className = 'rows';
 			col.rows.forEach((row, i) => ul.appendChild(renderRow(row, i, isPrimary)));
@@ -443,21 +604,62 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			$empty.hidden = true;
 			renderBreadcrumb(state.breadcrumb);
 			$columns.textContent = '';
+			$jump = null;
 			const primary = state.columns[0];
 			selected = primary ? primary.selectedIndex : 0;
 			colCount = primary ? primary.rows.length : 0;
+			paged = !!(primary && primary.page);
 			state.columns.forEach((col, i) => $columns.appendChild(renderColumn(col, i === 0)));
 			renderValue(state.value);
 		}
 
-		window.addEventListener('message', e => apply(e.data));
+		window.addEventListener('message', e => {
+			if (e.data && e.data.type === 'perf') {
+				document.body.dataset.perf = e.data.label + ':' + e.data.ms + ':' + e.data.how;
+				return;
+			}
+			const t0 = performance.now();
+			apply(e.data);
+			// Two frames: the first fires after layout is scheduled, the second after
+			// the browser has actually painted it. Reporting on the first would time
+			// our DOM writes, not what the user sees.
+			//
+			// The timeout is not belt-and-braces: an unfocused or occluded window is
+			// not compositing, so rAF never fires there and the sample would silently
+			// vanish. We report anyway and label the clock 'timeout', because a
+			// measurement whose provenance is unknown is worse than no measurement.
+			if (e.data && e.data.trace) {
+				const trace = e.data.trace;
+				let done = false;
+				const report = how => {
+					if (!done) { done = true; post({ type: 'painted', trace: trace, ms: performance.now() - t0, how: how }); }
+				};
+				requestAnimationFrame(() => requestAnimationFrame(() => report('paint')));
+				setTimeout(() => report('timeout'), 300);
+			}
+		});
 
-		// Keyboard: ↑↓ move within column 1, → / Enter drill, ← up a level.
+		// Keyboard (task 05.8 — the whole inspector without the mouse):
+		//   ↑↓ move · →/Enter drill · ← up a level · Home/End first/last row
+		//   PageDown/PageUp next/prev page of a large collection (jump 10 rows if not paged)
+		//   g focus jump-to-index · c copy as Go literal · w watch the selection
+		const select = index => { if (index !== selected && index >= 0 && index < colCount) { post({ type: 'select', index: index }); } };
 		window.addEventListener('keydown', e => {
-			if (e.key === 'ArrowDown') { if (selected < colCount - 1) post({ type: 'select', index: selected + 1 }); e.preventDefault(); }
-			else if (e.key === 'ArrowUp') { if (selected > 0) post({ type: 'select', index: selected - 1 }); e.preventDefault(); }
-			else if (e.key === 'ArrowRight' || e.key === 'Enter') { post({ type: 'drill', index: selected }); e.preventDefault(); }
-			else if (e.key === 'ArrowLeft') { post({ type: 'up' }); e.preventDefault(); }
+			if (e.target && e.target.tagName === 'INPUT') { return; }
+			const key = e.key;
+			if (key === 'ArrowDown') { select(selected + 1); }
+			else if (key === 'ArrowUp') { select(selected - 1); }
+			else if (key === 'ArrowRight' || key === 'Enter') { post({ type: 'drill', index: selected }); }
+			else if (key === 'ArrowLeft') { post({ type: 'up' }); }
+			else if (key === 'Home') { select(0); }
+			else if (key === 'End') { select(colCount - 1); }
+			else if (key === 'PageDown') { paged ? post({ type: 'pageBy', pages: 1 }) : select(Math.min(colCount - 1, selected + 10)); }
+			else if (key === 'PageUp') { paged ? post({ type: 'pageBy', pages: -1 }) : select(Math.max(0, selected - 10)); }
+			else if (key === 'g') { if ($jump) { $jump.focus(); $jump.select(); } }
+			else if (key === 'c') { post({ type: 'copyLiteral' }); }
+			else if (key === 'w') { post({ type: 'watch' }); }
+			else { return; }
+			e.preventDefault();
 		});
 
 		post({ type: 'ready' });
@@ -479,8 +681,14 @@ function itemFromNode(node: InspectorNode): Item {
 		drillable,
 		variablesReference: node.variable.variablesReference,
 		path: node.path,
+		indexed: node.variable.indexedVariables,
 		variable: node.variable,
 	};
+}
+
+/** A level pages when it has more indexed children than fit on one page. */
+function isPaged(level: { indexed?: number }): boolean {
+	return (level.indexed ?? 0) > PAGE_SIZE;
 }
 
 function toWireRow(item: Item): WireRow {

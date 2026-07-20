@@ -169,9 +169,11 @@ export function summarize(v: DapVariable): Summary {
 		return { text: addr ? `${type} ${addr}` : type, expandable, kind: 'pointer' };
 	}
 
-	// map[K]V — count from DAP named/indexed vars, else parsed from the value.
+	// map[K]V — the key count is the INDEXED count. dlv reports `namedVariables: 1`
+	// for a map (its lone `len()` metadata row), so preferring named here rendered
+	// every map as "(1)" — a 10,000-key map included (WO-9 defect 2).
 	if (/^map\[/.test(type)) {
-		const n = v.namedVariables ?? v.indexedVariables ?? readNumber(/\((\d+)\)|len:\s*(\d+)/, value);
+		const n = v.indexedVariables ?? readNumber(/\((\d+)\)|len:\s*(\d+)/, value);
 		return { text: n === undefined ? type : `${type} (${n})`, expandable, kind: 'map' };
 	}
 

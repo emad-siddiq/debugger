@@ -101,14 +101,32 @@ export class InspectorModel {
 		return res?.scopes ?? [];
 	}
 
-	/** Children of a composite value, indexed-paged; `path` is the parent's name-path. */
-	async children(variablesReference: number, path: readonly string[], start = 0, count = PAGE_SIZE): Promise<InspectorNode[]> {
+	/** All children of a composite value in one shot; `path` is the parent's name-path. */
+	async children(variablesReference: number, path: readonly string[]): Promise<InspectorNode[]> {
+		return this.fetch({ variablesReference }, path);
+	}
+
+	/**
+	 * One page of a large indexed collection (task 05: "slices/maps show 100 at a
+	 * time with next / jump-to-index").
+	 *
+	 * `filter: 'indexed'` is load-bearing, not decoration: dlv only reslices the
+	 * underlying variable when the filter is exactly that (`onVariablesRequest` →
+	 * `maybeLoadResliced`). An unfiltered `variables` request silently returns
+	 * whatever the parent load left behind — 64 elements, `MaxArrayValues`' default
+	 * — no matter what `start`/`count` say. That is the bug WO-9's 50k slice caught.
+	 */
+	async page(variablesReference: number, path: readonly string[], start = 0, count = PAGE_SIZE): Promise<InspectorNode[]> {
+		return this.fetch({ variablesReference, filter: 'indexed', start, count }, path);
+	}
+
+	/** The `named` children — dlv's metadata rows, e.g. a map's `len()`. */
+	async namedChildren(variablesReference: number, path: readonly string[]): Promise<InspectorNode[]> {
+		return this.fetch({ variablesReference, filter: 'named' }, path);
+	}
+
+	private async fetch(args: object, path: readonly string[]): Promise<InspectorNode[]> {
 		this.rollIfNewStop();
-		const args: { variablesReference: number; start?: number; count?: number } = { variablesReference };
-		if (count > 0) {
-			args.start = start;
-			args.count = count;
-		}
 		const res = await this.request('variables', args);
 		const vars: DapVariable[] = res?.variables ?? [];
 		const nodes: InspectorNode[] = [];

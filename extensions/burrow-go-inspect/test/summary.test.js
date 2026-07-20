@@ -46,9 +46,12 @@ const cases = {
 		const s = summarize(v({ value: '0xc00009c018', type: '*main.User', variablesReference: 5 }));
 		assert.deepStrictEqual(s, { text: '*main.User 0xc00009c018', expandable: true, kind: 'pointer' });
 	},
-	'map uses namedVariables for its count': () => {
-		const s = summarize(v({ value: 'map[string]int [...]', type: 'map[string]int', variablesReference: 6, namedVariables: 3 }));
-		assert.strictEqual(s.text, 'map[string]int (3)');
+	// dlv sends `namedVariables: 1` for every map — that is its lone `len()`
+	// metadata row, not the key count, which arrives as `indexedVariables`.
+	// Reading named here rendered a 10,000-key map as "(1)" (WO-9 defect 2).
+	'map counts keys from indexedVariables, ignoring dlv\'s namedVariables: 1': () => {
+		const s = summarize(v({ value: '(loaded 64/10000) map[string]main.Node [...]', type: 'map[string]main.Node', variablesReference: 6, namedVariables: 1, indexedVariables: 10000 }));
+		assert.strictEqual(s.text, 'map[string]main.Node (10000)');
 		assert.strictEqual(s.kind, 'map');
 	},
 	'map falls back to a parenthesized count in the value': () => {
