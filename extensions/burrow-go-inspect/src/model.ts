@@ -133,6 +133,43 @@ export class InspectorModel {
 	}
 
 	/**
+	 * Set a variable's value in place (DAP `setVariable`, task 05.5 value pane). The
+	 * `variablesReference` is the PARENT's — a variable is addressed by its container
+	 * plus its `name`, never on its own. Returns the new value dlv echoes back, or
+	 * throws with dlv's message (e.g. "can not set non-string variable"), which the
+	 * caller surfaces.
+	 */
+	async setVariable(variablesReference: number, name: string, value: string): Promise<string> {
+		const res = await this.request('setVariable', { variablesReference, name, value });
+		return res?.value ?? value;
+	}
+
+	/**
+	 * Re-resolve a name-path to a FRESH `variablesReference` from a new scopes
+	 * request. After `setVariable`, dlv's cached variable handles are stale — the
+	 * old ref still returns the pre-set value (verified: a fresh scopes walk shows
+	 * the new value where the cached handle shows the old). The inspector's drill
+	 * stack holds those stale refs, so a set has to re-anchor the current level here.
+	 * `path[0]` is the scope name; the rest are successive child names. Returns
+	 * undefined if the path no longer resolves (e.g. a paged index past the first
+	 * page — set-in-place on a big-collection element is out of scope).
+	 */
+	async resolveRef(path: readonly string[]): Promise<number | undefined> {
+		const frameId = await this.activeFrameId();
+		if (frameId === undefined || path.length === 0) {
+			return undefined;
+		}
+		const scopes = await this.scopes(frameId);
+		let ref: number | undefined = scopes.find(s => s.name === path[0])?.variablesReference;
+		for (let i = 1; i < path.length && ref !== undefined && ref > 0; i++) {
+			const res = await this.request('variables', { variablesReference: ref });
+			const child = (res?.variables ?? []).find((v: DapVariable) => v.name === path[i]);
+			ref = child?.variablesReference;
+		}
+		return ref;
+	}
+
+	/**
 	 * One page of a large indexed collection (task 05: "slices/maps show 100 at a
 	 * time with next / jump-to-index").
 	 *

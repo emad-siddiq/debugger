@@ -81,7 +81,7 @@
 				},
 				{
 					"id": "burrowInspectorMiller",
-					"name": "Inspector (Preview)",
+					"name": "Inspector",
 					"type": "webview",
 					"when": "inDebugMode && debugType == go"
 				},

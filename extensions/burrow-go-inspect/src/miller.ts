@@ -12,7 +12,9 @@
 // mounts). Depth on screen is always ≤ breadcrumb + two columns — no recursive
 // indentation, ever. It reuses the WO-3 model (paths, summaries, change-diff) and
 // owns no DAP connection. WO-6 made this the sole Burrow inspector (the WO-4 native
-// tree was retired); it registers as the "Inspector (Preview)" view.
+// tree was retired). WO-15 closed the value-pane parity gap — set-value on scalar
+// l-values (DAP setVariable) and copy-JSON — so it registers as "Inspector", no
+// longer "(Preview)".
 
 import {
 	CancellationToken,
@@ -25,6 +27,7 @@ import {
 	window,
 } from 'vscode';
 import { InspectorModel, InspectorNode, PAGE_SIZE } from './model';
+import { DapVariable, summarize } from './summary';
 import { toGoLiteral } from './literal';
 import { nonce, valuePaneCss } from './webview';
 
@@ -34,7 +37,8 @@ const COALESCE_MS = 8;
 /** One committed hop in the drill path (a scope or a composite we descended into). */
 interface Level {
 	readonly label: string;
-	readonly variablesReference: number;
+	/** Not readonly: a set-value re-anchors this to a fresh ref (dlv staleness, see setSelectedValue). */
+	variablesReference: number;
 	readonly path: readonly string[];
 	/** Total indexed children (slice/array/map length); paged when it exceeds a page. */
 	readonly indexed?: number;
@@ -88,6 +92,8 @@ interface WireValue {
 	readonly value: string;
 	readonly kind: string;
 	readonly changed: boolean;
+	/** Whether "Set value…" applies — a value inside a scope, not a scope root. */
+	readonly settable: boolean;
 }
 type WireState =
 	| { readonly type: 'empty'; readonly reason: string }
@@ -102,6 +108,8 @@ type Inbound =
 	| { readonly type: 'up' }
 	| { readonly type: 'jump'; readonly depth: number }
 	| { readonly type: 'copyLiteral' }
+	| { readonly type: 'copyJson' }
+	| { readonly type: 'setValue' }
 	| { readonly type: 'watch' }
 	| { readonly type: 'breakOnWrite' }
 	| { readonly type: 'pageBy'; readonly pages: number }
@@ -227,6 +235,12 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			case 'copyLiteral':
 				await this.copySelectedLiteral();
 				return;
+			case 'copyJson':
+				await this.copySelectedJson();
+				return;
+			case 'setValue':
+				await this.setSelectedValue();
+				return;
 			case 'watch': {
 				// Route the selected value's re-evaluable expression to the Watch view.
 				const item = this.currentItems[this.selectedIndex];
@@ -304,6 +318,58 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		}
 		await env.clipboard.writeText(toGoLiteral(item.variable));
 		window.showInformationMessage(`Copied ${item.name} as a Go literal.`);
+	}
+
+	private async copySelectedJson(): Promise<void> {
+		const item = this.currentItems[this.selectedIndex];
+		const model = this.activeModel();
+		if (!item?.variable || !model) {
+			return;
+		}
+		try {
+			const value = await toJsonValue(model, item.variable, item.path, 0);
+			await env.clipboard.writeText(JSON.stringify(value, null, 2));
+			window.showInformationMessage(`Copied ${item.name} as JSON.`);
+		} catch (err) {
+			window.showErrorMessage(`Copy JSON failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/**
+	 * Set the selected value in place (task 05.5). The parent for DAP `setVariable`
+	 * is the deepest committed level; a value at the scopes root (a scope itself) is
+	 * not an l-value, which the `settable` flag already gates in the UI.
+	 */
+	private async setSelectedValue(): Promise<void> {
+		const item = this.currentItems[this.selectedIndex];
+		const parent = this.stack[this.stack.length - 1];
+		const model = this.activeModel();
+		if (!item?.variable || !parent || !model) {
+			window.showWarningMessage('Select a value inside a scope to edit it.');
+			return;
+		}
+		const input = await window.showInputBox({
+			title: `Set ${item.name}`,
+			value: item.variable.value,
+			prompt: 'dlv accepts a Go literal; strings may also use a call expression.',
+		});
+		if (input === undefined) {
+			return; // cancelled
+		}
+		try {
+			const now = await model.setVariable(parent.variablesReference, item.name, input);
+			// dlv's cached handles are stale after a set (the old ref returns the old
+			// value), so re-anchor the current level to a fresh ref before rendering —
+			// otherwise the column would redraw the pre-set value and look like a no-op.
+			const fresh = await model.resolveRef(parent.path);
+			if (fresh !== undefined) {
+				parent.variablesReference = fresh;
+			}
+			window.showInformationMessage(`${item.name} = ${now}`);
+			await this.render('setValue');
+		} catch (err) {
+			window.showErrorMessage(`Set failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
 
 	/** Resolve the current level's rows (scopes at the root, else the deepest level's children). */
@@ -400,7 +466,10 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				columns.push({ title: selected.name, rows: childNodes.map(itemFromNode).map(toWireRow), selectedIndex: -1 });
 			}
 
-			// The value pane reflects the selected leaf (scopes have no variable).
+			// The value pane reflects the selected leaf (scopes have no variable). It is
+			// settable only inside a scope (stack non-empty) and when it is a scalar —
+			// dlv's setVariable rejects composites, so offering it there would only
+			// produce an error dialog.
 			const value = selected.variable
 				? {
 					name: selected.name,
@@ -408,6 +477,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 					value: selected.variable.value,
 					kind: selected.kind,
 					changed: selected.changed,
+					settable: this.stack.length > 0 && isScalarKind(selected.kind),
 				}
 				: undefined;
 
@@ -643,7 +713,9 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			$value.appendChild(pre);
 			const actions = document.createElement('div');
 			actions.className = 'actions';
+			if (value.settable) { actions.appendChild(button('Set value…', () => post({ type: 'setValue' }))); }
 			actions.appendChild(button('Copy as Go literal', () => post({ type: 'copyLiteral' })));
+			actions.appendChild(button('Copy JSON', () => post({ type: 'copyJson' })));
 			actions.appendChild(button('Watch', () => post({ type: 'watch' })));
 			actions.appendChild(button('Break on write', () => post({ type: 'breakOnWrite' })));
 			$value.appendChild(actions);
@@ -713,7 +785,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		// Keyboard (task 05.8 — the whole inspector without the mouse):
 		//   ↑↓ move · →/Enter drill · ← up a level · Home/End first/last row
 		//   PageDown/PageUp next/prev page of a large collection (jump 10 rows if not paged)
-		//   / filter this column · g focus jump-to-index · c copy as Go literal · w watch
+		//   / filter · g jump-to-index · c copy literal · e set value · w watch
 		// Escape in a focused input closes the filter (handled on the input); Escape
 		// with focus outside also closes it, so the filter never traps the keyboard.
 		const select = index => { if (index !== selected && index >= 0 && index < colCount) { post({ type: 'select', index: index }); } };
@@ -732,6 +804,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			else if (key === 'Escape' && filtering) { post({ type: 'filter', text: '' }); }
 			else if (key === 'g') { if ($jump) { $jump.focus(); $jump.select(); } }
 			else if (key === 'c') { post({ type: 'copyLiteral' }); }
+			else if (key === 'e') { post({ type: 'setValue' }); }
 			else if (key === 'w') { post({ type: 'watch' }); }
 			else { return; }
 			e.preventDefault();
@@ -770,6 +843,72 @@ function isPaged(level: { indexed?: number }): boolean {
 function matchesItem(item: Item, query: string): boolean {
 	const q = query.trim().toLowerCase();
 	return q === '' || item.name.toLowerCase().includes(q) || item.summary.toLowerCase().includes(q);
+}
+
+/** The kinds dlv's setVariable accepts (scalars) — composites it rejects. */
+function isScalarKind(kind: string): boolean {
+	return kind === 'number' || kind === 'bool' || kind === 'string';
+}
+
+/** Depth/breadth caps for copy-JSON, so exporting a deep or huge value terminates. */
+const JSON_MAX_DEPTH = 8;
+const JSON_MAX_CHILDREN = 200;
+
+/**
+ * A JSON value for the inspector's "Copy JSON" (task 05.5 value pane). Recurses
+ * through the DAP child model — scalars map to JS primitives, structs/maps to
+ * objects, slices/arrays to arrays — with caps so a 50k slice or a cyclic pointer
+ * graph can't run away. Truncation and depth limits are marked in-band ("…") so the
+ * output never silently claims to be complete.
+ */
+async function toJsonValue(model: InspectorModel, variable: DapVariable, path: readonly string[], depth: number): Promise<unknown> {
+	const kind = summarize(variable).kind;
+	const value = variable.value ?? '';
+	if (kind === 'nil') {
+		return null;
+	}
+	if (kind === 'number') {
+		const n = Number(value);
+		return Number.isFinite(n) ? n : value;
+	}
+	if (kind === 'bool') {
+		return value === 'true';
+	}
+	if (kind === 'string') {
+		return unquote(value);
+	}
+	// Composite. Without a child ref (or past the depth cap) fall back to dlv's
+	// rendered summary string — still valid JSON, just not structured.
+	if (variable.variablesReference <= 0 || depth >= JSON_MAX_DEPTH) {
+		return value || summarize(variable).text;
+	}
+	const nodes = await model.children(variable.variablesReference, path);
+	const capped = nodes.slice(0, JSON_MAX_CHILDREN);
+	const isArray = kind === 'slice' || kind === 'array' || kind === 'bytes';
+	if (isArray) {
+		const out: unknown[] = [];
+		for (const node of capped) {
+			out.push(await toJsonValue(model, node.variable, node.path, depth + 1));
+		}
+		if (nodes.length > capped.length) {
+			out.push(`… ${nodes.length - capped.length} more`);
+		}
+		return out;
+	}
+	// struct / map / pointer / other composite → object keyed by child name.
+	const obj: Record<string, unknown> = {};
+	for (const node of capped) {
+		obj[unquote(node.variable.name)] = await toJsonValue(model, node.variable, node.path, depth + 1);
+	}
+	if (nodes.length > capped.length) {
+		obj['…'] = `${nodes.length - capped.length} more`;
+	}
+	return obj;
+}
+
+/** Strip dlv's surrounding double quotes from a string, if present. */
+function unquote(s: string): string {
+	return s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
 }
 
 function toWireRow(item: Item): WireRow {
