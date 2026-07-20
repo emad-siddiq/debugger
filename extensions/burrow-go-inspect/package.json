@@ -87,7 +87,7 @@
 				},
 				{
 					"id": "burrowWatch",
-					"name": "Watch (Preview)",
+					"name": "Watch",
 					"type": "webview",
 					"when": "inDebugMode && debugType == go"
 				}

@@ -10,6 +10,10 @@
 // evaluates through `InspectorModel.evaluate` (DAP `evaluate`, `context: 'watch'`)
 // and owns no DAP connection. This is the layer-4 replacement for the stock Watch
 // view retired by core patch 0007.
+//
+// Parity (WO-14): add / remove / edit-in-place (double-click) / drag-reorder, with
+// per-workspace persistence — the stock Watch view's full CRUD, which is why this
+// dropped its "(Preview)" label.
 
 import {
 	CancellationToken,
@@ -48,6 +52,8 @@ type Inbound =
 	| { readonly type: 'ready' }
 	| { readonly type: 'add'; readonly expr: string }
 	| { readonly type: 'remove'; readonly index: number }
+	| { readonly type: 'edit'; readonly index: number; readonly expr: string }
+	| { readonly type: 'reorder'; readonly from: number; readonly to: number }
 	| { readonly type: 'select'; readonly index: number }
 	| { readonly type: 'copyLiteral' }
 	| { readonly type: 'clear' };
@@ -106,6 +112,10 @@ export class WatchProvider implements WebviewViewProvider, Disposable {
 		await this.store.update(STORE_KEY, this.expressions);
 	}
 
+	private inRange(i: number): boolean {
+		return i >= 0 && i < this.expressions.length;
+	}
+
 	private async onMessage(message: Inbound): Promise<void> {
 		switch (message.type) {
 			case 'ready':
@@ -119,6 +129,36 @@ export class WatchProvider implements WebviewViewProvider, Disposable {
 				await this.persist();
 				await this.render();
 				return;
+			case 'edit': {
+				// An empty edit deletes the row (matches the stock Watch view's behavior).
+				// A duplicate collapses onto the existing one so the list can't hold two.
+				const next = message.expr.trim();
+				if (message.index < 0 || message.index >= this.expressions.length) {
+					return;
+				}
+				if (!next) {
+					this.expressions.splice(message.index, 1);
+				} else if (this.expressions.includes(next) && this.expressions[message.index] !== next) {
+					this.expressions.splice(message.index, 1);
+				} else {
+					this.expressions[message.index] = next;
+				}
+				await this.persist();
+				await this.render();
+				return;
+			}
+			case 'reorder': {
+				const { from, to } = message;
+				if (from === to || !this.inRange(from) || !this.inRange(to)) {
+					return;
+				}
+				const [moved] = this.expressions.splice(from, 1);
+				this.expressions.splice(to, 0, moved);
+				this.selectedIndex = to;
+				await this.persist();
+				await this.render();
+				return;
+			}
 			case 'select':
 				this.selectedIndex = message.index;
 				await this.render();
@@ -200,7 +240,11 @@ export class WatchProvider implements WebviewViewProvider, Disposable {
 		.row:hover { background: var(--vscode-list-hoverBackground); }
 		.row.sel { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 		.row.invalid { opacity: .45; font-style: italic; }
+		.row.drop-before { box-shadow: inset 0 2px 0 var(--vscode-focusBorder); }
+		.row.drop-after { box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
+		.row.dragging { opacity: .4; }
 		.row .expr { flex: 0 0 auto; font-weight: 600; }
+		.row .expr-edit { flex: 1 1 auto; min-width: 0; font: inherit; font-weight: 600; padding: 0 4px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); border-radius: 2px; }
 		.row .summary { flex: 1 1 auto; opacity: .85; overflow: hidden; text-overflow: ellipsis; }
 		.row .rm { flex: 0 0 auto; opacity: .5; cursor: pointer; }
 		.row .rm:hover { opacity: 1; }
@@ -229,13 +273,69 @@ export class WatchProvider implements WebviewViewProvider, Disposable {
 		function renderRow(row, i) {
 			const li = document.createElement('li');
 			li.className = 'row' + (i === selected ? ' sel' : '') + (row.valid ? '' : ' invalid');
+			li.dataset.index = String(i);
+			li.draggable = true;
 			const expr = document.createElement('span'); expr.className = 'expr'; expr.textContent = row.expr; li.appendChild(expr);
 			const sum = document.createElement('span'); sum.className = 'summary'; sum.textContent = row.valid ? row.summary : 'not available in this frame'; li.appendChild(sum);
 			const rm = document.createElement('span'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'Remove';
 			rm.onclick = e => { e.stopPropagation(); post({ type: 'remove', index: i }); };
 			li.appendChild(rm);
 			li.onclick = () => post({ type: 'select', index: i });
+			// Double-click the expression to edit it in place (Enter commits, Escape reverts).
+			expr.ondblclick = e => { e.stopPropagation(); beginEdit(li, expr, i, row.expr); };
+			wireDrag(li, i);
 			return li;
+		}
+
+		// In-place edit: swap the expression span for an input. The list does not
+		// re-render while editing, so the input is never yanked out from under the caret.
+		let editing = false;
+		function beginEdit(li, expr, index, current) {
+			if (editing) { return; }
+			editing = true;
+			const input = document.createElement('input');
+			input.className = 'expr-edit';
+			input.value = current;
+			li.replaceChild(input, expr);
+			input.focus(); input.select();
+			const commit = () => { editing = false; post({ type: 'edit', index: index, expr: input.value }); };
+			const cancel = () => { editing = false; li.replaceChild(expr, input); };
+			input.onclick = e => e.stopPropagation();
+			input.onkeydown = e => {
+				if (e.key === 'Enter') { commit(); }
+				else if (e.key === 'Escape') { cancel(); }
+				e.stopPropagation();
+			};
+			input.onblur = cancel; // clicking away abandons the edit; Enter is the only commit
+		}
+
+		// Drag reorder. dragover marks a drop line above/below the hovered row; drop
+		// posts {from, to} with the target adjusted for the removal of the dragged item.
+		let dragFrom = -1;
+		function wireDrag(li, i) {
+			li.ondragstart = e => { dragFrom = i; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
+			li.ondragend = () => { dragFrom = -1; li.classList.remove('dragging'); clearDropMarks(); };
+			li.ondragover = e => {
+				if (dragFrom < 0) { return; }
+				e.preventDefault();
+				const r = li.getBoundingClientRect();
+				const after = e.clientY > r.top + r.height / 2;
+				clearDropMarks();
+				li.classList.add(after ? 'drop-after' : 'drop-before');
+			};
+			li.ondrop = e => {
+				if (dragFrom < 0) { return; }
+				e.preventDefault();
+				const r = li.getBoundingClientRect();
+				const after = e.clientY > r.top + r.height / 2;
+				let to = i + (after ? 1 : 0);
+				if (dragFrom < to) { to--; } // account for the dragged row leaving its slot
+				clearDropMarks();
+				post({ type: 'reorder', from: dragFrom, to: to });
+			};
+		}
+		function clearDropMarks() {
+			$rows.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
 		}
 
 		function renderValue(value) {
@@ -252,6 +352,9 @@ export class WatchProvider implements WebviewViewProvider, Disposable {
 		}
 
 		function apply(state) {
+			// Never rebuild the list out from under an open edit input; the commit/cancel
+			// that ends the edit triggers its own render.
+			if (editing) { return; }
 			const rows = state.rows || [];
 			selected = Math.max(0, Math.min(selected, rows.length - 1));
 			count = rows.length;
