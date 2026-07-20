@@ -79,6 +79,8 @@ interface WireColumn {
 	readonly selectedIndex: number;
 	/** Set only for a paged level — drives the "101–200 of 50,000" strip. */
 	readonly page?: WirePage;
+	/** The active filter text + how many rows it hid, for the filter box + count. */
+	readonly filter?: { readonly text: string; readonly matched: number; readonly total: number; readonly paged: boolean };
 }
 interface WireValue {
 	readonly name: string;
@@ -104,6 +106,7 @@ type Inbound =
 	| { readonly type: 'breakOnWrite' }
 	| { readonly type: 'pageBy'; readonly pages: number }
 	| { readonly type: 'pageTo'; readonly index: number }
+	| { readonly type: 'filter'; readonly text: string; readonly open?: boolean }
 	| { readonly type: 'painted'; readonly trace: string; readonly ms: number; readonly how: 'paint' | 'timeout' };
 
 export class MillerInspectorProvider implements WebviewViewProvider, Disposable {
@@ -119,6 +122,10 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 	private selectedIndex = 0;
 	/** Column-1 items for the current render, so message handlers resolve by index. */
 	private currentItems: Item[] = [];
+	/** The active per-column type-ahead filter (task 05.4); '' = matches everything. */
+	private filterText = '';
+	/** Whether the filter box is open (it shows even while empty, once '/' opens it). */
+	private filterActive = false;
 
 	/** Set by the extension to route the value pane's "Watch" button to the Watch view. */
 	onWatch: ((expression: string) => void) | undefined;
@@ -198,6 +205,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				if (item?.drillable) {
 					this.stack.push({ label: item.name, variablesReference: item.variablesReference, path: item.path, indexed: item.indexed, pageStart: 0 });
 					this.selectedIndex = 0;
+					this.filterText = ''; this.filterActive = false; // a new level starts unfiltered
 				}
 				await this.render('drill');
 				return;
@@ -205,11 +213,15 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			case 'up':
 				this.stack.pop();
 				this.selectedIndex = 0;
+				this.filterText = '';
+				this.filterActive = false;
 				await this.render();
 				return;
 			case 'jump':
 				this.stack = this.stack.slice(0, message.depth);
 				this.selectedIndex = 0;
+				this.filterText = '';
+				this.filterActive = false;
 				await this.render();
 				return;
 			case 'copyLiteral':
@@ -239,6 +251,12 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				// context rather than making it row 0 of an arbitrary window.
 				this.seekPage(Math.floor(message.index / PAGE_SIZE) * PAGE_SIZE);
 				await this.render('page');
+				return;
+			case 'filter':
+				this.filterText = message.text;
+				this.filterActive = message.text !== '' || message.open === true;
+				this.selectedIndex = 0;
+				await this.render('filter');
 				return;
 			case 'painted': {
 				const trace = this.traces.get(message.trace);
@@ -343,10 +361,24 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				this.currentItems = [];
 				return { type: 'empty', reason: 'Session running — stop at a breakpoint to inspect.' };
 			}
-			const items = await this.rowsFor(model);
+			const allItems = await this.rowsFor(model);
+			// Type-ahead filter (task 05.4). Applied here so `currentItems` — the index
+			// space every message handler (select/drill/copy) resolves against — matches
+			// exactly what the column shows. On a paged level the filter narrows the
+			// LOADED PAGE only, not all 50k; the box labels itself so that is not a lie
+			// (whole-collection content filtering needs a dlv-side predicate — deferred,
+			// same boundary as WO-10's jump-to-index).
+			const items = this.filterText ? allItems.filter(it => matchesItem(it, this.filterText)) : allItems;
 			this.currentItems = items;
 			if (items.length === 0) {
-				return { type: 'state', breadcrumb: this.breadcrumb(), columns: [{ title: this.columnTitle(), rows: [], selectedIndex: -1 }] };
+				const paged = this.pagedLevel();
+				const empty: WireColumn = {
+					title: this.columnTitle(),
+					rows: [],
+					selectedIndex: -1,
+					filter: this.filterActive ? { text: this.filterText, matched: 0, total: allItems.length, paged: !!paged } : undefined,
+				};
+				return { type: 'state', breadcrumb: this.breadcrumb(), columns: [empty] };
 			}
 			this.selectedIndex = clamp(this.selectedIndex, 0, items.length - 1);
 			const selected = items[this.selectedIndex];
@@ -356,7 +388,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 				title: this.columnTitle(),
 				rows: items.map(toWireRow),
 				selectedIndex: this.selectedIndex,
-				page: paged ? { start: paged.pageStart, shown: items.length, total: paged.indexed ?? items.length } : undefined,
+				page: paged ? { start: paged.pageStart, shown: allItems.length, total: paged.indexed ?? allItems.length } : undefined,
+				filter: this.filterActive ? { text: this.filterText, matched: items.length, total: allItems.length, paged: !!paged } : undefined,
 			};
 			const columns: WireColumn[] = [column1];
 
@@ -434,6 +467,10 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		.pager button:disabled { opacity: .4; cursor: default; }
 		.pager .range { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.pager input { width: 7ch; font: inherit; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); }
+		.filter { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.filter input { flex: 1 1 auto; font: inherit; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 1px 5px; }
+		.filter .count { flex: 0 0 auto; font-size: 11px; opacity: .7; white-space: nowrap; }
+		.filter .count.none { color: var(--vscode-errorForeground); opacity: .9; }
 		#empty { padding: 12px; opacity: .7; }
 		${valuePaneCss()}
 	</style>
@@ -453,6 +490,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		let colCount = 1;      // rows in column 1 (for keyboard clamping)
 		let paged = false;     // column 1 is a window over a large collection
 		let $jump = null;      // the pager's jump-to-index input, when present
+		let $filter = null;    // the type-ahead filter input, when present
+		let filtering = false; // whether column 1 currently has a filter box
 
 		function post(msg) { vscode.postMessage(msg); }
 
@@ -537,6 +576,30 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			return bar;
 		}
 
+		// The type-ahead filter box for column 1. Shown once the user starts filtering
+		// (via '/'); its count says how many rows matched, and — on a paged level —
+		// that the filter only sees the loaded page.
+		function renderFilter(filter) {
+			const bar = document.createElement('div');
+			bar.className = 'filter';
+			const input = document.createElement('input');
+			input.type = 'text';
+			input.placeholder = filter.paged ? 'Filter this page…' : 'Filter…';
+			input.value = filter.text;
+			input.oninput = () => post({ type: 'filter', text: input.value });
+			input.onkeydown = e => {
+				if (e.key === 'Escape') { post({ type: 'filter', text: '' }); }
+				if (e.key === 'Enter' || e.key === 'ArrowDown') { input.blur(); }
+				e.stopPropagation();
+			};
+			const count = document.createElement('span');
+			count.className = 'count' + (filter.matched === 0 ? ' none' : '');
+			count.textContent = filter.matched + ' of ' + filter.total + (filter.paged ? ' on page' : '');
+			$filter = input;
+			bar.append(input, count);
+			return bar;
+		}
+
 		function renderColumn(col, isPrimary) {
 			const wrap = document.createElement('div');
 			wrap.className = 'col' + (isPrimary ? '' : ' preview');
@@ -545,6 +608,7 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			title.textContent = col.title;
 			wrap.appendChild(title);
 			if (isPrimary && col.page) { wrap.appendChild(renderPager(col.page)); }
+			if (isPrimary && col.filter) { wrap.appendChild(renderFilter(col.filter)); }
 			const ul = document.createElement('ul');
 			ul.className = 'rows';
 			col.rows.forEach((row, i) => ul.appendChild(renderRow(row, i, isPrimary)));
@@ -605,12 +669,19 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			renderBreadcrumb(state.breadcrumb);
 			$columns.textContent = '';
 			$jump = null;
+			$filter = null;
 			const primary = state.columns[0];
 			selected = primary ? primary.selectedIndex : 0;
 			colCount = primary ? primary.rows.length : 0;
 			paged = !!(primary && primary.page);
+			filtering = !!(primary && primary.filter);
 			state.columns.forEach((col, i) => $columns.appendChild(renderColumn(col, i === 0)));
 			renderValue(state.value);
+			// Keep focus in the filter box across the re-render each keystroke triggers,
+			// so typing is uninterrupted; the caret goes to the end.
+			if ($filter && document.activeElement !== $filter && filtering) {
+				const v = $filter.value; $filter.focus(); $filter.setSelectionRange(v.length, v.length);
+			}
 		}
 
 		window.addEventListener('message', e => {
@@ -642,7 +713,9 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 		// Keyboard (task 05.8 — the whole inspector without the mouse):
 		//   ↑↓ move · →/Enter drill · ← up a level · Home/End first/last row
 		//   PageDown/PageUp next/prev page of a large collection (jump 10 rows if not paged)
-		//   g focus jump-to-index · c copy as Go literal · w watch the selection
+		//   / filter this column · g focus jump-to-index · c copy as Go literal · w watch
+		// Escape in a focused input closes the filter (handled on the input); Escape
+		// with focus outside also closes it, so the filter never traps the keyboard.
 		const select = index => { if (index !== selected && index >= 0 && index < colCount) { post({ type: 'select', index: index }); } };
 		window.addEventListener('keydown', e => {
 			if (e.target && e.target.tagName === 'INPUT') { return; }
@@ -655,6 +728,8 @@ export class MillerInspectorProvider implements WebviewViewProvider, Disposable 
 			else if (key === 'End') { select(colCount - 1); }
 			else if (key === 'PageDown') { paged ? post({ type: 'pageBy', pages: 1 }) : select(Math.min(colCount - 1, selected + 10)); }
 			else if (key === 'PageUp') { paged ? post({ type: 'pageBy', pages: -1 }) : select(Math.max(0, selected - 10)); }
+			else if (key === '/') { $filter ? $filter.focus() : post({ type: 'filter', text: '', open: true }); }
+			else if (key === 'Escape' && filtering) { post({ type: 'filter', text: '' }); }
 			else if (key === 'g') { if ($jump) { $jump.focus(); $jump.select(); } }
 			else if (key === 'c') { post({ type: 'copyLiteral' }); }
 			else if (key === 'w') { post({ type: 'watch' }); }
@@ -689,6 +764,12 @@ function itemFromNode(node: InspectorNode): Item {
 /** A level pages when it has more indexed children than fit on one page. */
 function isPaged(level: { indexed?: number }): boolean {
 	return (level.indexed ?? 0) > PAGE_SIZE;
+}
+
+/** Case-insensitive substring match over a row's name and its summary. */
+function matchesItem(item: Item, query: string): boolean {
+	const q = query.trim().toLowerCase();
+	return q === '' || item.name.toLowerCase().includes(q) || item.summary.toLowerCase().includes(q);
 }
 
 function toWireRow(item: Item): WireRow {
