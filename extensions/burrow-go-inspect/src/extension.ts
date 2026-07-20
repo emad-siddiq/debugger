@@ -18,6 +18,7 @@ import { BurrowInlineValuesProvider } from './inline';
 import { InspectorModel } from './model';
 import { MillerInspectorProvider } from './miller';
 import { WatchProvider } from './watch';
+import { FramesProvider } from './frames';
 
 // burrow-go-inspect — the IX inspector (architecture task 05). The slices:
 //   WO-3  path-addressed DAP value model + per-Go-type summary renderer (model.ts, summary.ts)
@@ -41,6 +42,7 @@ export function activate(context: ExtensionContext): void {
 	const models = new Map<string, InspectorModel>();
 	const miller = new MillerInspectorProvider(models);
 	const watch = new WatchProvider(models, context.workspaceState);
+	const frames = new FramesProvider(models);
 
 	// The inspector's value-pane "Watch" button routes the selected value's
 	// re-evaluable expression into the Watch view (WO-7).
@@ -74,6 +76,8 @@ export function activate(context: ExtensionContext): void {
 	context.subscriptions.push(
 		miller,
 		watch,
+		frames,
+		window.registerWebviewViewProvider(FramesProvider.viewId, frames),
 		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
 		window.registerWebviewViewProvider(WatchProvider.viewId, watch),
 		// Ghost values in the editor (WO-8) — core drives the lifecycle; we only answer
@@ -88,12 +92,15 @@ export function activate(context: ExtensionContext): void {
 			models.delete(session.id);
 			miller.reset();
 			watch.refresh();
+			frames.refresh();
 		}),
 		// A frame switch invalidates the current drill path (refs are frame-scoped),
 		// so re-root the inspector and re-evaluate watches on the newly focused frame.
+		// Frames re-renders too, to move the selection tint to the newly focused frame.
 		debug.onDidChangeActiveStackItem(() => {
 			miller.reset();
 			watch.refresh();
+			frames.refresh();
 		}),
 		debug.registerDebugAdapterTrackerFactory(GO_DEBUG_TYPE, trackerFactory),
 	);

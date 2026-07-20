@@ -6,6 +6,8 @@
 import { DebugSession, DebugStackFrame, DebugThread, debug } from 'vscode';
 import { DapVariable, Summary, briefFromChildren, summarize } from './summary';
 import { watchVariableFrom } from './watchmap';
+import { DapThread } from './goroutines';
+import { DapFrame } from './framerows';
 
 // model.ts — the path-addressed value model over one debug session's DAP
 // connection (IX, architecture task 05.3: "path-addressed value model over DAP,
@@ -16,6 +18,9 @@ import { watchVariableFrom } from './watchmap';
 
 /** Large collections page this many at a time (task 05: "slices/maps show 100 at a time"). */
 export const PAGE_SIZE = 100;
+
+/** Deep enough for any Go stack worth reading; the fold rows keep it legible. */
+const MAX_FRAMES = 200;
 
 /** The subset of a DAP `Scope` we surface as inspector roots. */
 export interface DapScope {
@@ -92,6 +97,27 @@ export class InspectorModel {
 		} catch {
 			return undefined; // invalid-in-this-frame — caller grays it out.
 		}
+	}
+
+	/** Every goroutine dlv knows about, as DAP threads (task 05.2). */
+	async threads(): Promise<DapThread[]> {
+		const res = await this.request('threads', undefined);
+		return res?.threads ?? [];
+	}
+
+	/** One goroutine's call stack. */
+	async stackTrace(threadId: number, levels = MAX_FRAMES): Promise<DapFrame[]> {
+		const res = await this.request('stackTrace', { threadId, startFrame: 0, levels });
+		return res?.stackFrames ?? [];
+	}
+
+	/** The goroutine the debugger has focused, if the active stack item names one. */
+	activeThreadId(): number | undefined {
+		const item = debug.activeStackItem;
+		if ((item instanceof DebugThread || item instanceof DebugStackFrame) && item.session.id === this.session.id) {
+			return item.threadId;
+		}
+		return undefined;
 	}
 
 	/** The non-expensive scopes (Arguments, Locals, …) of a frame. */

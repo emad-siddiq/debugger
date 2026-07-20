@@ -58,6 +58,14 @@
 					"tags": [
 						"burrow"
 					]
+				},
+				"burrow.inspector.hideStockCallStack": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Hide the stock **Call Stack** view while debugging Go — the Burrow Frames view (compact frames, runtime-frame collapsing, goroutine switcher) replaces it. Set to `false` to bring the stock Call Stack view back alongside it.",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
 		},

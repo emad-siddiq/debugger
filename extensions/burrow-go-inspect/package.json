@@ -24,7 +24,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-inspect",
 		"watch": "gulp watch-extension:burrow-go-inspect",
-		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js && node test/inlinemap.test.js"
+		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js && node test/inlinemap.test.js && node test/goroutines.test.js && node test/framerows.test.js"
 	},
 	"contributes": {
 		"configuration": {
@@ -42,6 +42,12 @@
 		},
 		"views": {
 			"debug": [
+				{
+					"id": "burrowFrames",
+					"name": "Frames (Preview)",
+					"type": "webview",
+					"when": "inDebugMode && debugType == go"
+				},
 				{
 					"id": "burrowInspectorMiller",
 					"name": "Inspector (Preview)",

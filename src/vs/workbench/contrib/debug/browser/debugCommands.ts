@@ -1195,3 +1195,33 @@ registerAction2(class extends Action2 {
 		return result;
 	}
 });
+
+// Burrow (IX/WO-11, patch 0008): focus a stack frame — or a whole goroutine — from
+// an extension. `IDebugService.focusStackFrame` is core-only, and the extension API
+// exposes `debug.activeStackItem` as READ-ONLY, so the Burrow Frames view (a webview
+// in burrow-go-inspect) has no supported way to act on a click. Everything else it
+// needs — the goroutine list, the call stack — it already reads over DAP; this is the
+// one capability that has to come from core.
+//
+// Omit `frameId` to focus a goroutine at its top frame, which is what the goroutine
+// switcher does. The call stack is fetched on demand because a thread the user has
+// never expanded has an empty one.
+CommandsRegistry.registerCommand({
+	id: 'burrow.debug.focusFrame',
+	handler: async (accessor: ServicesAccessor, args: { sessionId: string; threadId: number; frameId?: number }) => {
+		const debugService = accessor.get(IDebugService);
+		const session = debugService.getModel().getSessions().find(s => s.getId() === args.sessionId);
+		const thread = session?.getAllThreads().find(t => t.threadId === args.threadId);
+		if (!thread) {
+			return false;
+		}
+		if (thread.getCallStack().length === 0) {
+			await debugService.getModel().fetchCallstack(thread);
+		}
+		const frame = args.frameId === undefined
+			? thread.getTopStackFrame()
+			: thread.getCallStack().find(f => f.frameId === args.frameId);
+		await debugService.focusStackFrame(frame ?? thread.getTopStackFrame(), thread, session, { explicit: true });
+		return true;
+	}
+});

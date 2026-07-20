@@ -14,6 +14,8 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync"
+	"time"
 )
 
 // L1..L8 — eight levels of nesting, matching the acceptance criterion
@@ -94,6 +96,59 @@ func bigMap() map[string]Node {
 	return m
 }
 
+// The goroutine storm (task 04.6) — the Frames view's goroutine switcher needs
+// more than one goroutine, and needs them in DIFFERENT states, or "switch to an
+// interesting goroutine" has nothing to be interesting about.
+//
+// Three flavours, all parked in a way dlv reports distinctly: blocked on a
+// channel receive, blocked on a mutex main holds, and sleeping. `started` gates
+// the breakpoint on every goroutine having actually reached its blocking call —
+// without it the storm races the stop and the fixture reports a different set of
+// goroutines every run.
+const (
+	blockedOnChan  = 3
+	blockedOnMutex = 2
+	sleeping       = 3
+)
+
+type storm struct {
+	ch      chan int
+	mu      sync.Mutex
+	started sync.WaitGroup
+}
+
+func (s *storm) start() {
+	s.ch = make(chan int)
+	s.started.Add(blockedOnChan + blockedOnMutex + sleeping)
+	s.mu.Lock() // held for the whole run, so the mutex waiters stay parked
+
+	for i := 0; i < blockedOnChan; i++ {
+		go func(id int) {
+			s.started.Done()
+			<-s.ch // parks until the process exits
+		}(i)
+	}
+	for i := 0; i < blockedOnMutex; i++ {
+		go func(id int) {
+			s.started.Done()
+			s.mu.Lock()
+			defer s.mu.Unlock()
+		}(i)
+	}
+	for i := 0; i < sleeping; i++ {
+		go func(id int) {
+			s.started.Done()
+			time.Sleep(time.Hour)
+		}(i)
+	}
+	s.started.Wait()
+	// `started.Done()` returns before the goroutine reaches its blocking call, so
+	// yield until the scheduler has actually parked them all. A sleep is crude but
+	// the alternative — instrumenting each park — would change what dlv reports.
+	time.Sleep(50 * time.Millisecond)
+	runtime.Gosched()
+}
+
 // gauntlet stops with all the hostile shapes live in one frame, so a single
 // stop exercises deep drilling AND both paging paths. The measured case for
 // task 05.8 (stop → painted inspector < 150 ms) is this frame.
@@ -106,6 +161,9 @@ func gauntlet() {
 	var nilPtr *Node
 	var err error
 
+	var s storm
+	s.start()
+
 	if os.Getenv("BURROW_GAUNTLET") != "" {
 		runtime.Breakpoint()
 	}
@@ -113,5 +171,5 @@ func gauntlet() {
 	// Keep every local live past the breakpoint — the compiler is free to
 	// reclaim a variable at its last use, and a reclaimed local reads as
 	// "optimized out" in the inspector, which would make the fixture lie.
-	fmt.Println(root.Label, len(nums), len(nodes), labels[0], ptr.Depth, nilPtr == nil, err == nil)
+	fmt.Println(root.Label, len(nums), len(nodes), labels[0], ptr.Depth, nilPtr == nil, err == nil, cap(s.ch))
 }
