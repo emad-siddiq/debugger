@@ -11,8 +11,10 @@ import {
 	ProviderResult,
 	commands,
 	debug,
+	languages,
 	window,
 } from 'vscode';
+import { BurrowInlineValuesProvider } from './inline';
 import { InspectorModel } from './model';
 import { MillerInspectorProvider } from './miller';
 import { WatchProvider } from './watch';
@@ -25,6 +27,9 @@ import { WatchProvider } from './watch';
 //   WO-7  the Watch view (watch.ts) — a flat list reusing the summary renderer +
 //         value pane; the inspector's "Watch" button feeds it. Retiring the *stock*
 //         Watch view is core patch 0007 (Variables was 0006).
+//   WO-8  inline value decorations (inline.ts, inlinemap.ts) — active-frame ghost
+//         values via the workbench's InlineValuesProvider, same summary renderer,
+//         gated by `burrow.inspector.inlineValues`. No core patch needed.
 // The Miller webview is the chosen presentation: only a webview (or a future core
 // workbench view) can render the side-by-side columns + value pane the design
 // mandates — a TreeView structurally cannot, so the WO-4 tree was always a
@@ -71,6 +76,9 @@ export function activate(context: ExtensionContext): void {
 		watch,
 		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
 		window.registerWebviewViewProvider(WatchProvider.viewId, watch),
+		// Ghost values in the editor (WO-8) — core drives the lifecycle; we only answer
+		// "what does the active frame hold?" with the inspector's own summaries.
+		languages.registerInlineValuesProvider({ language: 'go' }, new BurrowInlineValuesProvider(models)),
 		debug.onDidStartDebugSession(session => {
 			if (session.type === GO_DEBUG_TYPE) {
 				models.set(session.id, new InspectorModel(session));

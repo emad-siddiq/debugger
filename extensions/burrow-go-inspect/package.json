@@ -24,9 +24,22 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-inspect",
 		"watch": "gulp watch-extension:burrow-go-inspect",
-		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js"
+		"test": "node test/summary.test.js && node test/literal.test.js && node test/watchmap.test.js && node test/inlinemap.test.js"
 	},
 	"contributes": {
+		"configuration": {
+			"title": "Burrow Inspector",
+			"properties": {
+				"burrow.inspector.inlineValues": {
+					"type": "boolean",
+					"default": true,
+					"description": "Ghost the active frame's values inline in the editor, after `:=`, `var` and function parameters. Uses the same summary renderer as the Burrow inspector.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
 		"views": {
 			"debug": [
 				{
