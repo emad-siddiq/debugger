@@ -12,6 +12,16 @@
 			}
 		},
 		{
+			"name": "Debug debuggee (gauntlet)",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}",
+			"env": {
+				"BURROW_GAUNTLET": "1"
+			}
+		},
+		{
 			"name": "Debug debuggee (stop on entry)",
 			"type": "go",
 			"request": "launch",

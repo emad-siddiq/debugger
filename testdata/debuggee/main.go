@@ -44,4 +44,5 @@ func main() {
 		total = add(total, n)
 	}
 	fmt.Println("total:", total, "leaf:", cfg.Inner.Leaf.Value)
+	gauntlet()
 }
