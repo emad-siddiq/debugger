@@ -24,7 +24,8 @@
 	},
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-debug",
-		"watch": "gulp watch-extension:burrow-go-debug"
+		"watch": "gulp watch-extension:burrow-go-debug",
+		"test": "node test/envfile.test.js"
 	},
 	"contributes": {
 		"breakpoints": [
@@ -69,6 +70,17 @@
 								"type": "object",
 								"description": "Environment variables for the debugged program.",
 								"default": {}
+							},
+							"envFile": {
+								"type": [
+									"string",
+									"array"
+								],
+								"items": {
+									"type": "string"
+								},
+								"description": "Path(s) to a dotenv-style file whose KEY=VALUE lines are merged into `env` (inline `env` wins). Delve ignores this attribute — Burrow merges it into `env` before launch.",
+								"default": ""
 							},
 							"cwd": {
 								"type": "string",

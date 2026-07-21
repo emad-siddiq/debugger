@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import {
@@ -18,7 +18,9 @@ import {
 	ProviderResult,
 	WorkspaceFolder,
 	debug,
+	window,
 } from 'vscode';
+import { mergeEnv, parseEnvFile } from './envfile';
 
 // burrow-go-debug is the WO-2 IX prerequisite: the smallest extension that turns
 // the intact workbench debug UI into a working Go debugger by bridging to a
@@ -77,6 +79,37 @@ class GoDebugConfigurationProvider implements DebugConfigurationProvider {
 		} else if (config.request === 'attach' && !config.mode) {
 			config.mode = 'local';
 		}
+		return config;
+	}
+
+	/**
+	 * Merges any `envFile` into `env` AFTER variable substitution (so a
+	 * `${workspaceFolder}` in the path is already resolved). `dlv dap` honors
+	 * `env` in the launch request but ignores `envFile` (a vscode-go
+	 * convenience), so we resolve it here, let inline `env` win on conflict, and
+	 * drop `envFile` before handing the config to Delve. A missing/unreadable
+	 * file warns and is skipped rather than aborting the session — inline `env`
+	 * usually carries the essentials.
+	 */
+	resolveDebugConfigurationWithSubstitutedVariables(_folder: WorkspaceFolder | undefined, config: DebugConfiguration): ProviderResult<DebugConfiguration> {
+		const envFile = config.envFile;
+		if (!envFile) {
+			return config;
+		}
+		const files = Array.isArray(envFile) ? envFile : [envFile];
+		const fileEnvs: Array<Record<string, string>> = [];
+		for (const file of files) {
+			if (typeof file !== 'string' || !file) {
+				continue;
+			}
+			try {
+				fileEnvs.push(parseEnvFile(readFileSync(file, 'utf8')));
+			} catch (err) {
+				void window.showWarningMessage(`Burrow: could not read envFile '${file}': ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		config.env = mergeEnv(fileEnvs, config.env);
+		delete config.envFile;
 		return config;
 	}
 }
