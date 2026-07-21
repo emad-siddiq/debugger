@@ -42,6 +42,17 @@ it is the FIRST `burrow-*` extension with a runtime npm dependency
 lists are the same "curated Burrow build wiring" concern, so this ledger entry
 covers both. Dep-free `burrow-*` extensions stay out of `dirs.ts` (correctly).
 
+**Full-Stack-Debugger extension (`burrow-ts-base`):** the `typescript-language-server`
+client (milestone M4/N3) registers here (`'extensions/burrow-ts-base/tsconfig.json'`) AND,
+being the SECOND `burrow-*` with runtime npm deps (`vscode-languageclient` + the bundled
+`typescript-language-server` + `typescript`), also gets a `build/npm/dirs.ts` row
+(`'extensions/burrow-ts-base'`) — exactly like `burrow-go-base`. Same two-list concern;
+this entry covers both touches. Its sibling, the restored built-in
+`extensions/typescript-basics` grammar (un-stripped from `upstream-v1.128` so `.ts`/`.tsx`
+register + highlight and back the LSP + the FD isolation editor), is grammar-only (no
+`tsconfig.json` → not in this array; auto-globbed for packaging) and dep-free (not in
+`dirs.ts`), so it needs no build-list row and no ledger touch of its own.
+
 **Full-Stack-Debugger extension (`burrow-docker`):** the Docker activity-bar viewlet
 (`'extensions/burrow-docker/tsconfig.json'`, Full Stack Debugger milestone M3) registers
 here like the others — grouped alphabetically among the `burrow-*` entries (after

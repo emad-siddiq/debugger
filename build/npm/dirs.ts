@@ -15,6 +15,7 @@ export const dirs = [
 	'build/vite',
 	'extensions',
 	'extensions/burrow-go-base',
+	'extensions/burrow-ts-base',
 	'extensions/configuration-editing',
 	'extensions/copilot',
 	'extensions/css-language-features',

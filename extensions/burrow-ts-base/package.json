@@ -1,0 +1,46 @@
+{
+	"name": "burrow-ts-base",
+	"displayName": "Burrow TypeScript Language Server",
+	"description": "Starts typescript-language-server so hover, go-to-definition, find-references and rename work in the frontend's .ts/.tsx — the frontend counterpart of burrow-go-base. The TypeScript grammar comes from the built-in typescript-basics; this provides the language smarts.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"activationEvents": [
+		"onLanguage:typescript",
+		"onLanguage:typescriptreact",
+		"onLanguage:javascript",
+		"onLanguage:javascriptreact"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-ts-base",
+		"watch": "gulp watch-extension:burrow-ts-base",
+		"test": "node test/tslsp.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.ts.restartLanguageServer",
+				"title": "Restart TypeScript Language Server",
+				"category": "Burrow"
+			}
+		]
+	},
+	"dependencies": {
+		"typescript": "^5.6.2",
+		"typescript-language-server": "^5.0.0",
+		"vscode-languageclient": "^8.0.2"
+	}
+}
