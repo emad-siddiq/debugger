@@ -10,6 +10,7 @@ import { buildPreviewSql, loadSchemaTree } from './catalog';
 import { runSelect } from './grid';
 import { DbExplorerProvider, OPEN_TABLE_COMMAND } from './explorer';
 import { GridPanel } from './panel';
+import { PgAdmin } from './pgadmin';
 
 // burrow-db — the Postgres explorer (architecture task 10). FIRST SLICE:
 //   • Connection layer (dsn.ts + query.ts) — resolve a connection string from
@@ -70,8 +71,17 @@ export function activate(context: ExtensionContext): void {
 
 	const explorer = new DbExplorerProvider(async () => loadSchemaTree(await getClient()));
 
+	// The pgAdmin surface: a Burrow-managed pgAdmin container, provisioned from the
+	// same connection the native explorer uses (setting → DATABASE_URL → prompt)
+	// and embedded in a webview. Reaches the host-published db over the host.
+	const pgAdmin = new PgAdmin(context.extensionPath);
+
 	context.subscriptions.push(
+		pgAdmin,
 		window.registerTreeDataProvider('burrowDbExplorer', explorer),
+
+		commands.registerCommand('burrow.db.openPgAdmin', () => pgAdmin.open()),
+		commands.registerCommand('burrow.db.stopPgAdmin', () => pgAdmin.stop()),
 
 		commands.registerCommand('burrow.db.refresh', () => explorer.refresh()),
 

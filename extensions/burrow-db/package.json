@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-db",
 		"watch": "gulp watch-extension:burrow-db",
-		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js"
+		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js && node test/pgadminConfig.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -44,6 +44,17 @@
 			{
 				"command": "burrow.db.openTable",
 				"title": "Open Table",
+				"category": "Burrow DB"
+			},
+			{
+				"command": "burrow.db.openPgAdmin",
+				"title": "Open pgAdmin",
+				"category": "Burrow DB",
+				"icon": "$(server-environment)"
+			},
+			{
+				"command": "burrow.db.stopPgAdmin",
+				"title": "Stop pgAdmin",
 				"category": "Burrow DB"
 			}
 		],
@@ -88,6 +99,11 @@
 					"command": "burrow.db.refresh",
 					"when": "view == burrowDbExplorer",
 					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.db.openPgAdmin",
+					"when": "view == burrowDbExplorer",
+					"group": "navigation@3"
 				}
 			]
 		},
@@ -107,6 +123,15 @@
 					"default": 100,
 					"minimum": 1,
 					"description": "Row limit appended to the SELECT that opens when you click a table in the explorer.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.db.pgadmin.port": {
+					"type": "number",
+					"default": 6110,
+					"minimum": 1,
+					"description": "Loopback port Burrow publishes the managed pgAdmin container on (http://127.0.0.1:<port>).",
 					"tags": [
 						"burrow"
 					]
