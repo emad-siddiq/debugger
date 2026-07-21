@@ -33,6 +33,15 @@ is added right after burrow-go-debug, same rule.
 (the frontend-debugger editor panel + sidecar host, architecture task 15) is
 added between burrow-core and burrow-go-debug, same rule.
 
+**Task-03 extension (`burrow-go-base`):** the gopls language client
+(`'extensions/burrow-go-base/tsconfig.json'`) registers here like the others, but
+it is the FIRST `burrow-*` extension with a runtime npm dependency
+(`vscode-languageclient`), so it also needs an entry in **`build/npm/dirs.ts`**
+(`'extensions/burrow-go-base'`) — the curated list of dirs `postinstall` runs
+`npm install` in. That is a second build-list touch beyond this file; the two
+lists are the same "curated Burrow build wiring" concern, so this ledger entry
+covers both. Dep-free `burrow-*` extensions stay out of `dirs.ts` (correctly).
+
 **Tool-extension batch (tasks 06/07/08/09/10/11/16):** seven new first-slice tool
 extensions register the same way, grouped and alphabetized among the `burrow-*`
 entries at the top of the array — `burrow-db` (task 10 DB explorer),

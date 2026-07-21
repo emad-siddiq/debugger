@@ -1,0 +1,41 @@
+{
+	"name": "burrow-go-base",
+	"displayName": "Burrow Go Language",
+	"description": "The minimal gopls language client for Burrow (architecture task 03, first slice): wires hover, go-to-definition, find-references and goimports format-on-save by starting the host `gopls` as an LSP server. A from-scratch client — not a vendored vscode-go — so it stays cheap to re-pin. Unblocks burrow-go-nav's workspace-symbol provider, which depends on a running gopls.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"activationEvents": [
+		"onLanguage:go"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-go-base",
+		"watch": "gulp watch-extension:burrow-go-base",
+		"test": "node test/gopls.test.js"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^8.0.2"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.go.restartLanguageServer",
+				"title": "Restart Go Language Server",
+				"category": "Burrow"
+			}
+		]
+	}
+}

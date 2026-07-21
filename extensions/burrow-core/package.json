@@ -82,7 +82,14 @@
 			"terminal.integrated.defaultProfile.linux": "bash",
 			"editor.minimap.enabled": false,
 			"workbench.startupEditor": "none",
-			"chat.commandCenter.enabled": false
+			"chat.commandCenter.enabled": false,
+			"[go]": {
+				"editor.formatOnSave": true,
+				"editor.defaultFormatter": "burrow.burrow-go-base",
+				"editor.codeActionsOnSave": {
+					"source.organizeImports": "explicit"
+				}
+			}
 		}
 	}
 }
