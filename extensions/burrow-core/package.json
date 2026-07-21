@@ -38,6 +38,18 @@
 				"command": "workbench.action.toggleAuxiliaryBar",
 				"key": "ctrl+alt+d",
 				"mac": "cmd+alt+d"
+			},
+			{
+				"command": "editor.action.revealDefinition",
+				"key": "ctrl+b",
+				"mac": "cmd+b",
+				"when": "editorTextFocus && editorHasDefinitionProvider"
+			},
+			{
+				"command": "editor.action.goToImplementation",
+				"key": "ctrl+alt+b",
+				"mac": "cmd+alt+b",
+				"when": "editorTextFocus && editorHasImplementationProvider"
 			}
 		],
 		"configuration": {
@@ -81,6 +93,7 @@
 			"terminal.integrated.defaultProfile.osx": "bash",
 			"terminal.integrated.defaultProfile.linux": "bash",
 			"editor.minimap.enabled": false,
+			"editor.multiCursorModifier": "alt",
 			"workbench.startupEditor": "none",
 			"chat.commandCenter.enabled": false,
 			"[go]": {
