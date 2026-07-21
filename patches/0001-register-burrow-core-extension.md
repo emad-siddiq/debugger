@@ -42,6 +42,14 @@ it is the FIRST `burrow-*` extension with a runtime npm dependency
 lists are the same "curated Burrow build wiring" concern, so this ledger entry
 covers both. Dep-free `burrow-*` extensions stay out of `dirs.ts` (correctly).
 
+**Full-Stack-Debugger extension (`burrow-docker`):** the Docker activity-bar viewlet
+(`'extensions/burrow-docker/tsconfig.json'`, Full Stack Debugger milestone M3) registers
+here like the others — grouped alphabetically among the `burrow-*` entries (after
+`burrow-db`). It is a self-contained layer-4 extension (activity-bar viewsContainers +
+TreeDataProviders + the `docker` CLI; no runtime npm dep, so no `dirs.ts` entry, and no
+core change beyond this one compilation line), so this ledger entry — covering the
+*pattern* — is the only ledger touch it needs.
+
 **Tool-extension batch (tasks 06/07/08/09/10/11/16):** seven new first-slice tool
 extensions register the same way, grouped and alphabetized among the `burrow-*`
 entries at the top of the array — `burrow-db` (task 10 DB explorer),

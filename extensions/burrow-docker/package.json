@@ -1,0 +1,201 @@
+{
+	"name": "burrow-docker",
+	"displayName": "Burrow Docker",
+	"description": "A first-class Docker activity-bar viewlet for Burrow: containers (grouped by compose project), images, volumes and networks, with start/stop/restart/remove, exec-into-a-terminal, follow-logs and inspect. Drives the docker CLI directly — no daemon socket, no dockerode.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-docker",
+		"watch": "gulp watch-extension:burrow-docker",
+		"test": "node test/dockerCli.test.js"
+	},
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-docker",
+					"title": "Docker",
+					"icon": "$(server-environment)"
+				}
+			]
+		},
+		"views": {
+			"burrow-docker": [
+				{
+					"id": "burrowDockerContainers",
+					"name": "Containers"
+				},
+				{
+					"id": "burrowDockerImages",
+					"name": "Images",
+					"visibility": "collapsed"
+				},
+				{
+					"id": "burrowDockerVolumes",
+					"name": "Volumes",
+					"visibility": "collapsed"
+				},
+				{
+					"id": "burrowDockerNetworks",
+					"name": "Networks",
+					"visibility": "collapsed"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowDockerContainers",
+				"when": "!burrow.docker.daemonRunning",
+				"contents": "The Docker daemon isn't responding.\nStart Docker Desktop (or your daemon), then retry.\n[Retry](command:burrow.docker.refresh)"
+			}
+		],
+		"commands": [
+			{
+				"command": "burrow.docker.refresh",
+				"title": "Refresh",
+				"category": "Burrow Docker",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "burrow.docker.start",
+				"title": "Start",
+				"category": "Burrow Docker",
+				"icon": "$(debug-start)"
+			},
+			{
+				"command": "burrow.docker.stop",
+				"title": "Stop",
+				"category": "Burrow Docker",
+				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "burrow.docker.restart",
+				"title": "Restart",
+				"category": "Burrow Docker",
+				"icon": "$(debug-restart)"
+			},
+			{
+				"command": "burrow.docker.remove",
+				"title": "Remove Container",
+				"category": "Burrow Docker",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "burrow.docker.logs",
+				"title": "Follow Logs",
+				"category": "Burrow Docker",
+				"icon": "$(output)"
+			},
+			{
+				"command": "burrow.docker.exec",
+				"title": "Exec Shell",
+				"category": "Burrow Docker",
+				"icon": "$(terminal)"
+			},
+			{
+				"command": "burrow.docker.inspect",
+				"title": "Inspect",
+				"category": "Burrow Docker",
+				"icon": "$(json)"
+			},
+			{
+				"command": "burrow.docker.removeImage",
+				"title": "Remove Image",
+				"category": "Burrow Docker",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "burrow.docker.removeVolume",
+				"title": "Remove Volume",
+				"category": "Burrow Docker",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "burrow.docker.removeNetwork",
+				"title": "Remove Network",
+				"category": "Burrow Docker",
+				"icon": "$(trash)"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{ "command": "burrow.docker.start", "when": "false" },
+				{ "command": "burrow.docker.stop", "when": "false" },
+				{ "command": "burrow.docker.restart", "when": "false" },
+				{ "command": "burrow.docker.remove", "when": "false" },
+				{ "command": "burrow.docker.logs", "when": "false" },
+				{ "command": "burrow.docker.exec", "when": "false" },
+				{ "command": "burrow.docker.inspect", "when": "false" },
+				{ "command": "burrow.docker.removeImage", "when": "false" },
+				{ "command": "burrow.docker.removeVolume", "when": "false" },
+				{ "command": "burrow.docker.removeNetwork", "when": "false" }
+			],
+			"view/title": [
+				{ "command": "burrow.docker.refresh", "when": "view == burrowDockerContainers", "group": "navigation" },
+				{ "command": "burrow.docker.refresh", "when": "view == burrowDockerImages", "group": "navigation" },
+				{ "command": "burrow.docker.refresh", "when": "view == burrowDockerVolumes", "group": "navigation" },
+				{ "command": "burrow.docker.refresh", "when": "view == burrowDockerNetworks", "group": "navigation" }
+			],
+			"view/item/context": [
+				{ "command": "burrow.docker.start", "when": "view == burrowDockerContainers && viewItem == container.stopped", "group": "inline@1" },
+				{ "command": "burrow.docker.stop", "when": "view == burrowDockerContainers && viewItem == container.running", "group": "inline@1" },
+				{ "command": "burrow.docker.logs", "when": "view == burrowDockerContainers && viewItem =~ /^container\\./", "group": "inline@2" },
+				{ "command": "burrow.docker.exec", "when": "view == burrowDockerContainers && viewItem == container.running", "group": "inline@3" },
+
+				{ "command": "burrow.docker.start", "when": "view == burrowDockerContainers && viewItem == container.stopped", "group": "1_run@1" },
+				{ "command": "burrow.docker.stop", "when": "view == burrowDockerContainers && viewItem == container.running", "group": "1_run@2" },
+				{ "command": "burrow.docker.restart", "when": "view == burrowDockerContainers && viewItem =~ /^container\\./", "group": "1_run@3" },
+				{ "command": "burrow.docker.exec", "when": "view == burrowDockerContainers && viewItem == container.running", "group": "2_view@1" },
+				{ "command": "burrow.docker.logs", "when": "view == burrowDockerContainers && viewItem =~ /^container\\./", "group": "2_view@2" },
+				{ "command": "burrow.docker.inspect", "when": "view == burrowDockerContainers && viewItem =~ /^container\\./", "group": "2_view@3" },
+				{ "command": "burrow.docker.remove", "when": "view == burrowDockerContainers && viewItem =~ /^container\\./", "group": "9_danger@1" },
+
+				{ "command": "burrow.docker.inspect", "when": "view == burrowDockerImages && viewItem == image", "group": "2_view@1" },
+				{ "command": "burrow.docker.removeImage", "when": "view == burrowDockerImages && viewItem == image", "group": "9_danger@1" },
+
+				{ "command": "burrow.docker.inspect", "when": "view == burrowDockerVolumes && viewItem == volume", "group": "2_view@1" },
+				{ "command": "burrow.docker.removeVolume", "when": "view == burrowDockerVolumes && viewItem == volume", "group": "9_danger@1" },
+
+				{ "command": "burrow.docker.inspect", "when": "view == burrowDockerNetworks && viewItem == network", "group": "2_view@1" },
+				{ "command": "burrow.docker.removeNetwork", "when": "view == burrowDockerNetworks && viewItem == network", "group": "9_danger@1" }
+			]
+		},
+		"configuration": {
+			"title": "Burrow Docker",
+			"properties": {
+				"burrow.docker.refreshInterval": {
+					"type": "number",
+					"default": 4000,
+					"minimum": 0,
+					"markdownDescription": "How often (ms) to refresh the Docker views while the Containers view is visible. `0` disables auto-refresh (use the refresh button).",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.docker.execShell": {
+					"type": "string",
+					"default": "/bin/sh",
+					"description": "Shell launched by \"Exec Shell\" inside a container (docker exec -it <id> <shell>). Set to /bin/bash for images that ship bash.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}
