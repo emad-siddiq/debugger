@@ -94,6 +94,9 @@
 			"terminal.integrated.defaultProfile.linux": "bash",
 			"editor.minimap.enabled": false,
 			"editor.multiCursorModifier": "alt",
+			"editor.fontFamily": "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+			"workbench.colorTheme": "Burrow Dark (Xcode-inspired)",
+			"workbench.iconTheme": "burrow-xcode-icons",
 			"workbench.startupEditor": "none",
 			"chat.commandCenter.enabled": false,
 			"[go]": {

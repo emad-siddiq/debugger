@@ -1,0 +1,35 @@
+{
+	"name": "burrow-theme-xcode",
+	"displayName": "Burrow Xcode-inspired Theme",
+	"description": "An Xcode-inspired look for Burrow: Dark and Light color themes plus an original monogram file-icon set. Colors are original values in the Xcode style; the code font is the system SF Mono (referenced by name, not bundled); icons are original artwork, not Apple assets.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Themes"
+	],
+	"contributes": {
+		"themes": [
+			{
+				"label": "Burrow Dark (Xcode-inspired)",
+				"uiTheme": "vs-dark",
+				"path": "./themes/xcode-dark.json"
+			},
+			{
+				"label": "Burrow Light (Xcode-inspired)",
+				"uiTheme": "vs",
+				"path": "./themes/xcode-light.json"
+			}
+		],
+		"iconThemes": [
+			{
+				"id": "burrow-xcode-icons",
+				"label": "Burrow Xcode-inspired Icons",
+				"path": "./fileicons/xcode-icon-theme.json"
+			}
+		]
+	}
+}

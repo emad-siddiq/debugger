@@ -1,0 +1,59 @@
+{
+	"iconDefinitions": {
+		"_folder": { "iconPath": "../icons/folder.svg" },
+		"_folder_open": { "iconPath": "../icons/folder-open.svg" },
+		"_file": { "iconPath": "../icons/file.svg" },
+		"_go": { "iconPath": "../icons/go.svg" },
+		"_ts": { "iconPath": "../icons/ts.svg" },
+		"_tsx": { "iconPath": "../icons/tsx.svg" },
+		"_js": { "iconPath": "../icons/js.svg" },
+		"_json": { "iconPath": "../icons/json.svg" },
+		"_md": { "iconPath": "../icons/md.svg" },
+		"_css": { "iconPath": "../icons/css.svg" },
+		"_yaml": { "iconPath": "../icons/yaml.svg" },
+		"_sql": { "iconPath": "../icons/sql.svg" },
+		"_docker": { "iconPath": "../icons/docker.svg" }
+	},
+	"folder": "_folder",
+	"folderExpanded": "_folder_open",
+	"file": "_file",
+	"fileExtensions": {
+		"go": "_go",
+		"ts": "_ts",
+		"tsx": "_tsx",
+		"js": "_js",
+		"jsx": "_js",
+		"mjs": "_js",
+		"cjs": "_js",
+		"json": "_json",
+		"jsonc": "_json",
+		"md": "_md",
+		"markdown": "_md",
+		"css": "_css",
+		"yaml": "_yaml",
+		"yml": "_yaml",
+		"sql": "_sql"
+	},
+	"fileNames": {
+		"dockerfile": "_docker",
+		"go.mod": "_go",
+		"go.sum": "_go",
+		"go.work": "_go",
+		"docker-compose.yml": "_docker",
+		"docker-compose.yaml": "_docker"
+	},
+	"languageIds": {
+		"go": "_go",
+		"typescript": "_ts",
+		"typescriptreact": "_tsx",
+		"javascript": "_js",
+		"javascriptreact": "_js",
+		"json": "_json",
+		"jsonc": "_json",
+		"markdown": "_md",
+		"css": "_css",
+		"yaml": "_yaml",
+		"sql": "_sql",
+		"dockerfile": "_docker"
+	}
+}
