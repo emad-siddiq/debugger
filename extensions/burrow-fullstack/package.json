@@ -1,0 +1,74 @@
+{
+	"name": "burrow-fullstack",
+	"displayName": "Burrow Full Stack Debugger",
+	"description": "One-click Full Stack Debugger: a status-bar action that brings up the database (docker compose --wait), debugs the Go backend under dlv, and opens the frontend live — all three tiers at once. Thin orchestrator; reuses burrow-go-debug + the frontend-debugger.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Debuggers",
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-fullstack",
+		"watch": "gulp watch-extension:burrow-fullstack",
+		"test": "node test/db.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.fullstack.debug",
+				"title": "Debug Full Stack",
+				"category": "Burrow",
+				"icon": "$(rocket)"
+			},
+			{
+				"command": "burrow.fullstack.stop",
+				"title": "Stop Full Stack",
+				"category": "Burrow"
+			}
+		],
+		"configuration": {
+			"title": "Burrow Full Stack",
+			"properties": {
+				"burrow.fullstack.dbComposeFile": {
+					"type": "string",
+					"default": "infra/docker-compose.yml",
+					"description": "Compose file that defines the database service. Relative paths resolve against the first workspace folder.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.fullstack.dbService": {
+					"type": "string",
+					"default": "nodewatch-db",
+					"description": "The database service to bring up (docker compose up -d --wait <service>).",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.fullstack.backendConfig": {
+					"type": "string",
+					"default": "Backend: debug (Auth0 OFF)",
+					"description": "Name of the launch.json configuration used to debug the Go backend under dlv.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

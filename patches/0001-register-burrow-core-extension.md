@@ -53,6 +53,15 @@ register + highlight and back the LSP + the FD isolation editor), is grammar-onl
 `tsconfig.json` → not in this array; auto-globbed for packaging) and dep-free (not in
 `dirs.ts`), so it needs no build-list row and no ledger touch of its own.
 
+**Full-Stack-Debugger extension (`burrow-fullstack`):** the one-click orchestrator
+(`'extensions/burrow-fullstack/tsconfig.json'`, milestone M6) registers here like the others
+— grouped alphabetically among the `burrow-*` entries (after `burrow-frontend-debugger`). It
+is a thin self-contained layer-4 extension (a status-bar command that sequences
+`docker compose --wait` + `vscode.debug.startDebugging` + the frontend-debugger open; no new
+debug type, no runtime npm dep, so no `dirs.ts` entry and no core change beyond this one
+compilation line), so this ledger entry — covering the *pattern* — is the only ledger touch
+it needs.
+
 **Full-Stack-Debugger extension (`burrow-docker`):** the Docker activity-bar viewlet
 (`'extensions/burrow-docker/tsconfig.json'`, Full Stack Debugger milestone M3) registers
 here like the others — grouped alphabetically among the `burrow-*` entries (after
