@@ -133,6 +133,7 @@
       onScheduleFiberRoot: function () {},
       onCommitFiberRoot: function (id, root) {
         ensureSet(fiberRoots, id).add(root)
+        scheduleWatch()
       },
       onCommitFiberUnmount: function () {},
       onPostCommitFiberRoot: function () {},
@@ -160,6 +161,7 @@
     var origCommit = existing.onCommitFiberRoot
     existing.onCommitFiberRoot = function (id, root) {
       ensureSet(fiberRoots, id).add(root)
+      scheduleWatch()
       if (origCommit) return origCommit.apply(this, arguments)
     }
     if (!existing.getFiberRoots)
@@ -949,12 +951,18 @@
     }
     return topHostElements(fiber)[0] || hosts[0] || null
   }
-  function describeFiber(fiber, preferEl) {
+  function describeFiber(fiber, preferEl, opts) {
+    opts = opts || {}
     var el = preferEl || primaryElementOf(fiber)
     currentEl = el
     var id = pathId(fiber)
     // Track this id so its boundary follows the component as the app scrolls.
-    tracked = new Set([id])
+    // A live-watch re-describe (keepTracked) must NOT reset tracked/watchId —
+    // that would clobber theater drill boxes and hijack the watched component.
+    if (!opts.keepTracked) {
+      tracked = new Set([id])
+      watchId = id
+    }
     var css = el ? matchedRulesFor(el) : { matched: [], allMedia: {} }
     return {
       id: id,
@@ -977,6 +985,10 @@
   // The selection box (and theater drill boxes) are viewport-relative rects; if
   // the app scrolls or resizes, they must be recomputed or they drift/vanish.
   var tracked = new Set()
+  // Live Watch: the currently-inspected component's id, re-emitted on each React
+  // commit (throttled via watchTimer) so its props/hooks/value pane update live.
+  var watchId = null
+  var watchTimer = null
   var lastMoveX = -1
   var lastMoveY = -1
   function reboxTracked() {
@@ -1480,6 +1492,27 @@
   function describeById(id, preferEl) {
     var f = fiberByPath(id)
     return f ? describeFiber(f, preferEl) : null
+  }
+
+  // ---- Live Watch: re-emit the inspected component on each React commit -----
+  // The DevTools commit hook calls scheduleWatch(); a short throttle coalesces
+  // render bursts, then we re-describe the watched component (keepTracked, so we
+  // don't disturb selection/theater state) and post an inspectUpdate. Fully
+  // guarded — the agent must never throw into the page during React's commit.
+  function scheduleWatch() {
+    if (watchTimer || !watchId) return
+    watchTimer = setTimeout(function () {
+      watchTimer = null
+      emitWatchUpdate()
+    }, 120)
+  }
+  function emitWatchUpdate() {
+    try {
+      if (!watchId) return
+      var f = fiberByPath(watchId)
+      if (!f) return
+      send({ type: 'inspectUpdate', detail: describeFiber(f, null, { keepTracked: true }) })
+    } catch (e) {}
   }
 
   window.addEventListener('message', function (e) {

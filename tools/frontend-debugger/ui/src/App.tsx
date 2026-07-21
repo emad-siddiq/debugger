@@ -111,6 +111,15 @@ export function App() {
           }
           break
         }
+        case 'inspectUpdate': {
+          // Live re-render of the WATCHED component (agent fires this on each
+          // React commit): refresh its props/hooks/value pane as state changes,
+          // without re-triggering the scroll-reveal that user selection does.
+          const d = msg.detail as Detail
+          const cur = s()
+          if (cur.selection && cur.selection.id === d.id) cur.setSelection(d)
+          break
+        }
         case 'theater': {
           const d = msg.detail as Detail
           s().enterTheater()
