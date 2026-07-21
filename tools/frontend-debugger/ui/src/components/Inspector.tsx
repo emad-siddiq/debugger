@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from 'react'
 import { useStore, type Tab } from '../store'
 import { ipc } from '../ipc'
-import { embedded } from '../host'
+import { embedded, isolateInBurrow } from '../host'
 import { Breadcrumb } from './Breadcrumb'
 import { TreeTab } from './TreeTab'
 import { StylesTab } from './StylesTab'
@@ -28,8 +28,22 @@ const TABS = embedded ? ALL_TABS.filter((t) => t.id !== 'source') : ALL_TABS
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
+// Drop the in-page agent's opaque prop placeholders (functions → "ƒ name", React
+// elements/containers → "«…»") so seeded props survive the JSON round-trip into
+// the isolation harness. The user can refine them in the preview's props editor.
+function cleanProps(raw: Record<string, unknown> | null): Record<string, unknown> {
+  if (!raw) return {}
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string' && (v.startsWith('ƒ ') || v.startsWith('«'))) continue
+    out[k] = v
+  }
+  return out
+}
+
 export function Inspector({ full = false }: { full?: boolean }) {
   const selection = useStore((s) => s.selection)
+  const targetUrl = useStore((s) => s.targetUrl)
   const activeTab = useStore((s) => s.activeTab)
   const setActiveTab = useStore((s) => s.setActiveTab)
   const panel = useStore((s) => s.panel)
@@ -39,6 +53,26 @@ export function Inspector({ full = false }: { full?: boolean }) {
   const [dragging, setDragging] = useState<null | 'move' | 'resize'>(null)
 
   const rel = (dir: RelativeDir) => selection && ipc.send('selectRelative', { id: selection.id, dir })
+
+  // Isolate the selected component: embedded → the Burrow workbench (real editor
+  // + live preview); standalone → the harness page in a new tab. Export name is
+  // the runtime displayName; the harness falls back to the default export.
+  const isolate = () => {
+    if (!selection?.source) return
+    const name = selection.name || selection.source.name || null
+    const props = cleanProps(selection.props)
+    if (isolateInBurrow(selection.source.file, name, props)) return
+    try {
+      const u = new URL(targetUrl)
+      const base = u.pathname.endsWith('/') ? u.pathname : u.pathname + '/'
+      const q = new URLSearchParams({ module: selection.source.file })
+      if (name) q.set('export', name)
+      if (Object.keys(props).length) q.set('props', JSON.stringify(props))
+      window.open(`${u.origin}${base}__isolate?${q.toString()}`, '_blank')
+    } catch {
+      /* malformed targetUrl — nothing to open */
+    }
+  }
 
   const start = (kind: 'move' | 'resize') => (e: React.MouseEvent) => {
     if (full) return
@@ -150,6 +184,15 @@ export function Inspector({ full = false }: { full?: boolean }) {
               <button className="navbtn wide" title="Scroll the app to this component" onClick={() => ipc.send('scrollTo', { id: selection.id })}>
                 ⤓ reveal
               </button>
+              {selection.source && (
+                <button
+                  className="navbtn wide"
+                  title="Isolate — edit the code beside a live preview of just this component"
+                  onClick={isolate}
+                >
+                  ⛶ isolate
+                </button>
+              )}
             </div>
             <Breadcrumb />
           </>

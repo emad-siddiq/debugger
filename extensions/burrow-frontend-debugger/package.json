@@ -31,6 +31,12 @@
 				"category": "Burrow"
 			},
 			{
+				"command": "burrow.frontendDebugger.isolate",
+				"title": "Isolate Component",
+				"category": "Burrow",
+				"icon": "$(open-preview)"
+			},
+			{
 				"command": "burrow.frontendDebugger.toggleMode",
 				"title": "Frontend Debugger: Toggle Mock/Live",
 				"category": "Burrow"
@@ -51,6 +57,15 @@
 				"category": "Burrow"
 			}
 		],
+		"menus": {
+			"editor/title": [
+				{
+					"command": "burrow.frontendDebugger.isolate",
+					"when": "resourceExtname == .tsx || resourceExtname == .jsx",
+					"group": "navigation@9"
+				}
+			]
+		},
 		"configuration": {
 			"title": "Frontend Debugger",
 			"properties": {

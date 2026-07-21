@@ -20,6 +20,20 @@ export async function healthz(port: number): Promise<boolean> {
 	}
 }
 
+/** When attaching to an already-running sidecar we don't know the target port it
+ *  chose, so read it back from GET /api/config (targetUrl embeds it). Falls back
+ *  to the configured default if the probe fails. */
+async function detectTargetPort(uiPort: number, fallback: number): Promise<number> {
+	try {
+		const res = await fetch(`http://127.0.0.1:${uiPort}/api/config`, { signal: AbortSignal.timeout(1500) });
+		const body = await res.json() as { targetUrl?: string };
+		const port = body.targetUrl ? Number(new URL(body.targetUrl).port) : NaN;
+		return Number.isFinite(port) && port > 0 ? port : fallback;
+	} catch {
+		return fallback;
+	}
+}
+
 /** The preferred port if it's free, else an OS-assigned ephemeral one.
  *  Probes the wildcard interface — the sidecar binds 0.0.0.0, and a loopback
  *  probe with SO_REUSEADDR reports "free" alongside a wildcard listener. */
@@ -52,6 +66,10 @@ export class Sidecar implements vscode.Disposable {
 	readonly out = vscode.window.createOutputChannel('Frontend Debugger');
 
 	uiPort = 0;
+	/** The port the *target* Vite dev server listens on — the isolation preview
+	 *  (isolation.ts) iframes it directly. Set on spawn; derived from
+	 *  GET /api/config when attaching to an already-running sidecar. */
+	targetPort = 0;
 	private child: cp.ChildProcess | undefined;
 	private attached = false;
 
@@ -66,13 +84,15 @@ export class Sidecar implements vscode.Disposable {
 		if (await healthz(cfg.uiPort)) {
 			this.attached = true;
 			this.uiPort = cfg.uiPort;
-			this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort}`);
+			this.targetPort = await detectTargetPort(cfg.uiPort, cfg.targetPort);
+			this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (target :${this.targetPort})`);
 			return this.uiPort;
 		}
 
 		this.preflight(cfg);
 		this.uiPort = await freePort(cfg.uiPort);
 		const targetPort = await freePort(cfg.targetPort);
+		this.targetPort = targetPort;
 
 		const env: NodeJS.ProcessEnv = {
 			...process.env,
@@ -127,6 +147,7 @@ export class Sidecar implements vscode.Disposable {
 		this.child = undefined;
 		this.attached = false;
 		this.uiPort = 0;
+		this.targetPort = 0;
 		if (!child || child.exitCode !== null) {
 			return Promise.resolve();
 		}

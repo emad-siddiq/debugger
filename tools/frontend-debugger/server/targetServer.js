@@ -68,7 +68,7 @@ export async function startTarget({
     // node_modules may be the shared volume, not <root>/node_modules; keep Vite's
     // dep-optimizer cache in a writable container path instead of under root.
     cacheDir: process.env.VITE_CACHE_DIR || path.join(nodeModules, '.vite'),
-    plugins: [inspectorPlugin({ frontendDir, agentCode, uiOrigin }), react()],
+    plugins: [inspectorPlugin({ frontendDir, agentCode, uiOrigin, base }), react()],
     resolve: {
       alias: {
         '@': path.join(frontendDir, 'src'),

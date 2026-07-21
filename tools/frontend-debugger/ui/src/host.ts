@@ -27,3 +27,12 @@ export function openInBurrow(file: string, line: number, col?: number | null): b
 export function hostFullScreen(on: boolean): void {
   if (embedded) post({ type: 'setFullScreen', on })
 }
+
+/** Open the component-isolation workbench in Burrow: the component's real source
+ *  on the left, a live isolated preview beside it. Returns false when standalone
+ *  so the caller can fall back to opening the harness page in a new tab. */
+export function isolateInBurrow(file: string, exportName: string | null, props: unknown): boolean {
+  if (!embedded) return false
+  post({ type: 'openIsolation', file, export: exportName || undefined, props })
+  return true
+}

@@ -19,7 +19,15 @@ interface HostMessage {
 	readonly line?: number;
 	readonly col?: number;
 	readonly on?: boolean;
+	readonly export?: string;
+	readonly props?: unknown;
 }
+
+/** Set by the extension so the inspector's "Isolate" button (an openIsolation
+ *  host envelope) can open the component-isolation workbench. */
+type IsolationHandler = (args: { file: string; export?: string; props?: unknown }) => void;
+let isolationHandler: IsolationHandler | undefined;
+export function setIsolationHandler(fn: IsolationHandler): void { isolationHandler = fn; }
 
 let current: vscode.WebviewPanel | undefined;
 let targetDir = '';
@@ -90,6 +98,8 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
 		await openSource(msg);
 	} else if (msg.type === 'setFullScreen') {
 		await setEditorFullScreen(!!msg.on);
+	} else if (msg.type === 'openIsolation' && typeof msg.file === 'string' && msg.file) {
+		isolationHandler?.({ file: msg.file, export: msg.export, props: msg.props });
 	}
 }
 

@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import babel from '@babel/core'
 
@@ -70,15 +71,217 @@ function enclosingComponentName(p) {
 }
 
 // ---------------------------------------------------------------------------
+// Component isolation harness (the Framer-like workbench).
+//
+// Served BY the target's own Vite dev server (so it shares the target module
+// graph + HMR), at `<base>__isolate?module=<src/…>&export=<Name>&props=<json>`.
+// It mounts ONE component alone on a blank canvas, wrapped in a minimal,
+// generic provider shell: a MemoryRouter if react-router-dom is present, plus
+// an OPTIONAL per-project providers module (`src/burrow.isolate.tsx`, default
+// export a `({children}) => …` wrapper) for app-specific context (Toast, theme,
+// query client, …). The target's global stylesheet is imported if found so the
+// component inherits base tokens. Editing the component's source → Vite Fast
+// Refresh → the isolated preview re-renders. Props update live over postMessage
+// (`{__burrowIsoCmd:1,type:'props',props}`); render errors are reported to the
+// embedding webview (`{__burrowIso:1,type:'renderError'|'ready'}`).
+// ---------------------------------------------------------------------------
+
+const ISOLATE_SUFFIX = '__isolate'
+
+// Confine an isolate `module`/providers path to the target's src/ — mirrors
+// server/api.js safe(): no absolutes, no `..` escapes, must live under src/.
+function safeSrcRel(rel) {
+  if (!rel || typeof rel !== 'string') return null
+  const norm = rel.replace(/\\/g, '/')
+  if (norm.startsWith('/') || norm.split('/').includes('..')) return null
+  if (norm !== 'src' && !norm.startsWith('src/')) return null
+  return norm
+}
+
+// The first project stylesheet / providers module that exists, as a src-rel
+// path the harness can `import(BASE + rel)`. Returns null when none is present.
+function firstExisting(frontendDir, candidates) {
+  for (const rel of candidates) {
+    if (fs.existsSync(path.join(frontendDir, rel))) return rel
+  }
+  return null
+}
+
+function buildIsolateHtml(cfg) {
+  // Escape </script> and `<` so the config JSON can't break out of the tag.
+  const json = JSON.stringify(cfg).replace(/</g, '\\u003c')
+  // The harness is a classic-looking inline module script; Vite's
+  // transformIndexHtml rewrites its bare imports (react, react-dom, the dynamic
+  // component import) into dev URLs and injects the HMR client.
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Burrow — Component Isolation</title>
+<style>
+  html, body, #burrow-iso-root { margin: 0; min-height: 100%; }
+  body { background: #ffffff; color: #111111; font: 13px/1.5 system-ui, sans-serif; }
+  #burrow-iso-root { box-sizing: border-box; padding: 16px; }
+  .burrow-iso-error {
+    margin: 12px; padding: 12px 14px; border-radius: 8px;
+    background: #2b0f12; color: #ffd7d7; border: 1px solid #7f1d1d;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+</style>
+<script>window.__BURROW_ISOLATE__ = ${json};</script>
+</head>
+<body>
+<div id="burrow-iso-root"></div>
+<script type="module">
+import { createElement as h, Component } from 'react'
+import { createRoot } from 'react-dom/client'
+
+const CFG = window.__BURROW_ISOLATE__
+const BASE = import.meta.env.BASE_URL
+
+const report = (type, detail) => { try { parent.postMessage({ __burrowIso: 1, type, detail }, '*') } catch (e) {} }
+const loadOptional = async (spec) => { try { return await import(/* @vite-ignore */ spec) } catch (e) { return null } }
+
+class Boundary extends Component {
+  constructor(p) { super(p); this.state = { err: null } }
+  static getDerivedStateFromError(err) { return { err } }
+  componentDidCatch(err) { report('renderError', String((err && err.stack) || err)) }
+  render() {
+    if (this.state.err) return h('pre', { className: 'burrow-iso-error' }, String((this.state.err && this.state.err.stack) || this.state.err))
+    return this.props.children
+  }
+}
+
+const pickExport = (mod, name) => {
+  if (name && typeof mod[name] === 'function') return mod[name]
+  if (typeof mod.default === 'function') return mod.default
+  for (const k of Object.keys(mod)) { if (/^[A-Z]/.test(k) && typeof mod[k] === 'function') return mod[k] }
+  return null
+}
+const showError = (msg) => {
+  const el = document.getElementById('burrow-iso-root')
+  el.innerHTML = ''
+  const pre = document.createElement('pre')
+  pre.className = 'burrow-iso-error'
+  pre.textContent = msg
+  el.appendChild(pre)
+}
+
+;(async () => {
+  try {
+    // Minimal generic shell: a Router if the target ships react-router-dom.
+    let Router = (props) => props.children
+    const rr = await loadOptional('react-router-dom')
+    if (rr && rr.MemoryRouter) Router = (props) => h(rr.MemoryRouter, { initialEntries: ['/'] }, props.children)
+
+    // Optional per-project providers (Toast, theme, query client, …).
+    let Providers = (props) => props.children
+    if (CFG.providers) {
+      const pm = await loadOptional(BASE + CFG.providers)
+      const P = pm && (pm.default || pm.Providers)
+      if (P) Providers = (props) => h(P, null, props.children)
+    }
+    // Base stylesheet so the component inherits the app's design tokens.
+    if (CFG.css) await loadOptional(BASE + CFG.css)
+
+    const mod = await import(/* @vite-ignore */ BASE + CFG.module)
+    const Comp = pickExport(mod, CFG.export)
+    if (!Comp) { report('renderError', 'no component export in ' + CFG.module); showError('No component export found in ' + CFG.module + (CFG.export ? ' (looked for "' + CFG.export + '")' : '')); return }
+
+    let props = (CFG.props && typeof CFG.props === 'object') ? CFG.props : {}
+    const root = createRoot(document.getElementById('burrow-iso-root'))
+    const render = () => root.render(h(Boundary, { key: JSON.stringify(props) }, h(Router, null, h(Providers, null, h(Comp, props)))))
+    render()
+    report('ready', CFG.export || (typeof mod.default === 'function' ? (mod.default.displayName || mod.default.name || 'default') : 'component'))
+
+    window.addEventListener('message', (e) => {
+      const d = e.data
+      if (!d || d.__burrowIsoCmd !== 1) return
+      if (d.type === 'props') { props = (d.props && typeof d.props === 'object') ? d.props : {}; render() }
+      else if (d.type === 'reload') location.reload()
+    })
+  } catch (err) {
+    report('renderError', String((err && err.stack) || err))
+    showError(String((err && err.stack) || err))
+  }
+})()
+</script>
+</body>
+</html>`
+}
+
+// ---------------------------------------------------------------------------
 // Vite plugin injected into the *target* dev server.
 //   - transformIndexHtml: inject the in-page inspection agent as the first
 //     <head> script so it installs the React DevTools hook before React loads.
 //   - transform: run the stamping Babel plugin on the target's .tsx/.jsx.
+//   - configureServer: serve the component-isolation harness at `<base>__isolate`.
 // ---------------------------------------------------------------------------
-export function inspectorPlugin({ frontendDir, agentCode, uiOrigin }) {
+export function inspectorPlugin({ frontendDir, agentCode, uiOrigin, base = '/' }) {
+  const isolatePath = (base.endsWith('/') ? base : base + '/') + ISOLATE_SUFFIX
   return {
     name: 'fedbg-inspector',
     enforce: 'pre',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const url = req.url || ''
+        const [pathname, search] = url.split('?')
+        if (pathname !== isolatePath) return next()
+        const q = new URLSearchParams(search || '')
+        const moduleRel = safeSrcRel(q.get('module'))
+        if (!moduleRel) {
+          res.statusCode = 400
+          res.setHeader('Content-Type', 'text/plain')
+          res.end('isolate: module must be a path under src/')
+          return
+        }
+        let props = null
+        const rawProps = q.get('props')
+        if (rawProps) {
+          try {
+            const parsed = JSON.parse(rawProps)
+            if (parsed && typeof parsed === 'object') props = parsed
+          } catch {
+            props = null // malformed seed → start with empty props
+          }
+        }
+        const cfg = {
+          base: isolatePath.slice(0, -ISOLATE_SUFFIX.length),
+          module: moduleRel,
+          export: q.get('export') || '',
+          props,
+          providers: firstExisting(frontendDir, [
+            'src/burrow.isolate.tsx',
+            'src/burrow.isolate.jsx',
+            'src/burrow.isolate.ts',
+            'src/burrow.isolate.js',
+          ]),
+          css: firstExisting(frontendDir, [
+            'src/index.css',
+            'src/main.css',
+            'src/styles.css',
+            'src/App.css',
+            'src/global.css',
+          ]),
+        }
+        try {
+          // transformIndexHtml rewrites the harness's bare imports to dev URLs
+          // and injects the Vite HMR client (base-aware) — same pipeline as the
+          // target's own index.html.
+          const html = await server.transformIndexHtml(url, buildIsolateHtml(cfg))
+          res.statusCode = 200
+          res.setHeader('Content-Type', 'text/html')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(html)
+        } catch (err) {
+          res.statusCode = 500
+          res.setHeader('Content-Type', 'text/plain')
+          res.end('isolate: ' + String((err && err.message) || err))
+        }
+      })
+    },
     transformIndexHtml: {
       order: 'pre',
       handler() {
