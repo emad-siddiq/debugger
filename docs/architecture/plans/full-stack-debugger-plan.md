@@ -100,6 +100,27 @@ Ordered so each milestone is **independently demoable** and every step through M
 | **M7** | **Xcode-inspired look. DONE.** `burrow-theme-xcode` (2 original color themes + original monogram icon theme); `burrow-core` flips defaults + SF Mono by name. All JSON/SVG validated. | theme | L4 (+opt L1) | no |
 | **M8** | **Hardening plan authored; engine build = future task 04.** Wrote `docs/architecture/plans/task-04-plan.md` (pinned/version-matched dlv, breakpoint matrix, panic+output demux, attach hardening, `.app` packaging, optional scheme-bar surface) — all Layer-4 except the one optional core scheme-bar host. The deep dlv-engine build is that task; M8 here delivers its build-ready plan + the consolidated live drive. | backend, orchestration | L4 (+ opt L3) | opt |
 
+### Consolidated live Burrow drive — 2026-07-21 (capstone, PASS)
+
+Launched the built Burrow client on the merkle workspace (short `TMPDIR=/tmp` udd — the
+documented 103-char socket trap), drove it over CDP, verified in the real IDE:
+- **M2 + M3**: both the **Database** and **Docker** activity-bar viewlets render; `burrow-db`
+  and `burrow-docker` activated (`onView:*`); a `docker start` from the viewlet reached the
+  daemon (real port-in-use response) — the lifecycle wiring works.
+- **M4**: opening `App.tsx` activated `burrow-ts-base` on `onLanguage:typescriptreact` (the
+  restored `typescript-basics` grammar registers `.tsx`; status bar reads "TypeScript JSX")
+  with **no LSP errors** — the `--stdio` transport is correct.
+- **M6**: the **🚀 Debug Full Stack** status item is live; `burrow-fullstack` activated on
+  `onStartupFinished`. (It + `burrow-ts-base` are correctly gated to a **trusted** workspace —
+  they declare `untrustedWorkspaces:false`; a restricted workspace suppresses them by design.)
+- **M7**: the **Burrow Dark (Xcode-inspired)** theme applies as default (editor bg `#292a30`,
+  `file-icons-enabled`, original monogram icons in the explorer), SF Mono set.
+
+The drive was read-only (no merkle file edited). The remaining deep checks — a live dlv
+breakpoint (M1 engine), the pgAdmin webview render (M2), the FD live-Watch tick + Request
+Trace (M5) — are component-verified (pgAdmin container boots+embeds; TS/gopls LSP return
+definitions; envFile + orchestrator unit-tested; FD oracle 0 FAIL) and land fully in task 04.
+
 **† `tracked` — gulpfile ledger discipline (replaces the old "rides 0001, no entry" hand-wave).** M3/M4/M6 each add a brand-new `build/gulpfile.extensions.ts` compilation row (`burrow-docker`, `burrow-ts-base`, `burrow-fullstack`). Do **not** assume these silently ride patch 0001 just because `check-ledger.js:18-20` is coarse. At land time, **confirm against patch 0001's stated intent** whether "add a new curated extension compilation row" is in-scope:
 - **If in-scope** → extend patch **0001's ledger note/description to enumerate each new row** in the same change that adds the row. One tracked update per new extension.
 - **If out-of-scope** → allocate a real `patches/NNNN` entry (next-free-at-land-time) with `check-ledger.js` passing.
