@@ -1629,6 +1629,52 @@
     }
   })
 
+  // ---- Browser model: ⌥-click a component → reveal its source in Burrow -----
+  // When the instrumented app is opened in the REAL browser (Framer-mode T2)
+  // there is no parent webview to postMessage to. Instead the agent POSTs the
+  // clicked element's stamped source coords to Burrow's local reveal-bridge, so
+  // ⌥-click (Alt-click) on any component lands you on its source in the editor.
+  // Only active standalone (window.parent === window — the FD SPA embeds via an
+  // iframe, where parent !== window and the postMessage bridge is used instead).
+  var STANDALONE = window.parent === window
+  function flashReveal(el) {
+    try {
+      var prev = el.style.outline
+      var prevOff = el.style.outlineOffset
+      el.style.outline = '2px solid #4c9ffe'
+      el.style.outlineOffset = '1px'
+      setTimeout(function () {
+        el.style.outline = prev
+        el.style.outlineOffset = prevOff
+      }, 320)
+    } catch (e) {}
+  }
+  function installBrowserReveal() {
+    var bridge = window.__BURROW_BRIDGE__
+    if (!STANDALONE || !bridge) return
+    document.addEventListener(
+      'click',
+      function (e) {
+        if (!e.altKey) return
+        try {
+          var src = sourceOfElement(e.target)
+          if (!src || !src.file) return
+          e.preventDefault()
+          e.stopPropagation()
+          flashReveal(e.target)
+          fetch(bridge.replace(/\/$/, '') + '/reveal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(src),
+            keepalive: true,
+          }).catch(function () {})
+        } catch (err) {}
+      },
+      true,
+    )
+  }
+  installBrowserReveal()
+
   function announce() {
     send({ type: 'ready', mode: mode, url: location.href })
   }

@@ -30,6 +30,11 @@
 				"title": "Open Frontend Debugger",
 				"category": "Burrow"
 			},
+				{
+					"command": "burrow.frontendDebugger.openInBrowser",
+					"title": "Open App in Browser (Inspector)",
+					"category": "Burrow"
+				},
 			{
 				"command": "burrow.frontendDebugger.isolate",
 				"title": "Isolate Component",
@@ -112,6 +117,16 @@
 					"type": "string",
 					"default": "",
 					"description": "Override the sidecar location. Empty = <repo>/tools/frontend-debugger."
+				},
+				"burrow.frontendDebugger.runCommand": {
+					"type": "string",
+					"default": "",
+					"description": "Command that starts YOUR dev server, run verbatim in a terminal for \"Open App in Browser\" (e.g. npm run dev). Empty = use the built-in instrumented sidecar (overlay pre-injected, zero setup). For the verbatim path, add the Burrow inspector Vite plugin to your config so \u2325-click reveal works."
+				},
+				"burrow.frontendDebugger.appUrl": {
+					"type": "string",
+					"default": "",
+					"description": "URL to open in the browser. Empty = auto (the runCommand dev-server URL, or the sidecar target URL)."
 				}
 			}
 		}

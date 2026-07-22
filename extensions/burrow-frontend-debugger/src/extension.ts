@@ -3,12 +3,15 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
 import { openPanel, refreshPanel, setIsolationHandler } from './panel';
 import { openIsolation, IsolateArgs } from './isolation';
 import { Sidecar } from './sidecar';
 import { ModeStatus } from './status';
+import { RevealBridge, RevealPayload } from './bridge';
+import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
 
 // burrow-frontend-debugger (task 15): hosts the tools/frontend-debugger
 // sidecar in an editor WebviewPanel and bridges its reveals into the editor.
@@ -38,6 +41,46 @@ export function activate(context: vscode.ExtensionContext): void {
 	// the target Vite that serves the isolation harness) is running first.
 	// Triggered by the command (isolates the active editor's file) or by the
 	// inspector's "Isolate" button (a host envelope carrying file/export/props).
+	// Framer-mode T2 — the browser surface. A local reveal bridge receives
+	// ⌥-click picks from the instrumented app running in the REAL browser and
+	// opens the authored source in the editor (plain reveal until T3's Framer
+	// editor exists). Started lazily on first "Open in Browser".
+	const bridge = new RevealBridge();
+	context.subscriptions.push(bridge);
+	let bridgeStarted = false;
+
+	const revealSource = async (p: RevealPayload): Promise<void> => {
+		const cfg = resolveConfig(context);
+		const abs = path.isAbsolute(p.file) ? p.file : path.join(cfg.targetDir, p.file);
+		try {
+			const doc = await vscode.workspace.openTextDocument(abs);
+			const pos = new vscode.Position(Math.max(0, p.line - 1), Math.max(0, p.col - 1));
+			await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: false });
+		} catch {
+			void vscode.window.showWarningMessage(`Frontend Debugger: couldn't reveal ${p.file}`);
+		}
+	};
+
+	const openInBrowser = async (): Promise<void> => {
+		if (!bridgeStarted) {
+			try {
+				await bridge.start(revealSource);
+				bridgeStarted = true;
+			} catch {
+				void vscode.window.showWarningMessage(
+					`Frontend Debugger: reveal bridge port ${bridge.port} is busy — ⌥-click reveal is off this session.`,
+				);
+			}
+		}
+		await maybeSeedRunCommand(context);
+		try {
+			await runOpenInBrowser(context, sidecar!);
+		} catch (err) {
+			sidecar!.out.show(true);
+			void vscode.window.showErrorMessage(`Frontend Debugger: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	};
+
 	const isolate = async (hostArgs?: IsolateArgs): Promise<void> => {
 		const cfg = resolveConfig(context);
 		try {
@@ -78,6 +121,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('burrow.frontendDebugger.open', open),
+		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', () => isolate()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),

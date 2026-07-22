@@ -256,7 +256,19 @@ const showError = (msg) => {
 //   - transform: run the stamping Babel plugin on the target's .tsx/.jsx.
 //   - configureServer: serve the component-isolation harness at `<base>__isolate`.
 // ---------------------------------------------------------------------------
-export function inspectorPlugin({ frontendDir, agentCode, uiOrigin, base = '/' }) {
+export function inspectorPlugin({
+  frontendDir,
+  agentCode,
+  uiOrigin,
+  base = '/',
+  // Browser model (Framer-mode T2): when the instrumented app is opened in the
+  // REAL browser (not the FD SPA iframe), the agent has no parent webview to
+  // postMessage — it POSTs picks to this local reveal-bridge instead, so
+  // ⌥-clicking a component in the browser opens its source in Burrow. A fixed
+  // loopback port (no env injection into the user's command); the extension
+  // hosts the bridge on the same port.
+  bridgeUrl = 'http://127.0.0.1:6099',
+}) {
   const isolatePath = (base.endsWith('/') ? base : base + '/') + ISOLATE_SUFFIX
   return {
     name: 'fedbg-inspector',
@@ -332,7 +344,9 @@ export function inspectorPlugin({ frontendDir, agentCode, uiOrigin, base = '/' }
         // string .replace(), whose replacement interprets the agent's `$`
         // sequences (e.g. `__reactFiber$`, `$$typeof`) and corrupts the script.
         const children =
-          `window.__FEDBG__=${JSON.stringify({ uiOrigin })};\n` + agentCode
+          `window.__FEDBG__=${JSON.stringify({ uiOrigin })};\n` +
+          `window.__BURROW_BRIDGE__=${JSON.stringify(bridgeUrl)};\n` +
+          agentCode
         return [
           {
             tag: 'script',
