@@ -107,12 +107,47 @@ function firstExisting(frontendDir, candidates) {
   return null
 }
 
+// Whether the target declares a dependency (prod or dev). Read from the target's
+// package.json rather than probing node_modules — in the merged docker setup the
+// target's deps live at a shared volume, not under <frontendDir>/node_modules, so
+// an existsSync probe would miss them.
+function targetHasDep(frontendDir, dep) {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(frontendDir, 'package.json'), 'utf8'),
+    )
+    return !!(
+      (pkg.dependencies && pkg.dependencies[dep]) ||
+      (pkg.devDependencies && pkg.devDependencies[dep])
+    )
+  } catch {
+    return false
+  }
+}
+
 function buildIsolateHtml(cfg) {
   // Escape </script> and `<` so the config JSON can't break out of the tag.
   const json = JSON.stringify(cfg).replace(/</g, '\\u003c')
+  // Generic Router (FIX 2 / Defect A). When the target ships react-router-dom AND
+  // no providers module supplies its own Router (cfg.router, computed
+  // server-side), emit a STATIC `react-router-dom` import here. transformIndexHtml
+  // runs this doc through Vite, which rewrites that bare specifier to the SAME
+  // optimized dep the component imports — so the harness's MemoryRouter and the
+  // component share one react-router instance (matching context). A *runtime*
+  // `import('react-router-dom')` cannot: with @vite-ignore the bare specifier
+  // reaches the browser verbatim and never resolves, which is why useNavigate was
+  // left uncontexted. When a providers module IS present it owns the Router, so we
+  // stay a passthrough here and never nest two routers.
+  const routerImport = cfg.router
+    ? `import { MemoryRouter as __BurrowMemoryRouter } from 'react-router-dom'`
+    : ''
+  const routerSetup = cfg.router
+    ? `Router = (props) => h(__BurrowMemoryRouter, { initialEntries: ['/'] }, props.children)`
+    : ''
   // The harness is a classic-looking inline module script; Vite's
-  // transformIndexHtml rewrites its bare imports (react, react-dom, the dynamic
-  // component import) into dev URLs and injects the HMR client.
+  // transformIndexHtml rewrites its bare imports (react, react-dom, the router
+  // import above, the dynamic component import) into dev URLs and injects the
+  // HMR client.
   return `<!doctype html>
 <html>
 <head>
@@ -137,6 +172,7 @@ function buildIsolateHtml(cfg) {
 <script type="module">
 import { createElement as h, Component } from 'react'
 import { createRoot } from 'react-dom/client'
+${routerImport}
 
 const CFG = window.__BURROW_ISOLATE__
 const BASE = import.meta.env.BASE_URL
@@ -171,10 +207,11 @@ const showError = (msg) => {
 
 ;(async () => {
   try {
-    // Minimal generic shell: a Router if the target ships react-router-dom.
+    // Generic Router — a MemoryRouter when the target ships react-router-dom and
+    // no providers module owns one (see routerImport/routerSetup above); a
+    // passthrough otherwise.
     let Router = (props) => props.children
-    const rr = await loadOptional('react-router-dom')
-    if (rr && rr.MemoryRouter) Router = (props) => h(rr.MemoryRouter, { initialEntries: ['/'] }, props.children)
+    ${routerSetup}
 
     // Optional per-project providers (Toast, theme, query client, …).
     let Providers = (props) => props.children
@@ -247,17 +284,21 @@ export function inspectorPlugin({ frontendDir, agentCode, uiOrigin, base = '/' }
             props = null // malformed seed → start with empty props
           }
         }
+        const providers = firstExisting(frontendDir, [
+          'src/burrow.isolate.tsx',
+          'src/burrow.isolate.jsx',
+          'src/burrow.isolate.ts',
+          'src/burrow.isolate.js',
+        ])
         const cfg = {
           base: isolatePath.slice(0, -ISOLATE_SUFFIX.length),
           module: moduleRel,
           export: q.get('export') || '',
           props,
-          providers: firstExisting(frontendDir, [
-            'src/burrow.isolate.tsx',
-            'src/burrow.isolate.jsx',
-            'src/burrow.isolate.ts',
-            'src/burrow.isolate.js',
-          ]),
+          providers,
+          // Emit the harness's own MemoryRouter only for a router app with no
+          // providers shell — a shell owns its Router (avoid nesting two).
+          router: !providers && targetHasDep(frontendDir, 'react-router-dom'),
           css: firstExisting(frontendDir, [
             'src/index.css',
             'src/main.css',
