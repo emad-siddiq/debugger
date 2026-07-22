@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-db",
 		"watch": "gulp watch-extension:burrow-db",
-		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js && node test/pgadminConfig.test.js"
+		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js && node test/pgadminConfig.test.js && node test/workspaceDsn.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -138,5 +138,8 @@
 				}
 			}
 		}
+	},
+	"dependencies": {
+		"pg": "^8.22.0"
 	}
 }

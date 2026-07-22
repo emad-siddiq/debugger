@@ -5,6 +5,7 @@
 
 import { ExtensionContext, commands, window, workspace } from 'vscode';
 import { describeDsn, parsePostgresUrl, pickConnectionString } from './dsn';
+import { findWorkspaceDatabaseUrl } from './workspaceDsn';
 import { PgQueryClient, QueryClient } from './query';
 import { buildPreviewSql, loadSchemaTree } from './catalog';
 import { runSelect } from './grid';
@@ -32,10 +33,13 @@ export function activate(context: ExtensionContext): void {
 	let client: QueryClient | undefined;
 	let clientKey: string | undefined;
 
-	/** The effective connection string: setting first, then `DATABASE_URL`. */
+	/** The effective connection string: setting → DATABASE_URL env → the
+	 *  workspace's own .vscode/launch.json (merkle documents its local Postgres
+	 *  there), so the explorer connects with zero configuration. */
 	const connectionString = (): string | undefined => pickConnectionString({
 		setting: workspace.getConfiguration(CONFIG_SECTION).get<string>('connectionString'),
 		env: process.env.DATABASE_URL,
+		workspace: findWorkspaceDatabaseUrl(workspace.workspaceFolders?.[0]?.uri.fsPath),
 	});
 
 	/** Resolve (opening if needed) the query client, or throw a directive error. */

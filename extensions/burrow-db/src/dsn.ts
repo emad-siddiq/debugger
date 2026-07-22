@@ -24,12 +24,15 @@ export interface Dsn {
 	readonly connectionString: string;
 }
 
-/** The two ordered sources a connection string can come from. */
+/** The ordered sources a connection string can come from. */
 export interface ConnectionSources {
 	/** `burrow.db.connectionString` (workspace/user setting). */
 	readonly setting?: string;
 	/** `process.env.DATABASE_URL`. */
 	readonly env?: string;
+	/** `DATABASE_URL` discovered in the workspace's `.vscode/launch.json`
+	 *  (env blocks / envFiles) — see workspaceDsn.ts. */
+	readonly workspace?: string;
 }
 
 const POSTGRES_SCHEME = /^postgres(?:ql)?:\/\//i;
@@ -47,6 +50,10 @@ export function pickConnectionString(sources: ConnectionSources): string | undef
 	const env = sources.env?.trim();
 	if (env) {
 		return env;
+	}
+	const ws = sources.workspace?.trim();
+	if (ws) {
+		return ws;
 	}
 	return undefined;
 }
