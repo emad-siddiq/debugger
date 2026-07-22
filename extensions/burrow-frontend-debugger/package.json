@@ -170,8 +170,8 @@
 				},
 				"burrow.frontendDebugger.targetBase": {
 					"type": "string",
-					"default": "/watch/app/",
-					"description": "Base path the target app is served under."
+					"default": "/",
+					"description": "Base path the target app is served under (merkle serves from the domain root). Only used when spawning the sidecar — an attached sidecar reports its own base."
 				},
 				"burrow.frontendDebugger.toolPath": {
 					"type": "string",

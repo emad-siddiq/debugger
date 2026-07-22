@@ -116,7 +116,9 @@ export function activate(context: vscode.ExtensionContext): void {
 			args = { file: editor.document.uri.fsPath };
 		}
 		const targetOrigin = `http://127.0.0.1:${sidecar!.targetPort || cfg.targetPort}`;
-		await openIsolation(context, { targetOrigin, targetBase: cfg.targetBase, targetDir: cfg.targetDir }, args);
+		// targetBase comes from the sidecar, not settings — an attached sidecar may
+		// serve the target under a different base than this window's config.
+		await openIsolation(context, { targetOrigin, targetBase: sidecar!.targetBase, targetDir: cfg.targetDir }, args);
 	};
 	setIsolationHandler((a) => void isolate(a));
 

@@ -20,15 +20,23 @@ export async function healthz(port: number): Promise<boolean> {
 	}
 }
 
-/** When attaching to an already-running sidecar we don't know the target port it
- *  chose, so read it back from GET /api/config (targetUrl embeds it). Falls back
- *  to the configured default if the probe fails. */
-async function detectTargetPort(uiPort: number, fallback: number): Promise<number> {
+/** When attaching to an already-running sidecar we don't know the target port
+ *  OR base path it chose (it may have been spawned with different settings than
+ *  this window's), so read both back from GET /api/config — targetUrl embeds
+ *  them. Falls back to the configured defaults if the probe fails. */
+async function detectTarget(uiPort: number, fallback: { port: number; base: string }): Promise<{ port: number; base: string }> {
 	try {
 		const res = await fetch(`http://127.0.0.1:${uiPort}/api/config`, { signal: AbortSignal.timeout(1500) });
 		const body = await res.json() as { targetUrl?: string };
-		const port = body.targetUrl ? Number(new URL(body.targetUrl).port) : NaN;
-		return Number.isFinite(port) && port > 0 ? port : fallback;
+		if (!body.targetUrl) {
+			return fallback;
+		}
+		const url = new URL(body.targetUrl);
+		const port = Number(url.port);
+		return {
+			port: Number.isFinite(port) && port > 0 ? port : fallback.port,
+			base: url.pathname || fallback.base,
+		};
 	} catch {
 		return fallback;
 	}
@@ -70,6 +78,11 @@ export class Sidecar implements vscode.Disposable {
 	 *  (isolation.ts) iframes it directly. Set on spawn; derived from
 	 *  GET /api/config when attaching to an already-running sidecar. */
 	targetPort = 0;
+	/** The base path the target app is served under. The RUNNING sidecar is the
+	 *  source of truth (an attached sidecar may have been spawned with a
+	 *  different base than this window's settings) — set from spawn config, or
+	 *  derived from GET /api/config on attach. */
+	targetBase = '/';
 	private child: cp.ChildProcess | undefined;
 	private attached = false;
 
@@ -84,8 +97,10 @@ export class Sidecar implements vscode.Disposable {
 		if (await healthz(cfg.uiPort)) {
 			this.attached = true;
 			this.uiPort = cfg.uiPort;
-			this.targetPort = await detectTargetPort(cfg.uiPort, cfg.targetPort);
-			this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (target :${this.targetPort})`);
+			const target = await detectTarget(cfg.uiPort, { port: cfg.targetPort, base: cfg.targetBase });
+			this.targetPort = target.port;
+			this.targetBase = target.base;
+			this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (target :${this.targetPort}${this.targetBase})`);
 			return this.uiPort;
 		}
 
@@ -93,6 +108,7 @@ export class Sidecar implements vscode.Disposable {
 		this.uiPort = await freePort(cfg.uiPort);
 		const targetPort = await freePort(cfg.targetPort);
 		this.targetPort = targetPort;
+		this.targetBase = cfg.targetBase;
 
 		const env: NodeJS.ProcessEnv = {
 			...process.env,
@@ -148,6 +164,7 @@ export class Sidecar implements vscode.Disposable {
 		this.attached = false;
 		this.uiPort = 0;
 		this.targetPort = 0;
+		this.targetBase = '/';
 		if (!child || child.exitCode !== null) {
 			return Promise.resolve();
 		}

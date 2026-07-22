@@ -53,6 +53,6 @@ export function resolveConfig(context: vscode.ExtensionContext): SidecarConfig {
 		mode: cfg.get<'mock' | 'live'>('mode', 'mock'),
 		uiPort: cfg.get<number>('uiPort', 6080),
 		targetPort: cfg.get<number>('targetPort', 5180),
-		targetBase: cfg.get<string>('targetBase', '/watch/app/'),
+		targetBase: cfg.get<string>('targetBase', '/'),
 	};
 }

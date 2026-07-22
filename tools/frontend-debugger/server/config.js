@@ -26,8 +26,17 @@ const repoRoot =
   selection.projectRoot ||
   // Host fallback: merkle sits beside the debugger repo under ~/Projects.
   path.resolve(__dirname, '../../../../../merkle')
+// merkle de-nested its frontend to <repo>/frontend (2026-07); it previously
+// lived at nodewatch/frontend. Probe newest layout first (same as the
+// extension's resolveConfig) so the standalone default still finds it.
+const detectedFrontendDir = ['frontend', 'nodewatch/frontend']
+  .map((rel) => path.join(repoRoot, rel))
+  .find((dir) => fs.existsSync(path.join(dir, 'package.json')))
 const frontendDir =
-  process.env.MERKLE_FRONTEND_DIR || selection.frontendDir || path.join(repoRoot, 'nodewatch/frontend')
+  process.env.MERKLE_FRONTEND_DIR ||
+  selection.frontendDir ||
+  detectedFrontendDir ||
+  path.join(repoRoot, 'frontend')
 
 // Where the target's (Linux) node_modules live. In the merged docker setup this
 // is a container-managed volume at /projects/node_modules — a FIXED path that
@@ -46,8 +55,9 @@ const uiPort = Number(process.env.UI_PORT || 6080)
 // UI_ORIGIN to lock it down.
 const uiOrigin = process.env.UI_ORIGIN || '*'
 
-// Base path the target app is served under (NodeWatch uses /watch/app/).
-const targetBase = process.env.TARGET_BASE || selection.targetBase || '/watch/app/'
+// Base path the target app is served under. merkle serves from the domain
+// root since its 2026-07 de-nesting (the old NodeWatch layout used /watch/app/).
+const targetBase = process.env.TARGET_BASE || selection.targetBase || '/'
 const targetUrl =
   process.env.TARGET_URL || `http://localhost:${targetPublicPort}${targetBase}`
 
