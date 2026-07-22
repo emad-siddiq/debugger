@@ -57,7 +57,11 @@ export async function startTarget({
   )
   const react = reactMod.default || reactMod
 
-  const sharedDir = path.resolve(frontendDir, '../../shared')
+  // merkle's @shared package lives at <repoRoot>/shared regardless of where the
+  // frontend sits (nodewatch/frontend in the old nested layout, <repoRoot>/frontend
+  // after the 2026-07 de-nest). Anchor to repoRoot, not a fixed `../../` from the
+  // frontend — the latter pointed above the repo once the frontend de-nested.
+  const sharedDir = path.join(repoRoot, 'shared')
 
   const server = await viteMod.createServer({
     root: frontendDir,

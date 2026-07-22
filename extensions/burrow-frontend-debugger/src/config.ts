@@ -30,10 +30,16 @@ export function resolveConfig(context: vscode.ExtensionContext): SidecarConfig {
 
 	let targetDir = cfg.get<string>('targetDir') || '';
 	if (!targetDir && repoRoot) {
-		// merkle keeps its frontend at nodewatch/frontend; other repos are
-		// assumed to open the Vite project folder directly.
-		const nested = path.join(repoRoot, 'nodewatch', 'frontend');
-		targetDir = fs.existsSync(nested) ? nested : repoRoot;
+		// Auto-detect the Vite project folder. merkle de-nested its frontend to
+		// <repo>/frontend (2026-07); it previously lived at nodewatch/frontend.
+		// Probe both (newest layout first) and require a package.json so we pick a
+		// real project dir, not the repo root. Other repos open the Vite folder
+		// directly, so repoRoot is the fallback.
+		const candidates = [
+			path.join(repoRoot, 'frontend'),
+			path.join(repoRoot, 'nodewatch', 'frontend'),
+		];
+		targetDir = candidates.find(d => fs.existsSync(path.join(d, 'package.json'))) || repoRoot;
 	}
 
 	const toolRoot = cfg.get<string>('toolPath')
