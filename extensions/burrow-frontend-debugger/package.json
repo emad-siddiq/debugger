@@ -11,7 +11,9 @@
 	"categories": [
 		"Other"
 	],
-	"activationEvents": [],
+	"activationEvents": [
+		"onView:burrowComponents"
+	],
 	"main": "./out/extension.js",
 	"capabilities": {
 		"virtualWorkspaces": false,
@@ -54,6 +56,12 @@
 				"icon": "$(symbol-property)"
 			},
 			{
+				"command": "burrow.frontendDebugger.refreshComponents",
+				"title": "Refresh Components",
+				"category": "Burrow",
+				"icon": "$(refresh)"
+			},
+			{
 				"command": "burrow.frontendDebugger.toggleMode",
 				"title": "Frontend Debugger: Toggle Mock/Live",
 				"category": "Burrow"
@@ -75,6 +83,13 @@
 			}
 		],
 		"menus": {
+			"view/title": [
+				{
+					"command": "burrow.frontendDebugger.refreshComponents",
+					"when": "view == burrowComponents",
+					"group": "navigation"
+				}
+			],
 			"editor/title": [
 				{
 					"command": "burrow.frontendDebugger.isolate",
@@ -93,6 +108,29 @@
 					}
 			]
 		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-frontend",
+					"title": "Components",
+					"icon": "$(preview)"
+				}
+			]
+		},
+		"views": {
+			"burrow-frontend": [
+				{
+					"id": "burrowComponents",
+					"name": "Components"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowComponents",
+				"contents": "No React components found. Open a workspace whose frontend is a Vite/React app, then refresh.\n[Refresh](command:burrow.frontendDebugger.refreshComponents)"
+			}
+		],
 		"configuration": {
 			"title": "Frontend Debugger",
 			"properties": {

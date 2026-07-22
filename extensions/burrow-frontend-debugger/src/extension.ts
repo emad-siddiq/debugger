@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { resolveConfig } from './config';
 import { openPanel, refreshPanel, setIsolationHandler } from './panel';
 import { openIsolation, IsolateArgs, reloadPreview, pickSample } from './isolation';
+import { ComponentsProvider } from './gallery';
 import { Sidecar } from './sidecar';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
@@ -23,6 +24,15 @@ export function activate(context: vscode.ExtensionContext): void {
 	sidecar = new Sidecar();
 	const status = new ModeStatus();
 	context.subscriptions.push(sidecar, status);
+
+	// Component gallery (T5): a native sidebar tree of the target's components,
+	// grouped by folder; clicking one isolates it. srcRoot follows config, so it
+	// tracks the selected target without a restart.
+	const components = new ComponentsProvider(() => {
+		const cfg = resolveConfig(context);
+		return cfg.targetDir ? path.join(cfg.targetDir, 'src') : undefined;
+	});
+	context.subscriptions.push(vscode.window.createTreeView('burrowComponents', { treeDataProvider: components }));
 
 	const open = async (): Promise<void> => {
 		const cfg = resolveConfig(context);
@@ -131,6 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.pickSample', () => pickSample()),
+		vscode.commands.registerCommand('burrow.frontendDebugger.refreshComponents', () => components.refresh()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.stop', () => {
