@@ -11,11 +11,62 @@ function langOf(file: string): string {
   return 'typescript' // .tsx/.ts/.jsx — Monaco's TS mode handles JSX
 }
 
+// A vibrant Burrow-Dark Monaco theme mirroring the workbench Xcode-inspired
+// palette. Stock 'vs-dark' paints strings a muddy orange (#CE9178) and keeps the
+// rest low-saturation, so code reads flat; these tokens are brighter/saturated so
+// syntax jumps out (magenta keywords, salmon strings, gold numbers, cyan types).
+// Monaco's Monarch TS tokenizer is coarse (no per-function token), so we colour
+// the token kinds it actually emits.
+function defineBurrowTheme(monaco: any) {
+  monaco.editor.defineTheme('burrow-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: '', foreground: 'F2F2F4' },
+      { token: 'comment', foreground: '79858F' },
+      { token: 'string', foreground: 'FF6B5E' },
+      { token: 'string.escape', foreground: 'FF9182' },
+      { token: 'regexp', foreground: 'FF9182' },
+      { token: 'number', foreground: 'E7D07A' },
+      { token: 'keyword', foreground: 'FF6FB5' },
+      { token: 'type', foreground: '6FDCFF' },
+      { token: 'type.identifier', foreground: '6FDCFF' },
+      { token: 'identifier', foreground: 'F2F2F4' },
+      { token: 'delimiter', foreground: 'C8C8CC' },
+      { token: 'delimiter.bracket', foreground: 'C8C8CC' },
+      { token: 'tag', foreground: 'FF6FB5' },
+      { token: 'attribute.name', foreground: 'D3985E' },
+      { token: 'attribute.value', foreground: 'FF6B5E' },
+      { token: 'constant', foreground: 'DDB7FF' },
+      // CSS
+      { token: 'attribute.value.css', foreground: 'E7D07A' },
+      { token: 'attribute.value.number.css', foreground: 'E7D07A' },
+      { token: 'attribute.value.unit.css', foreground: 'E7D07A' },
+      { token: 'keyword.css', foreground: 'FF6FB5' },
+    ],
+    colors: {
+      'editor.background': '#25262D',
+      'editor.foreground': '#F2F2F4',
+      'editorLineNumber.foreground': '#6E6F76',
+      'editorLineNumber.activeForeground': '#F2F2F4',
+      'editorCursor.foreground': '#F2F2F4',
+      'editor.selectionBackground': '#3F638B80',
+      'editor.lineHighlightBackground': '#2E313A',
+      'editorIndentGuide.background': '#3A3C44',
+      'editorIndentGuide.activeBackground': '#5A5C64',
+      'editorBracketMatch.background': '#41444C',
+      'editorBracketMatch.border': '#6A6D76',
+    },
+  })
+}
+
 // Configure Monaco's TS/JS workers BEFORE the editor mounts: enable JSX (fixes
 // "Cannot use JSX unless the '--jsx' flag is provided" / 17004) and silence
 // semantic diagnostics — we're viewing files without the project's full type
-// graph, so module/type resolution errors would be pure noise.
+// graph, so module/type resolution errors would be pure noise. Also registers the
+// Burrow-Dark theme so the editor never flashes stock 'vs-dark'.
 function configureMonaco(monaco: any) {
+  defineBurrowTheme(monaco)
   const ts = monaco.languages.typescript
   const opts = {
     jsx: ts.JsxEmit.React,
@@ -138,7 +189,7 @@ export function SourceTab() {
         {file ? (
           <Editor
             height="100%"
-            theme="vs-dark"
+            theme="burrow-dark"
             path={file}
             language={langOf(file)}
             loading={<div className="empty-tab">Loading editor…</div>}
@@ -155,10 +206,23 @@ export function SourceTab() {
             }}
             options={{
               fontSize: 12,
+              // Heavier code font so syntax reads bolder (matches the workbench SF
+              // Mono). fontWeight applies to normal tokens; 600 = semibold.
+              fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+              fontWeight: '600',
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
               wordWrap: 'on',
               automaticLayout: true,
+              // Thin gutter: fold chevron tucked right against the line number
+              // ("212 ›"). Drop the unused glyph margin and the decorations gap,
+              // and cap the line-number column so nothing is wasted.
+              glyphMargin: false,
+              lineDecorationsWidth: 0,
+              lineNumbersMinChars: 2,
+              folding: true,
+              showFoldingControls: 'always',
+              foldingHighlight: false,
             }}
           />
         ) : (
