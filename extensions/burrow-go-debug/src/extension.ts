@@ -3,7 +3,7 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, execFile, spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -53,11 +53,48 @@ function resolveDelve(): string {
 }
 
 /**
+ * On macOS, Delve launches debuggees through Apple's `debugserver`, which needs
+ * task-port authorization. With Developer Mode DISABLED the authorization
+ * prompt never reaches a headless extension host, so `dlv dap` hangs FOREVER
+ * inside the launch request — no error, no timeout (observed against merkle:
+ * the DAP `launch` simply never answers). Fail fast with the one-time fix
+ * instead. Cached per window; `DevToolsSecurity -status` is non-privileged.
+ */
+let devModeOk = false;
+function macDeveloperModeDisabled(): Promise<boolean> {
+	if (process.platform !== 'darwin' || devModeOk || process.env.BURROW_SKIP_DEVMODE_CHECK) {
+		return Promise.resolve(false);
+	}
+	return new Promise((resolve) => {
+		// Absolute path: /usr/sbin is routinely missing from the extension host's
+		// PATH, and an ENOENT here would silently skip the check.
+		execFile('/usr/sbin/DevToolsSecurity', ['-status'], { timeout: 3000 }, (err, stdout) => {
+			if (!err && /disabled/i.test(stdout)) {
+				resolve(true);
+				return;
+			}
+			devModeOk = true; // enabled, or the tool is unavailable — don't re-run per window
+			resolve(false);
+		});
+	});
+}
+
+/**
  * Fills the gaps VS Code leaves in a bare `go` config so a fixture can debug
  * with just `{ "type": "go", "request": "launch" }` (or an F5 with no launch.json).
  */
 class GoDebugConfigurationProvider implements DebugConfigurationProvider {
-	resolveDebugConfiguration(folder: WorkspaceFolder | undefined, config: DebugConfiguration): ProviderResult<DebugConfiguration> {
+	async resolveDebugConfiguration(folder: WorkspaceFolder | undefined, config: DebugConfiguration): Promise<DebugConfiguration | undefined> {
+		// Abort HERE (undefined = clean cancel; startDebugging resolves false)
+		// rather than failing later in the adapter factory — a descriptor
+		// rejection leaves a half-open "initializing" session in the UI.
+		if (await macDeveloperModeDisabled()) {
+			void window.showErrorMessage(
+				'Go debug: macOS Developer Mode is disabled, so Delve\'s debugserver would hang forever waiting for debug authorization. '
+				+ 'Run `sudo DevToolsSecurity -enable` once in a terminal, then start debugging again.',
+			);
+			return undefined;
+		}
 		if (!config.type && !config.request) {
 			config.type = DEBUG_TYPE;
 			config.name = 'Debug';
@@ -123,6 +160,8 @@ class GoDebugConfigurationProvider implements DebugConfigurationProvider {
 class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 	private readonly servers = new Map<string, ChildProcessWithoutNullStreams>();
 
+	constructor(private readonly out: import('vscode').OutputChannel) { }
+
 	createDebugAdapterDescriptor(session: DebugSession): Promise<DebugAdapterDescriptor> {
 		const dlv = resolveDelve();
 		// Run dlv in the debuggee's folder so its `go build` resolves the module,
@@ -145,6 +184,13 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 					settled = true;
 					this.servers.set(session.id, child);
 					resolve(new DebugAdapterServer(Number(match.groups.port), match.groups.host));
+					return;
+				}
+				// `dlv dap` in server mode prints the DEBUGGEE's stdout/stderr on its
+				// own streams (not as DAP output events) — surface it instead of
+				// silently dropping it.
+				if (settled) {
+					this.out.append(chunk.toString());
 				}
 			};
 			child.stdout.on('data', scan);
@@ -171,8 +217,10 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 }
 
 export function activate(context: ExtensionContext): void {
-	const factory = new GoDebugAdapterDescriptorFactory();
+	const out = window.createOutputChannel('Go Debug (dlv)');
+	const factory = new GoDebugAdapterDescriptorFactory(out);
 	context.subscriptions.push(
+		out,
 		debug.registerDebugConfigurationProvider(DEBUG_TYPE, new GoDebugConfigurationProvider()),
 		debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, factory),
 		factory,
