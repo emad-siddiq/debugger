@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
 import { openPanel, refreshPanel, setIsolationHandler } from './panel';
-import { openIsolation, IsolateArgs, reloadPreview } from './isolation';
+import { openIsolation, IsolateArgs, reloadPreview, pickSample } from './isolation';
 import { Sidecar } from './sidecar';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
@@ -130,6 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
+		vscode.commands.registerCommand('burrow.frontendDebugger.pickSample', () => pickSample()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.stop', () => {

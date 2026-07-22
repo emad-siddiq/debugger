@@ -107,6 +107,16 @@ function firstExisting(frontendDir, candidates) {
   return null
 }
 
+// Colocated sample prop-sets for a component: `<Component>.samples.{ts,tsx,js,jsx}`
+// beside its module (Framer-mode T4). Strips the module's own extension, then
+// tries each samples extension in turn — src-rel paths the harness imports.
+function sampleCandidates(moduleRel) {
+  const slash = moduleRel.lastIndexOf('/')
+  const dot = moduleRel.lastIndexOf('.')
+  const stem = dot > slash ? moduleRel.slice(0, dot) : moduleRel
+  return ['ts', 'tsx', 'js', 'jsx'].map((ext) => `${stem}.samples.${ext}`)
+}
+
 // Whether the target declares a dependency (prod or dev). Read from the target's
 // package.json rather than probing node_modules — in the merged docker setup the
 // target's deps live at a shared volume, not under <frontendDir>/node_modules, so
@@ -227,7 +237,23 @@ const showError = (msg) => {
     const Comp = pickExport(mod, CFG.export)
     if (!Comp) { report('renderError', 'no component export in ' + CFG.module); showError('No component export found in ' + CFG.module + (CFG.export ? ' (looked for "' + CFG.export + '")' : '')); return }
 
+    // Colocated sample prop-sets (Component.samples -> a name:props map, via a
+    // samples named export or the default). Names go up to the native picker;
+    // a chosen sample is applied live via {__burrowIsoCmd:1,type:'sample',name}.
+    let sampleMap = {}
+    if (CFG.samples) {
+      const sm = await loadOptional(BASE + CFG.samples)
+      const raw = sm && (sm.samples || sm.default)
+      if (raw && typeof raw === 'object') sampleMap = raw
+    }
+    const sampleNames = Object.keys(sampleMap)
+    if (sampleNames.length) report('samples', sampleNames)
+
+    // Seeded props win; otherwise the first sample is the default render so a
+    // prop-driven component shows something instead of an empty/crashing mount.
     let props = (CFG.props && typeof CFG.props === 'object') ? CFG.props : {}
+    const first = sampleNames.length ? sampleMap[sampleNames[0]] : null
+    if (!Object.keys(props).length && first && typeof first === 'object') props = first
     const root = createRoot(document.getElementById('burrow-iso-root'))
     const render = () => root.render(h(Boundary, { key: JSON.stringify(props) }, h(Router, null, h(Providers, null, h(Comp, props)))))
     render()
@@ -237,6 +263,7 @@ const showError = (msg) => {
       const d = e.data
       if (!d || d.__burrowIsoCmd !== 1) return
       if (d.type === 'props') { props = (d.props && typeof d.props === 'object') ? d.props : {}; render() }
+      else if (d.type === 'sample') { const s = sampleMap[d.name]; if (s && typeof s === 'object') { props = s; render() } }
       else if (d.type === 'reload') location.reload()
     })
   } catch (err) {
@@ -311,6 +338,10 @@ export function inspectorPlugin({
           // Emit the harness's own MemoryRouter only for a router app with no
           // providers shell — a shell owns its Router (avoid nesting two).
           router: !providers && targetHasDep(frontendDir, 'react-router-dom'),
+          // Colocated `<Component>.samples.*` (Framer-mode T4): named prop-sets
+          // the native picker applies, and — with no seeded props — the first
+          // one is the default render.
+          samples: firstExisting(frontendDir, sampleCandidates(moduleRel)),
           css: firstExisting(frontendDir, [
             'src/index.css',
             'src/main.css',

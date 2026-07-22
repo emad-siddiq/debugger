@@ -32,10 +32,15 @@ export interface IsolateArgs {
 interface IsolateEnvelope {
 	readonly __burrowIso?: number;
 	readonly type?: string;
-	readonly detail?: string;
+	readonly detail?: string | string[];
 }
 
 let preview: vscode.WebviewPanel | undefined;
+
+// Sample prop-set names for the CURRENTLY-isolated component, reported by the
+// harness (`<Component>.samples`). Reset on each isolation; the native picker
+// (pickSample) reads them and applies a choice over postMessage.
+let sampleNames: string[] = [];
 
 /**
  * Reveal the component's source on the left and an isolated preview on the
@@ -76,6 +81,10 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	const url = buildIsolateUrl(target, rel, args.export, props);
 	const label = args.export || defaultLabel(rel);
 
+	// New component → the previous component's sample names no longer apply. The
+	// harness re-reports `samples` for this one as it loads.
+	sampleNames = [];
+
 	if (!preview) {
 		preview = vscode.window.createWebviewPanel(
 			'burrow.frontendIsolation',
@@ -83,7 +92,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 			{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
-		preview.onDidDispose(() => { preview = undefined; }, undefined, context.subscriptions);
+		preview.onDidDispose(() => { preview = undefined; sampleNames = []; }, undefined, context.subscriptions);
 		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg, label), undefined, context.subscriptions);
 	} else {
 		preview.title = `Preview — ${label}`;
@@ -93,11 +102,40 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	preview.webview.html = buildPreviewHtml(target.targetOrigin, url);
 }
 
+/**
+ * Native sample-props picker (Framer-mode T4). Shows the sample names the
+ * harness reported for the isolated component and applies the chosen one live
+ * (`{__burrowIsoCmd:1,type:'sample',name}` → harness re-renders with those
+ * props). No-ops with a hint when nothing is isolated or the component has no
+ * colocated `<Component>.samples.*` file.
+ */
+export async function pickSample(): Promise<void> {
+	if (!preview) {
+		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component first (its preview must be open).');
+		return;
+	}
+	if (!sampleNames.length) {
+		void vscode.window.showInformationMessage('Frontend Debugger: this component has no colocated <Component>.samples.* file.');
+		return;
+	}
+	const name = await vscode.window.showQuickPick(sampleNames, { placeHolder: 'Apply a sample prop-set to the preview' });
+	if (!name) {
+		return;
+	}
+	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'sample', name });
+}
+
 function handleEnvelope(msg: IsolateEnvelope, label: string): void {
 	if (!msg || msg.__burrowIso !== 1) {
 		return;
 	}
-	if (msg.type === 'renderError' && msg.detail) {
+	if (msg.type === 'samples' && Array.isArray(msg.detail)) {
+		// The harness found a colocated <Component>.samples.* — cache the names for
+		// the native picker (pickSample).
+		sampleNames = msg.detail.filter((n): n is string => typeof n === 'string');
+		return;
+	}
+	if (msg.type === 'renderError' && typeof msg.detail === 'string') {
 		// Surface once — the preview already shows the stack inline; this makes a
 		// silently-broken component obvious without staring at the canvas.
 		void vscode.window.setStatusBarMessage(`Isolation: ${label} render error`, 4000);

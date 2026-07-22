@@ -48,6 +48,12 @@
 					"icon": "$(refresh)"
 				},
 			{
+				"command": "burrow.frontendDebugger.pickSample",
+				"title": "Pick Sample Props",
+				"category": "Burrow",
+				"icon": "$(symbol-property)"
+			},
+			{
 				"command": "burrow.frontendDebugger.toggleMode",
 				"title": "Frontend Debugger: Toggle Mock/Live",
 				"category": "Burrow"
@@ -79,6 +85,11 @@
 						"command": "burrow.frontendDebugger.reloadPreview",
 						"when": "activeWebviewPanelId == burrow.frontendIsolation",
 						"group": "navigation@1"
+					},
+					{
+						"command": "burrow.frontendDebugger.pickSample",
+						"when": "activeWebviewPanelId == burrow.frontendIsolation",
+						"group": "navigation@2"
 					}
 			]
 		},
