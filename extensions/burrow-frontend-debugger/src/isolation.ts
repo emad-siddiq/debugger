@@ -59,6 +59,18 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		return;
 	}
 
+	// Framer-mode "design" layout: source slim on the left, the live canvas wider
+	// on the right (no manual dragging, no leftover groups). Best-effort — a
+	// projects that can't set the layout still gets the two columns above.
+	try {
+		await vscode.commands.executeCommand('vscode.setEditorLayout', {
+			orientation: 0,
+			groups: [{ size: 0.42 }, { size: 0.58 }],
+		});
+	} catch {
+		// layout is a nicety, not a requirement
+	}
+
 	// Right: the isolated preview webview.
 	const props = sanitizeProps(args.props);
 	const url = buildIsolateUrl(target, rel, args.export, props);
@@ -78,7 +90,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		preview.reveal(vscode.ViewColumn.Beside, true);
 		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg, label), undefined, context.subscriptions);
 	}
-	preview.webview.html = buildPreviewHtml(target.targetOrigin, url, label, rel, props);
+	preview.webview.html = buildPreviewHtml(target.targetOrigin, url);
 }
 
 function handleEnvelope(msg: IsolateEnvelope, label: string): void {
@@ -141,14 +153,18 @@ function defaultLabel(rel: string): string {
 }
 
 /**
- * The preview shim: a slim toolbar (component name, Reload, editable props)
- * above an iframe pointed at the isolation harness. The iframe is the target
- * origin (a separate document), so the shim relays the harness's `__burrowIso`
- * envelopes to the extension and pushes prop edits down with `__burrowIsoCmd`.
+ * The preview canvas (Framer-mode T3): a clean, full-bleed iframe pointed at the
+ * isolation harness — NO in-webview toolbar clone. Controls (reload, props,
+ * samples) live in the native workbench (editor-title command / T4 sample
+ * picker), so the surface reads as an editor pane, not a webview widget.
+ *
+ * The iframe is the target origin (a separate document), so this shim (a) relays
+ * the harness's `__burrowIso` ready/renderError envelopes up to the extension
+ * and (b) relays native commands (reload/props) FROM the extension DOWN to the
+ * harness as `__burrowIsoCmd`.
  */
-function buildPreviewHtml(origin: string, isoUrl: string, label: string, rel: string, props: Record<string, unknown>): string {
+function buildPreviewHtml(origin: string, isoUrl: string): string {
 	const nonce = getNonce();
-	const propsJson = JSON.stringify(props, null, 2).replace(/</g, '\\u003c');
 	const safeUrl = isoUrl.replace(/"/g, '&quot;');
 	return `<!DOCTYPE html>
 <html>
@@ -156,61 +172,37 @@ function buildPreviewHtml(origin: string, isoUrl: string, label: string, rel: st
 	<meta charset="UTF-8">
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${origin}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'">
 	<style>
-		html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--vscode-editor-background, #1e1e1e); color: var(--vscode-foreground, #ccc); font: 12px var(--vscode-font-family, sans-serif); }
-		.bar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
-		.bar .name { font-weight: 600; }
-		.bar .file { opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-		.bar button { font: inherit; color: inherit; background: var(--vscode-button-secondaryBackground, #3a3d41); border: 0; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
-		.bar button:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
-		.props { display: none; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
-		.props.open { display: block; }
-		.props textarea { width: 100%; box-sizing: border-box; height: 96px; resize: vertical; font: 11px var(--vscode-editor-font-family, monospace); color: var(--vscode-input-foreground, #ccc); background: var(--vscode-input-background, #1e1e1e); border: 1px solid var(--vscode-input-border, #333); border-radius: 4px; }
-		.props .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-		.props .err { color: var(--vscode-errorForeground, #f48771); }
+		html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--vscode-editor-background, #1e1e1e); }
 		iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
-		.wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
-		.stage { flex: 1; min-height: 0; }
 	</style>
 </head>
 <body>
-	<div class="wrap">
-		<div class="bar">
-			<span class="name">${label}</span>
-			<span class="file">${rel}</span>
-			<button id="propsBtn" title="Edit the props passed to the isolated component">Props</button>
-			<button id="reloadBtn" title="Reload the preview">Reload</button>
-		</div>
-		<div class="props" id="propsPanel">
-			<textarea id="propsText" spellcheck="false">${propsJson}</textarea>
-			<div class="row"><button id="applyBtn">Apply</button><span class="err" id="propsErr"></span></div>
-		</div>
-		<div class="stage"><iframe id="frame" src="${safeUrl}" allow="clipboard-read; clipboard-write"></iframe></div>
-	</div>
+	<iframe id="frame" src="${safeUrl}" allow="clipboard-read; clipboard-write"></iframe>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const frame = document.getElementById('frame');
 		const origin = '${origin}';
-		document.getElementById('propsBtn').addEventListener('click', () => document.getElementById('propsPanel').classList.toggle('open'));
-		document.getElementById('reloadBtn').addEventListener('click', () => {
-			if (frame.contentWindow) { frame.contentWindow.postMessage({ __burrowIsoCmd: 1, type: 'reload' }, '*'); }
-		});
-		document.getElementById('applyBtn').addEventListener('click', () => {
-			const err = document.getElementById('propsErr');
-			let parsed;
-			try { parsed = JSON.parse(document.getElementById('propsText').value || '{}'); }
-			catch (e) { err.textContent = 'Invalid JSON: ' + e.message; return; }
-			err.textContent = '';
-			if (frame.contentWindow) { frame.contentWindow.postMessage({ __burrowIsoCmd: 1, type: 'props', props: parsed }, '*'); }
-		});
-		// Relay the harness's ready/renderError envelopes up to the extension.
+		// Native commands (reload/props) arrive from the extension and are relayed
+		// down to the harness in the iframe.
 		window.addEventListener('message', (e) => {
-			if (e.origin !== origin) { return; }
 			const d = e.data;
-			if (d && d.__burrowIso === 1) { vscode.postMessage(d); }
+			if (!d) { return; }
+			if (d.__burrowIsoCmd === 1) {
+				if (frame.contentWindow) { frame.contentWindow.postMessage(d, '*'); }
+				return;
+			}
+			// The harness's ready/renderError envelopes bubble up to the extension.
+			if (e.origin === origin && d.__burrowIso === 1) { vscode.postMessage(d); }
 		});
 	</script>
 </body>
 </html>`;
+}
+
+/** Relay a native "reload the preview" command down to the harness. No-op if no
+ *  preview is open. Used by the `burrow.frontendDebugger.reloadPreview` command. */
+export function reloadPreview(): void {
+	void preview?.webview.postMessage({ __burrowIsoCmd: 1, type: 'reload' });
 }
 
 function getNonce(): string {

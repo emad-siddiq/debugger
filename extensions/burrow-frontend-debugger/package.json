@@ -41,6 +41,12 @@
 				"category": "Burrow",
 				"icon": "$(open-preview)"
 			},
+				{
+					"command": "burrow.frontendDebugger.reloadPreview",
+					"title": "Reload Preview",
+					"category": "Burrow",
+					"icon": "$(refresh)"
+				},
 			{
 				"command": "burrow.frontendDebugger.toggleMode",
 				"title": "Frontend Debugger: Toggle Mock/Live",
@@ -68,7 +74,12 @@
 					"command": "burrow.frontendDebugger.isolate",
 					"when": "resourceExtname == .tsx || resourceExtname == .jsx",
 					"group": "navigation@9"
-				}
+				},
+					{
+						"command": "burrow.frontendDebugger.reloadPreview",
+						"when": "activeWebviewPanelId == burrow.frontendIsolation",
+						"group": "navigation@1"
+					}
 			]
 		},
 		"configuration": {
