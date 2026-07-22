@@ -81,7 +81,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	};
 
-	const isolate = async (hostArgs?: IsolateArgs): Promise<void> => {
+	// `source` is one of: an inspector host envelope (IsolateArgs), the
+	// editor-title button's editor Uri, or undefined (command palette). The
+	// button passes its editor's Uri so it isolates THAT file regardless of where
+	// keyboard focus sits — `activeTextEditor` is undefined whenever focus is in a
+	// terminal, the sidebar, another group, or the window isn't the OS key window.
+	// Only the palette (no arg) falls back to the active editor.
+	const isolate = async (source?: IsolateArgs | vscode.Uri): Promise<void> => {
 		const cfg = resolveConfig(context);
 		try {
 			await sidecar!.start(cfg);
@@ -90,7 +96,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			void vscode.window.showErrorMessage(`Frontend Debugger: ${err instanceof Error ? err.message : String(err)}`);
 			return;
 		}
-		let args = hostArgs;
+		let args = source instanceof vscode.Uri ? { file: source.fsPath } : source;
 		if (!args) {
 			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
@@ -122,7 +128,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('burrow.frontendDebugger.open', open),
 		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
-		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', () => isolate()),
+		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),
