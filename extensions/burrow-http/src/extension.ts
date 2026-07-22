@@ -5,6 +5,7 @@
 
 import { ExtensionContext, TextDocument, Uri, commands, languages, window, workspace } from 'vscode';
 import { HttpCodeLensProvider } from './codelens';
+import { convertPostmanCollection } from './postman';
 import { HttpWorkbench } from './workbench';
 
 // burrow-http — the HTTP workbench (architecture task 09), a file-backed Postman-class
@@ -54,7 +55,61 @@ export function activate(context: ExtensionContext): void {
 			}
 			workbench.open(editor.document);
 		}),
+
+		// Convert a Postman collection (+ sibling environment, if any) into a
+		// `.http` file next to it and open it — repos like merkle document their
+		// API as infra/test/*.postman_collection.json.
+		commands.registerCommand('burrow.http.importPostman', async (uri?: Uri) => {
+			const collectionUri = uri instanceof Uri ? uri : await pickCollection();
+			if (!collectionUri) {
+				return;
+			}
+			try {
+				const collection = JSON.parse(Buffer.from(await workspace.fs.readFile(collectionUri)).toString('utf8'));
+				const environment = await readSiblingEnvironment(collectionUri);
+				const http = convertPostmanCollection(collection, environment);
+				const target = Uri.file(collectionUri.fsPath.replace(/(\.postman_collection)?\.json$/i, '') + '.http');
+				await workspace.fs.writeFile(target, Buffer.from(http, 'utf8'));
+				const document = await workspace.openTextDocument(target);
+				await window.showTextDocument(document);
+			} catch (err) {
+				void window.showErrorMessage(`Import Postman collection: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}),
 	);
+}
+
+/** Pick a `*postman_collection.json` from the workspace (auto-picks a lone match). */
+async function pickCollection(): Promise<Uri | undefined> {
+	const found = await workspace.findFiles('**/*postman_collection.json', '**/node_modules/**', 10);
+	if (found.length === 0) {
+		void window.showInformationMessage('No *postman_collection.json found in this workspace.');
+		return undefined;
+	}
+	if (found.length === 1) {
+		return found[0];
+	}
+	const picked = await window.showQuickPick(
+		found.map(f => ({ label: workspace.asRelativePath(f), uri: f })),
+		{ placeHolder: 'Postman collection to convert' },
+	);
+	return picked?.uri;
+}
+
+/** The first `*postman_environment.json` in the collection's own folder, if any. */
+async function readSiblingEnvironment(collection: Uri): Promise<object | undefined> {
+	const dir = Uri.file(collection.fsPath.replace(/\/[^/]+$/, ''));
+	try {
+		const entries = await workspace.fs.readDirectory(dir);
+		const sibling = entries.find(([name]) => /postman_environment\.json$/i.test(name));
+		if (!sibling) {
+			return undefined;
+		}
+		const raw = await workspace.fs.readFile(Uri.joinPath(dir, sibling[0]));
+		return JSON.parse(Buffer.from(raw).toString('utf8'));
+	} catch {
+		return undefined;
+	}
 }
 
 export function deactivate(): void {

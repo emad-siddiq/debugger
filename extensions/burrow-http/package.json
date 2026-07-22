@@ -12,6 +12,7 @@
 		"Other"
 	],
 	"activationEvents": [
+		"onCommand:burrow.http.importPostman",
 		"onLanguage:http",
 		"workspaceContains:**/*.http"
 	],
@@ -25,7 +26,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-http",
 		"watch": "gulp watch-extension:burrow-http",
-		"test": "node test/httpFile.test.js && node test/send.test.js && node test/render.test.js"
+		"test": "node test/httpFile.test.js && node test/send.test.js && node test/render.test.js && node test/postman.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -40,6 +41,12 @@
 				"title": "Send Request",
 				"category": "Burrow",
 				"icon": "$(play)"
+			},
+			{
+				"command": "burrow.http.importPostman",
+				"title": "Import Postman Collection as .http",
+				"category": "Burrow",
+				"icon": "$(cloud-download)"
 			}
 		],
 		"keybindings": [
