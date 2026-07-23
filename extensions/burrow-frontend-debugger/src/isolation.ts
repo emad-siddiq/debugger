@@ -76,6 +76,21 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		// layout is a nicety, not a requirement
 	}
 
+	// Option B (recon §8): a dedicated design mode — hide the side bars and the
+	// bottom panel so source | canvas fill the window, Framer-style. Both
+	// columns stay visible (no group maximize). Best-effort and setting-gated;
+	// Cmd+B / Cmd+J bring the chrome back (the workbench exposes no visibility
+	// query to restore it automatically on close).
+	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('designLayout', true)) {
+		for (const command of ['workbench.action.closeSidebar', 'workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']) {
+			try {
+				await vscode.commands.executeCommand(command);
+			} catch {
+				// chrome-hiding is cosmetic — never block the isolation itself
+			}
+		}
+	}
+
 	// Right: the isolated preview webview.
 	const props = sanitizeProps(args.props);
 	const url = buildIsolateUrl(target, rel, args.export, props);

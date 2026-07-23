@@ -46,6 +46,11 @@ export function openPanel(context: vscode.ExtensionContext, uiPort: number, dir:
 		{ enableScripts: true, retainContextWhenHidden: true },
 	);
 	panel.webview.html = buildHtml(uiPort);
+	// Option A (recon §8): the whole-app panel reads as "just another tab" at
+	// default size — fill the window on open unless the user opts out.
+	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('openMaximized', true)) {
+		void setEditorFullScreen(true);
+	}
 	panel.webview.onDidReceiveMessage((msg: HostMessage) => void handleHostMessage(msg), undefined, context.subscriptions);
 	panel.onDidDispose(() => {
 		current = undefined;
@@ -127,7 +132,7 @@ async function openSource(msg: HostMessage): Promise<void> {
 	}
 }
 
-async function setEditorFullScreen(on: boolean): Promise<void> {
+export async function setEditorFullScreen(on: boolean): Promise<void> {
 	if (on === maximized) {
 		return;
 	}

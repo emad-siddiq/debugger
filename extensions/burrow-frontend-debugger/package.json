@@ -32,23 +32,23 @@
 				"title": "Open Frontend Debugger",
 				"category": "Burrow"
 			},
-				{
-					"command": "burrow.frontendDebugger.openInBrowser",
-					"title": "Open App in Browser (Inspector)",
-					"category": "Burrow"
-				},
+			{
+				"command": "burrow.frontendDebugger.openInBrowser",
+				"title": "Open App in Browser (Inspector)",
+				"category": "Burrow"
+			},
 			{
 				"command": "burrow.frontendDebugger.isolate",
 				"title": "Isolate Component",
 				"category": "Burrow",
 				"icon": "$(open-preview)"
 			},
-				{
-					"command": "burrow.frontendDebugger.reloadPreview",
-					"title": "Reload Preview",
-					"category": "Burrow",
-					"icon": "$(refresh)"
-				},
+			{
+				"command": "burrow.frontendDebugger.reloadPreview",
+				"title": "Reload Preview",
+				"category": "Burrow",
+				"icon": "$(refresh)"
+			},
 			{
 				"command": "burrow.frontendDebugger.pickSample",
 				"title": "Pick Sample Props",
@@ -96,16 +96,16 @@
 					"when": "resourceExtname == .tsx || resourceExtname == .jsx",
 					"group": "navigation@9"
 				},
-					{
-						"command": "burrow.frontendDebugger.reloadPreview",
-						"when": "activeWebviewPanelId == burrow.frontendIsolation",
-						"group": "navigation@1"
-					},
-					{
-						"command": "burrow.frontendDebugger.pickSample",
-						"when": "activeWebviewPanelId == burrow.frontendIsolation",
-						"group": "navigation@2"
-					}
+				{
+					"command": "burrow.frontendDebugger.reloadPreview",
+					"when": "activeWebviewPanelId == burrow.frontendIsolation",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.frontendDebugger.pickSample",
+					"when": "activeWebviewPanelId == burrow.frontendIsolation",
+					"group": "navigation@2"
+				}
 			]
 		},
 		"viewsContainers": {
@@ -181,12 +181,22 @@
 				"burrow.frontendDebugger.runCommand": {
 					"type": "string",
 					"default": "",
-					"description": "Command that starts YOUR dev server, run verbatim in a terminal for \"Open App in Browser\" (e.g. npm run dev). Empty = use the built-in instrumented sidecar (overlay pre-injected, zero setup). For the verbatim path, add the Burrow inspector Vite plugin to your config so \u2325-click reveal works."
+					"description": "Command that starts YOUR dev server, run verbatim in a terminal for \"Open App in Browser\" (e.g. npm run dev). Empty = use the built-in instrumented sidecar (overlay pre-injected, zero setup). For the verbatim path, add the Burrow inspector Vite plugin to your config so ⌥-click reveal works."
 				},
 				"burrow.frontendDebugger.appUrl": {
 					"type": "string",
 					"default": "",
 					"description": "URL to open in the browser. Empty = auto (the runCommand dev-server URL, or the sidecar target URL)."
+				},
+				"burrow.frontendDebugger.openMaximized": {
+					"type": "boolean",
+					"default": true,
+					"description": "Maximize the editor area (hide side bars and the bottom panel) when the Frontend Debugger panel opens, so it fills the window instead of sitting as a small tab."
+				},
+				"burrow.frontendDebugger.designLayout": {
+					"type": "boolean",
+					"default": true,
+					"description": "When isolating a component, hide the side bars and bottom panel so the source | preview columns fill the window (Framer-style design mode). Cmd+B / Cmd+J restore the chrome."
 				}
 			}
 		}
