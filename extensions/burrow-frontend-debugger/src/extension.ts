@@ -118,7 +118,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		const targetOrigin = `http://127.0.0.1:${sidecar!.targetPort || cfg.targetPort}`;
 		// targetBase comes from the sidecar, not settings — an attached sidecar may
 		// serve the target under a different base than this window's config.
-		await openIsolation(context, { targetOrigin, targetBase: sidecar!.targetBase, targetDir: cfg.targetDir }, args);
+		await openIsolation(context, { targetOrigin, targetBase: sidecar!.targetBase, targetDir: cfg.targetDir, uiPort: sidecar!.uiPort }, args);
 	};
 	setIsolationHandler((a) => void isolate(a));
 
@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.pickSample', () => pickSample()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.editProps', () => editProps()),
-		vscode.commands.registerCommand('burrow.frontendDebugger.saveSample', () => saveSample(sidecar!.uiPort)),
+		vscode.commands.registerCommand('burrow.frontendDebugger.saveSample', () => saveSample()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.refreshComponents', () => components.refresh()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),

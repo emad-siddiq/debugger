@@ -7,7 +7,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { hasSamples } from './gallery';
-import { parsePropsSkeleton, preferredExport } from './propsSkeleton';
+import { parsePropsSchema, parsePropsSkeleton, preferredExport, PropSpec } from './propsSkeleton';
+import { makeTypeResolver } from './typeResolver';
 
 // Component-isolation workbench (the Framer-like view). Opens the component's
 // REAL source in an editor column (left) and an isolated live preview in a
@@ -24,6 +25,7 @@ export interface IsolateTarget {
 	readonly targetOrigin: string;   // http://127.0.0.1:<targetPort>
 	readonly targetBase: string;     // e.g. /watch/app/
 	readonly targetDir: string;      // target frontend root (allowlist anchor)
+	readonly uiPort: number;         // sidecar UI/API port (samples write-back)
 }
 
 /** A request to isolate a component: a file (abs or target-relative), an
@@ -52,6 +54,7 @@ let sampleNames: string[] = [];
 let currentProps: Record<string, unknown> | undefined;
 let currentFile: string | undefined;
 let currentTargetDir: string | undefined;
+let currentUiPort = 0;
 let currentLabel = '';
 
 /**
@@ -79,15 +82,25 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	}
 
 	// Framer-mode "design" layout: source slim on the left, the live canvas wider
-	// on the right (no manual dragging, no leftover groups). Best-effort — a
-	// projects that can't set the layout still gets the two columns above.
+	// on the right. When the component has a colocated stylesheet, the left
+	// column splits into source (top) | CSS (bottom) so markup, styles, and the
+	// live component are all on one screen. Best-effort — a project that can't
+	// set the layout still gets the plain columns.
+	const cssAbs = findColocatedCss(abs);
 	try {
-		await vscode.commands.executeCommand('vscode.setEditorLayout', {
-			orientation: 0,
-			groups: [{ size: 0.42 }, { size: 0.58 }],
-		});
+		await vscode.commands.executeCommand('vscode.setEditorLayout', cssAbs
+			? { orientation: 0, groups: [{ groups: [{ size: 0.62 }, { size: 0.38 }], size: 0.42 }, { size: 0.58 }] }
+			: { orientation: 0, groups: [{ size: 0.42 }, { size: 0.58 }] });
 	} catch {
 		// layout is a nicety, not a requirement
+	}
+	if (cssAbs) {
+		try {
+			const cssDoc = await vscode.workspace.openTextDocument(cssAbs);
+			await vscode.window.showTextDocument(cssDoc, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
+		} catch {
+			// the stylesheet row is optional
+		}
 	}
 
 	// Option B (recon §8): a dedicated design mode — hide the side bars and the
@@ -120,17 +133,17 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	if (!exportName && source) {
 		exportName = preferredExport(source, stem);
 	}
+	// The typed props schema drives the harness's live props panel; its
+	// skeleton (required members, imported types resolved one hop) is the
+	// auto-applied seed when there is no capture and no samples file — the
+	// first click renders the component instead of a missing-props stack.
+	const schema = source ? parsePropsSchema(source, stem, makeTypeResolver(abs, target.targetDir)) : undefined;
 	let props = sanitizeProps(args.props);
-	// No seed and no colocated samples → apply the required-props skeleton so
-	// the first click renders the component instead of a missing-props stack.
-	if (!Object.keys(props).length && source && !hasSamples(path.dirname(abs), path.basename(abs))) {
-		const skeleton = parsePropsSkeleton(source, stem);
-		if (skeleton) {
-			props = skeleton.props;
-			vscode.window.setStatusBarMessage(`Isolation: ${exportName || stem} — applied a props skeleton (Edit Props to refine)`, 5000);
-		}
+	if (!Object.keys(props).length && schema && schema.required.length && !hasSamples(path.dirname(abs), path.basename(abs))) {
+		props = schema.skeleton;
+		vscode.window.setStatusBarMessage(`Isolation: ${exportName || stem} — applied a props skeleton (edit live in the preview's props panel)`, 5000);
 	}
-	const url = buildIsolateUrl(target, rel, exportName, props);
+	const url = buildIsolateUrl(target, rel, exportName, props, schema?.specs);
 	const label = exportName || stem;
 
 	// New component → the previous component's state no longer applies. The
@@ -139,13 +152,15 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	currentProps = undefined;
 	currentFile = abs;
 	currentTargetDir = target.targetDir;
+	currentUiPort = target.uiPort;
 	currentLabel = label;
 
+	const previewColumn = cssAbs ? vscode.ViewColumn.Three : vscode.ViewColumn.Beside;
 	if (!preview) {
 		preview = vscode.window.createWebviewPanel(
 			'burrow.frontendIsolation',
 			`Preview — ${label}`,
-			{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+			{ viewColumn: previewColumn, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
 		preview.onDidDispose(() => { preview = undefined; sampleNames = []; currentProps = undefined; currentFile = undefined; }, undefined, context.subscriptions);
@@ -155,7 +170,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg), undefined, context.subscriptions);
 	} else {
 		preview.title = `Preview — ${label}`;
-		preview.reveal(vscode.ViewColumn.Beside, true);
+		preview.reveal(previewColumn, true);
 	}
 	preview.webview.html = buildPreviewHtml(target.targetOrigin, url);
 }
@@ -228,11 +243,12 @@ export async function editProps(): Promise<void> {
  * isolation then renders the first sample by default — a tuned prop set
  * becomes durable, the Framer "set sample props once" workflow.
  */
-export async function saveSample(uiPort: number): Promise<void> {
+export async function saveSample(): Promise<void> {
 	if (!preview || !currentFile || !currentTargetDir || !currentProps || !Object.keys(currentProps).length) {
 		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component (with props applied) first.');
 		return;
 	}
+	const uiPort = currentUiPort;
 	if (!uiPort) {
 		void vscode.window.showInformationMessage('Frontend Debugger: the sidecar is not running.');
 		return;
@@ -315,6 +331,16 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 		currentProps = msg.detail;
 		return;
 	}
+	if (msg.type === 'saveSample') {
+		// The panel's 💾 button — persist through the native flow (name prompt +
+		// allowlisted write-back). The posted props ARE the latest props mirror,
+		// but take them anyway in case the render report is still in flight.
+		if (msg.detail && typeof msg.detail === 'object' && !Array.isArray(msg.detail)) {
+			currentProps = msg.detail;
+		}
+		void saveSample();
+		return;
+	}
 	if (msg.type === 'renderError' && typeof msg.detail === 'string') {
 		// Surface once — the preview already shows the stack inline; this makes a
 		// silently-broken component obvious without staring at the canvas.
@@ -354,7 +380,7 @@ function sanitizeProps(raw: unknown): Record<string, unknown> {
 	return out;
 }
 
-function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>): string {
+function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>, specs?: PropSpec[]): string {
 	const base = target.targetBase.endsWith('/') ? target.targetBase : `${target.targetBase}/`;
 	const q = new URLSearchParams();
 	q.set('module', rel);
@@ -364,7 +390,26 @@ function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string 
 	if (Object.keys(props).length) {
 		q.set('props', JSON.stringify(props));
 	}
+	if (specs?.length) {
+		q.set('schema', JSON.stringify(specs));
+	}
 	return `${target.targetOrigin}${base}__isolate?${q.toString()}`;
+}
+
+/** The component's colocated stylesheet: `<Stem>.css` beside it, else the
+ *  directory's single `.css` file (merkle's one-component-per-dir layout). */
+function findColocatedCss(componentAbs: string): string | undefined {
+	const dir = path.dirname(componentAbs);
+	const stemCss = path.join(dir, path.basename(componentAbs).replace(/\.[jt]sx?$/, '.css'));
+	if (fs.existsSync(stemCss)) {
+		return stemCss;
+	}
+	try {
+		const css = fs.readdirSync(dir).filter((f) => f.endsWith('.css'));
+		return css.length === 1 ? path.join(dir, css[0]) : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 function defaultLabel(rel: string): string {

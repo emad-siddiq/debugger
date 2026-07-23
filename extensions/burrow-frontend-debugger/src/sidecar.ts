@@ -25,11 +25,11 @@ export async function healthz(port: number): Promise<boolean> {
  *  definition) and the target port+base its targetUrl embeds. Returns
  *  undefined when the probe fails — attaching blind to an unprobeable
  *  sidecar just reproduces whatever is broken about it. */
-async function probeSidecar(uiPort: number): Promise<{ rev?: string; port?: number; base?: string } | undefined> {
+async function probeSidecar(uiPort: number): Promise<{ rev?: string; startedAt?: number; port?: number; base?: string } | undefined> {
 	try {
 		const res = await fetch(`http://127.0.0.1:${uiPort}/api/config`, { signal: AbortSignal.timeout(1500) });
-		const body = await res.json() as { targetUrl?: string; rev?: string };
-		const out: { rev?: string; port?: number; base?: string } = { rev: body.rev };
+		const body = await res.json() as { targetUrl?: string; rev?: string; startedAt?: number };
+		const out: { rev?: string; startedAt?: number; port?: number; base?: string } = { rev: body.rev, startedAt: body.startedAt };
 		if (body.targetUrl) {
 			const url = new URL(body.targetUrl);
 			const port = Number(url.port);
@@ -55,24 +55,30 @@ function localToolRev(toolRoot: string): string {
 	}
 }
 
-/** The preferred port if it's free, else an OS-assigned ephemeral one.
- *  Probes the wildcard interface — the sidecar binds 0.0.0.0, and a loopback
- *  probe with SO_REUSEADDR reports "free" alongside a wildcard listener. */
-function freePort(preferred: number): Promise<number> {
+function tryListen(port: number, host: string): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const probe = net.createServer();
-		probe.once('error', () => {
-			const fallback = net.createServer();
-			fallback.once('error', reject);
-			fallback.listen(0, () => {
-				const port = (fallback.address() as net.AddressInfo).port;
-				fallback.close(() => resolve(port));
-			});
-		});
-		probe.listen(preferred, () => {
-			probe.close(() => resolve(preferred));
+		probe.once('error', reject);
+		probe.listen({ port, host }, () => {
+			const got = (probe.address() as net.AddressInfo).port;
+			probe.close(() => resolve(got));
 		});
 	});
+}
+
+/** The preferred port if it's free on BOTH stacks, else an OS-assigned
+ *  ephemeral one. Single-family probing is a trap: the sidecar's express
+ *  binds IPv4 0.0.0.0 while Vite listens on IPv6 `::` — a default (v6) probe
+ *  reports "free" right beside a live IPv4 listener, and the spawn then dies
+ *  with EADDRINUSE while a FOREIGN sidecar keeps answering the port. */
+async function freePort(preferred: number): Promise<number> {
+	try {
+		await tryListen(preferred, '0.0.0.0');
+		await tryListen(preferred, '::');
+		return preferred;
+	} catch {
+		return tryListen(0, '0.0.0.0');
+	}
 }
 
 /**
@@ -149,6 +155,7 @@ export class Sidecar implements vscode.Disposable {
 		};
 
 		this.out.appendLine(`[fedbg] config: targetDir=${cfg.targetDir} repoRoot=${cfg.repoRoot} ui=:${this.uiPort} target=:${targetPort} mode=${cfg.mode} backend=${cfg.backendTarget}`);
+		const spawnedAtMs = Date.now();
 		this.child = cp.spawn(process.execPath, [path.join(cfg.toolRoot, 'server', 'index.js')], {
 			cwd: cfg.toolRoot,
 			env,
@@ -175,6 +182,16 @@ export class Sidecar implements vscode.Disposable {
 		});
 
 		await this.waitHealthy(60_000);
+		// Belt over waitHealthy: the port answering is not proof it's OUR child —
+		// a foreign sidecar on the same port can 200 the healthz while the spawn
+		// is still booting (or already died on it). startedAt is stamped at the
+		// server's boot, so an older one answering here is not ours.
+		const identity = await probeSidecar(this.uiPort);
+		if (identity?.startedAt && identity.startedAt < spawnedAtMs - 2000) {
+			const foreignPort = this.uiPort;
+			await this.stop();
+			throw new Error(`a different sidecar is answering on :${foreignPort} — stop it (or Restart Sidecar) and retry`);
+		}
 		return this.uiPort;
 	}
 
