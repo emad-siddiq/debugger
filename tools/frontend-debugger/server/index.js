@@ -40,6 +40,15 @@ async function main() {
 
   const agentCode = fs.readFileSync(path.join(ROOT, 'agent/agent.js'), 'utf8')
 
+  // Handshake identity for /api/config: the tool version this process was
+  // started from. The Burrow extension refuses to ATTACH to a sidecar whose rev
+  // doesn't match its on-disk tool (a long-lived pre-upgrade process would
+  // otherwise serve stale server code forever) and spawns a fresh one instead.
+  const rev = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'),
+  ).version
+  const startedAt = Date.now()
+
   // 1) Start the instrumented target app dev server. Keep the failure message
   //    so the UI can surface it (not just the server log) — see /api/preflight.
   //    The target is RESTARTABLE: a mock↔live mode flip (POST /api/mode) tears
@@ -117,6 +126,8 @@ async function main() {
       modeState,
       restartTarget,
       backendTarget: CONFIG.backendTarget,
+      rev,
+      startedAt,
     }),
   )
   app.get('/healthz', (_req, res) =>

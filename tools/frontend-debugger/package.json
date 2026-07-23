@@ -1,6 +1,6 @@
 {
   "name": "frontend-debugger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "A visual React component debugger: embed a target app, drill from parent to leaf components in theater mode, inspect CSS + breakpoints + source, and save edits back to disk with live HMR.",

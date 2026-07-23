@@ -28,14 +28,16 @@ const TABS = embedded ? ALL_TABS.filter((t) => t.id !== 'source') : ALL_TABS
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-// Drop the in-page agent's opaque prop placeholders (functions → "ƒ name", React
-// elements/containers → "«…»") so seeded props survive the JSON round-trip into
-// the isolation harness. The user can refine them in the preview's props editor.
+// Drop the in-page agent's element/container placeholders ("«…»") so seeded
+// props survive the JSON round-trip into the isolation harness. Function
+// placeholders ("ƒ name") are KEPT — the harness renders them as no-op stubs,
+// so a captured callback prop still satisfies the component. Refine props via
+// the workbench's native Edit Props command (or the harness URL's props param).
 function cleanProps(raw: Record<string, unknown> | null): Record<string, unknown> {
   if (!raw) return {}
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === 'string' && (v.startsWith('ƒ ') || v.startsWith('«'))) continue
+    if (typeof v === 'string' && v.startsWith('«')) continue
     out[k] = v
   }
   return out

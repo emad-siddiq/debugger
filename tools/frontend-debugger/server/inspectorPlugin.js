@@ -82,8 +82,11 @@ function enclosingComponentName(p) {
 // query client, …). The target's global stylesheet is imported if found so the
 // component inherits base tokens. Editing the component's source → Vite Fast
 // Refresh → the isolated preview re-renders. Props update live over postMessage
-// (`{__burrowIsoCmd:1,type:'props',props}`); render errors are reported to the
-// embedding webview (`{__burrowIso:1,type:'renderError'|'ready'}`).
+// (`{__burrowIsoCmd:1,type:'props',props}` — sent by the extension's native
+// Edit Props command); state is reported to the embedding webview
+// (`{__burrowIso:1,type:'renderError'|'ready'|'samples'|'props'}` — 'props'
+// mirrors the JSON-safe live props after every render). String values matching
+// `ƒ` / `ƒ <name>` are function markers, rendered as no-op stubs.
 // ---------------------------------------------------------------------------
 
 const ISOLATE_SUFFIX = '__isolate'
@@ -200,10 +203,13 @@ class Boundary extends Component {
   }
 }
 
+// Renderable = a plain function component OR a React exotic like memo()/
+// forwardRef() — those export OBJECTS whose $$typeof is a react symbol.
+const isRenderable = (v) => typeof v === 'function' || (!!v && typeof v === 'object' && typeof v.$$typeof === 'symbol')
 const pickExport = (mod, name) => {
-  if (name && typeof mod[name] === 'function') return mod[name]
-  if (typeof mod.default === 'function') return mod.default
-  for (const k of Object.keys(mod)) { if (/^[A-Z]/.test(k) && typeof mod[k] === 'function') return mod[k] }
+  if (name && isRenderable(mod[name])) return mod[name]
+  if (isRenderable(mod.default)) return mod.default
+  for (const k of Object.keys(mod)) { if (/^[A-Z]/.test(k) && isRenderable(mod[k])) return mod[k] }
   return null
 }
 const showError = (msg) => {
@@ -251,19 +257,37 @@ const showError = (msg) => {
 
     // Seeded props win; otherwise the first sample is the default render so a
     // prop-driven component shows something instead of an empty/crashing mount.
-    let props = (CFG.props && typeof CFG.props === 'object') ? CFG.props : {}
+    // rawProps is ALWAYS the JSON-safe form ('ƒ' function markers intact) — it
+    // is what report('props') mirrors up to the native Edit Props command
+    // (real functions would DataCloneError through postMessage). Markers become
+    // no-op stubs only at render time, via stubFns, so every props source (URL
+    // seed, samples file, props cmd, sample cmd) gets the conversion.
+    let rawProps = (CFG.props && typeof CFG.props === 'object') ? CFG.props : {}
     const first = sampleNames.length ? sampleMap[sampleNames[0]] : null
-    if (!Object.keys(props).length && first && typeof first === 'object') props = first
+    if (!Object.keys(rawProps).length && first && typeof first === 'object') rawProps = first
+    const stubFns = (p) => {
+      const out = {}
+      for (const k of Object.keys(p)) {
+        const v = p[k]
+        out[k] = (typeof v === 'string' && /^ƒ( |$)/.test(v))
+          ? (...a) => { try { console.log('[burrow-iso] ' + k, ...a) } catch (e) {} }
+          : v
+      }
+      return out
+    }
     const root = createRoot(document.getElementById('burrow-iso-root'))
-    const render = () => root.render(h(Boundary, { key: JSON.stringify(props) }, h(Router, null, h(Providers, null, h(Comp, props)))))
+    const render = () => {
+      root.render(h(Boundary, { key: JSON.stringify(rawProps) }, h(Router, null, h(Providers, null, h(Comp, stubFns(rawProps))))))
+      report('props', rawProps)
+    }
     render()
-    report('ready', CFG.export || (typeof mod.default === 'function' ? (mod.default.displayName || mod.default.name || 'default') : 'component'))
+    report('ready', CFG.export || (isRenderable(mod.default) ? (mod.default.displayName || mod.default.name || 'default') : 'component'))
 
     window.addEventListener('message', (e) => {
       const d = e.data
       if (!d || d.__burrowIsoCmd !== 1) return
-      if (d.type === 'props') { props = (d.props && typeof d.props === 'object') ? d.props : {}; render() }
-      else if (d.type === 'sample') { const s = sampleMap[d.name]; if (s && typeof s === 'object') { props = s; render() } }
+      if (d.type === 'props') { rawProps = (d.props && typeof d.props === 'object') ? d.props : {}; render() }
+      else if (d.type === 'sample') { const s = sampleMap[d.name]; if (s && typeof s === 'object') { rawProps = s; render() } }
       else if (d.type === 'reload') location.reload()
     })
   } catch (err) {

@@ -47,6 +47,8 @@ export function makeApi({
   modeState,
   restartTarget,
   backendTarget,
+  rev,
+  startedAt,
 }) {
   const router = express.Router()
   const srcRoot = path.join(frontendDir, 'src')
@@ -61,7 +63,20 @@ export function makeApi({
   }
 
   router.get('/config', (_req, res) => {
-    res.json({ targetUrl })
+    // rev/startedAt are the attach handshake: the extension only attaches to a
+    // sidecar whose rev matches its on-disk tool version (staleness guard).
+    res.json({ targetUrl, rev: rev || null, startedAt: startedAt || null })
+  })
+
+  // Graceful exit, loopback-only. Lets the extension's Restart reclaim the
+  // canonical ports from a sidecar it did NOT spawn (it can't signal a foreign
+  // process) instead of accumulating fallback-port instances.
+  router.post('/shutdown', (req, res) => {
+    const addr = req.socket.remoteAddress
+    if (addr !== '127.0.0.1' && addr !== '::1' && addr !== '::ffff:127.0.0.1')
+      return res.status(403).json({ error: 'loopback only' })
+    res.json({ ok: true })
+    setTimeout(() => process.exit(0), 50)
   })
 
   // --- Target mode: mock (devMock) ↔ live (proxy to the debugged backend) ---
