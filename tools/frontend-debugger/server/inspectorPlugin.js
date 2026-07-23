@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import babel from '@babel/core'
+import { buildIsolateHtml } from './isolateHarness.js'
 
 // ---------------------------------------------------------------------------
 // Babel plugin: stamp every host JSX element with its source coordinates.
@@ -74,19 +75,17 @@ function enclosingComponentName(p) {
 // Component isolation harness (the Framer-like workbench).
 //
 // Served BY the target's own Vite dev server (so it shares the target module
-// graph + HMR), at `<base>__isolate?module=<src/…>&export=<Name>&props=<json>`.
-// It mounts ONE component alone on a blank canvas, wrapped in a minimal,
-// generic provider shell: a MemoryRouter if react-router-dom is present, plus
-// an OPTIONAL per-project providers module (`src/burrow.isolate.tsx`, default
-// export a `({children}) => …` wrapper) for app-specific context (Toast, theme,
-// query client, …). The target's global stylesheet is imported if found so the
-// component inherits base tokens. Editing the component's source → Vite Fast
-// Refresh → the isolated preview re-renders. Props update live over postMessage
-// (`{__burrowIsoCmd:1,type:'props',props}` — sent by the extension's native
-// Edit Props command); state is reported to the embedding webview
-// (`{__burrowIso:1,type:'renderError'|'ready'|'samples'|'props'}` — 'props'
-// mirrors the JSON-safe live props after every render). String values matching
-// `ƒ` / `ƒ <name>` are function markers, rendered as no-op stubs.
+// graph + HMR), at `<base>__isolate?module=<src/…>&export=&props=&schema=`.
+// It mounts ONE component alone on an interactive canvas (viewport presets,
+// backgrounds, a typed live props panel driven by `schema`), wrapped in a
+// minimal generic provider shell: a MemoryRouter if react-router-dom is
+// present, plus an OPTIONAL per-project providers module (`src/burrow.isolate.tsx`)
+// for app-specific context. The target's global stylesheet is imported if found.
+// Editing the component's source → Vite Fast Refresh → live re-render.
+// The page itself lives in ./isolateHarness.js (buildIsolateHtml) — envelopes
+// up: ready | renderError | samples | props | saveSample; commands down:
+// props | sample | reload | schema. String values matching `ƒ` / `ƒ <name>`
+// are function markers, rendered as no-op stubs at render time.
 // ---------------------------------------------------------------------------
 
 const ISOLATE_SUFFIX = '__isolate'
@@ -138,167 +137,6 @@ function targetHasDep(frontendDir, dep) {
   }
 }
 
-function buildIsolateHtml(cfg) {
-  // Escape </script> and `<` so the config JSON can't break out of the tag.
-  const json = JSON.stringify(cfg).replace(/</g, '\\u003c')
-  // Generic Router (FIX 2 / Defect A). When the target ships react-router-dom AND
-  // no providers module supplies its own Router (cfg.router, computed
-  // server-side), emit a STATIC `react-router-dom` import here. transformIndexHtml
-  // runs this doc through Vite, which rewrites that bare specifier to the SAME
-  // optimized dep the component imports — so the harness's MemoryRouter and the
-  // component share one react-router instance (matching context). A *runtime*
-  // `import('react-router-dom')` cannot: with @vite-ignore the bare specifier
-  // reaches the browser verbatim and never resolves, which is why useNavigate was
-  // left uncontexted. When a providers module IS present it owns the Router, so we
-  // stay a passthrough here and never nest two routers.
-  const routerImport = cfg.router
-    ? `import { MemoryRouter as __BurrowMemoryRouter } from 'react-router-dom'`
-    : ''
-  const routerSetup = cfg.router
-    ? `Router = (props) => h(__BurrowMemoryRouter, { initialEntries: ['/'] }, props.children)`
-    : ''
-  // The harness is a classic-looking inline module script; Vite's
-  // transformIndexHtml rewrites its bare imports (react, react-dom, the router
-  // import above, the dynamic component import) into dev URLs and injects the
-  // HMR client.
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Burrow — Component Isolation</title>
-<style>
-  html, body, #burrow-iso-root { margin: 0; min-height: 100%; }
-  body { background: #ffffff; color: #111111; font: 13px/1.5 system-ui, sans-serif; }
-  #burrow-iso-root { box-sizing: border-box; padding: 16px; }
-  .burrow-iso-error {
-    margin: 12px; padding: 12px 14px; border-radius: 8px;
-    background: #2b0f12; color: #ffd7d7; border: 1px solid #7f1d1d;
-    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    white-space: pre-wrap; word-break: break-word;
-  }
-</style>
-<script>window.__BURROW_ISOLATE__ = ${json};</script>
-</head>
-<body>
-<div id="burrow-iso-root"></div>
-<script type="module">
-import { createElement as h, Component } from 'react'
-import { createRoot } from 'react-dom/client'
-${routerImport}
-
-const CFG = window.__BURROW_ISOLATE__
-const BASE = import.meta.env.BASE_URL
-
-const report = (type, detail) => { try { parent.postMessage({ __burrowIso: 1, type, detail }, '*') } catch (e) {} }
-const loadOptional = async (spec) => { try { return await import(/* @vite-ignore */ spec) } catch (e) { return null } }
-
-class Boundary extends Component {
-  constructor(p) { super(p); this.state = { err: null } }
-  static getDerivedStateFromError(err) { return { err } }
-  componentDidCatch(err) { report('renderError', String((err && err.stack) || err)) }
-  render() {
-    if (this.state.err) return h('pre', { className: 'burrow-iso-error' }, String((this.state.err && this.state.err.stack) || this.state.err))
-    return this.props.children
-  }
-}
-
-// Renderable = a plain function component OR a React exotic like memo()/
-// forwardRef() — those export OBJECTS whose $$typeof is a react symbol.
-const isRenderable = (v) => typeof v === 'function' || (!!v && typeof v === 'object' && typeof v.$$typeof === 'symbol')
-const pickExport = (mod, name) => {
-  if (name && isRenderable(mod[name])) return mod[name]
-  if (isRenderable(mod.default)) return mod.default
-  for (const k of Object.keys(mod)) { if (/^[A-Z]/.test(k) && isRenderable(mod[k])) return mod[k] }
-  return null
-}
-const showError = (msg) => {
-  const el = document.getElementById('burrow-iso-root')
-  el.innerHTML = ''
-  const pre = document.createElement('pre')
-  pre.className = 'burrow-iso-error'
-  pre.textContent = msg
-  el.appendChild(pre)
-}
-
-;(async () => {
-  try {
-    // Generic Router — a MemoryRouter when the target ships react-router-dom and
-    // no providers module owns one (see routerImport/routerSetup above); a
-    // passthrough otherwise.
-    let Router = (props) => props.children
-    ${routerSetup}
-
-    // Optional per-project providers (Toast, theme, query client, …).
-    let Providers = (props) => props.children
-    if (CFG.providers) {
-      const pm = await loadOptional(BASE + CFG.providers)
-      const P = pm && (pm.default || pm.Providers)
-      if (P) Providers = (props) => h(P, null, props.children)
-    }
-    // Base stylesheet so the component inherits the app's design tokens.
-    if (CFG.css) await loadOptional(BASE + CFG.css)
-
-    const mod = await import(/* @vite-ignore */ BASE + CFG.module)
-    const Comp = pickExport(mod, CFG.export)
-    if (!Comp) { report('renderError', 'no component export in ' + CFG.module); showError('No component export found in ' + CFG.module + (CFG.export ? ' (looked for "' + CFG.export + '")' : '')); return }
-
-    // Colocated sample prop-sets (Component.samples -> a name:props map, via a
-    // samples named export or the default). Names go up to the native picker;
-    // a chosen sample is applied live via {__burrowIsoCmd:1,type:'sample',name}.
-    let sampleMap = {}
-    if (CFG.samples) {
-      const sm = await loadOptional(BASE + CFG.samples)
-      const raw = sm && (sm.samples || sm.default)
-      if (raw && typeof raw === 'object') sampleMap = raw
-    }
-    const sampleNames = Object.keys(sampleMap)
-    if (sampleNames.length) report('samples', sampleNames)
-
-    // Seeded props win; otherwise the first sample is the default render so a
-    // prop-driven component shows something instead of an empty/crashing mount.
-    // rawProps is ALWAYS the JSON-safe form ('ƒ' function markers intact) — it
-    // is what report('props') mirrors up to the native Edit Props command
-    // (real functions would DataCloneError through postMessage). Markers become
-    // no-op stubs only at render time, via stubFns, so every props source (URL
-    // seed, samples file, props cmd, sample cmd) gets the conversion.
-    let rawProps = (CFG.props && typeof CFG.props === 'object') ? CFG.props : {}
-    const first = sampleNames.length ? sampleMap[sampleNames[0]] : null
-    if (!Object.keys(rawProps).length && first && typeof first === 'object') rawProps = first
-    const stubFns = (p) => {
-      const out = {}
-      for (const k of Object.keys(p)) {
-        const v = p[k]
-        out[k] = (typeof v === 'string' && /^ƒ( |$)/.test(v))
-          ? (...a) => { try { console.log('[burrow-iso] ' + k, ...a) } catch (e) {} }
-          : v
-      }
-      return out
-    }
-    const root = createRoot(document.getElementById('burrow-iso-root'))
-    const render = () => {
-      root.render(h(Boundary, { key: JSON.stringify(rawProps) }, h(Router, null, h(Providers, null, h(Comp, stubFns(rawProps))))))
-      report('props', rawProps)
-    }
-    render()
-    report('ready', CFG.export || (isRenderable(mod.default) ? (mod.default.displayName || mod.default.name || 'default') : 'component'))
-
-    window.addEventListener('message', (e) => {
-      const d = e.data
-      if (!d || d.__burrowIsoCmd !== 1) return
-      if (d.type === 'props') { rawProps = (d.props && typeof d.props === 'object') ? d.props : {}; render() }
-      else if (d.type === 'sample') { const s = sampleMap[d.name]; if (s && typeof s === 'object') { rawProps = s; render() } }
-      else if (d.type === 'reload') location.reload()
-    })
-  } catch (err) {
-    report('renderError', String((err && err.stack) || err))
-    showError(String((err && err.stack) || err))
-  }
-})()
-</script>
-</body>
-</html>`
-}
 
 // ---------------------------------------------------------------------------
 // Vite plugin injected into the *target* dev server.
@@ -347,6 +185,19 @@ export function inspectorPlugin({
             props = null // malformed seed → start with empty props
           }
         }
+        // The extension's parsed props schema (typed control specs) — drives
+        // the harness's interactive props panel. Optional: the standalone SPA
+        // builds isolate URLs without it (raw-JSON editor still works).
+        let schema = null
+        const rawSchema = q.get('schema')
+        if (rawSchema) {
+          try {
+            const parsed = JSON.parse(rawSchema)
+            if (Array.isArray(parsed)) schema = parsed
+          } catch {
+            schema = null
+          }
+        }
         const providers = firstExisting(frontendDir, [
           'src/burrow.isolate.tsx',
           'src/burrow.isolate.jsx',
@@ -358,6 +209,7 @@ export function inspectorPlugin({
           module: moduleRel,
           export: q.get('export') || '',
           props,
+          schema,
           providers,
           // Emit the harness's own MemoryRouter only for a router app with no
           // providers shell — a shell owns its Router (avoid nesting two).
