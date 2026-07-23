@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
 import { openPanel, refreshPanel, setIsolationHandler } from './panel';
-import { openIsolation, IsolateArgs, reloadPreview, pickSample } from './isolation';
+import { openIsolation, IsolateArgs, reloadPreview, pickSample, editProps, saveSample } from './isolation';
 import { ComponentsProvider } from './gallery';
 import { Sidecar } from './sidecar';
 import { ModeStatus } from './status';
@@ -127,7 +127,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		await sidecar!.stop();
 		status.hide();
 		try {
-			const uiPort = await sidecar!.start(cfg);
+			// Restart is the escape hatch from a stale sidecar: never attach, always
+			// spawn fresh so the current server code is what actually runs.
+			const uiPort = await sidecar!.start(cfg, { forceSpawn: true });
 			refreshPanel(uiPort, cfg.targetDir);
 			openPanel(context, uiPort, cfg.targetDir);
 			status.show(uiPort);
@@ -143,6 +145,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.pickSample', () => pickSample()),
+		vscode.commands.registerCommand('burrow.frontendDebugger.editProps', () => editProps()),
+		vscode.commands.registerCommand('burrow.frontendDebugger.saveSample', () => saveSample(sidecar!.uiPort)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.refreshComponents', () => components.refresh()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
 		vscode.commands.registerCommand('burrow.frontendDebugger.toggleMode', () => status.toggle()),

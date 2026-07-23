@@ -20,25 +20,38 @@ export async function healthz(port: number): Promise<boolean> {
 	}
 }
 
-/** When attaching to an already-running sidecar we don't know the target port
- *  OR base path it chose (it may have been spawned with different settings than
- *  this window's), so read both back from GET /api/config — targetUrl embeds
- *  them. Falls back to the configured defaults if the probe fails. */
-async function detectTarget(uiPort: number, fallback: { port: number; base: string }): Promise<{ port: number; base: string }> {
+/** What an already-running sidecar reports about itself: its tool rev (the
+ *  attach handshake — absent on pre-handshake sidecars, which are stale by
+ *  definition) and the target port+base its targetUrl embeds. Returns
+ *  undefined when the probe fails — attaching blind to an unprobeable
+ *  sidecar just reproduces whatever is broken about it. */
+async function probeSidecar(uiPort: number): Promise<{ rev?: string; port?: number; base?: string } | undefined> {
 	try {
 		const res = await fetch(`http://127.0.0.1:${uiPort}/api/config`, { signal: AbortSignal.timeout(1500) });
-		const body = await res.json() as { targetUrl?: string };
-		if (!body.targetUrl) {
-			return fallback;
+		const body = await res.json() as { targetUrl?: string; rev?: string };
+		const out: { rev?: string; port?: number; base?: string } = { rev: body.rev };
+		if (body.targetUrl) {
+			const url = new URL(body.targetUrl);
+			const port = Number(url.port);
+			if (Number.isFinite(port) && port > 0) {
+				out.port = port;
+			}
+			out.base = url.pathname || undefined;
 		}
-		const url = new URL(body.targetUrl);
-		const port = Number(url.port);
-		return {
-			port: Number.isFinite(port) && port > 0 ? port : fallback.port,
-			base: url.pathname || fallback.base,
-		};
+		return out;
 	} catch {
-		return fallback;
+		return undefined;
+	}
+}
+
+/** The tool version on disk — the rev a freshly-spawned sidecar would report.
+ *  Attach requires the running sidecar to match it. */
+function localToolRev(toolRoot: string): string {
+	try {
+		const pkg = JSON.parse(fs.readFileSync(path.join(toolRoot, 'package.json'), 'utf8')) as { version?: string };
+		return pkg.version || '';
+	} catch {
+		return '';
 	}
 }
 
@@ -90,18 +103,27 @@ export class Sidecar implements vscode.Disposable {
 		return this.attached || !!this.child;
 	}
 
-	async start(cfg: SidecarConfig): Promise<number> {
+	async start(cfg: SidecarConfig, opts?: { forceSpawn?: boolean }): Promise<number> {
 		if (this.running && this.uiPort) {
 			return this.uiPort;
 		}
-		if (await healthz(cfg.uiPort)) {
-			this.attached = true;
-			this.uiPort = cfg.uiPort;
-			const target = await detectTarget(cfg.uiPort, { port: cfg.targetPort, base: cfg.targetBase });
-			this.targetPort = target.port;
-			this.targetBase = target.base;
-			this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (target :${this.targetPort}${this.targetBase})`);
-			return this.uiPort;
+		// Attach only to a sidecar that proves it runs the SAME tool version as
+		// this window would spawn (rev handshake). A long-lived pre-upgrade
+		// sidecar squatting on the port would otherwise serve stale server code
+		// to every new window — the exact failure Restart exists to escape, so
+		// Restart force-spawns and never attaches.
+		if (!opts?.forceSpawn && await healthz(cfg.uiPort)) {
+			const probe = await probeSidecar(cfg.uiPort);
+			const wantRev = localToolRev(cfg.toolRoot);
+			if (probe?.rev && probe.rev === wantRev) {
+				this.attached = true;
+				this.uiPort = cfg.uiPort;
+				this.targetPort = probe.port ?? cfg.targetPort;
+				this.targetBase = probe.base ?? cfg.targetBase;
+				this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (rev ${probe.rev}, target :${this.targetPort}${this.targetBase})`);
+				return this.uiPort;
+			}
+			this.out.appendLine(`[fedbg] sidecar on :${cfg.uiPort} is stale (rev ${probe?.rev || 'none'} ≠ ${wantRev || 'unknown'}) — spawning fresh on fallback ports`);
 		}
 
 		this.preflight(cfg);
@@ -157,14 +179,21 @@ export class Sidecar implements vscode.Disposable {
 	}
 
 	/** Resolves once the child has actually exited, so a follow-up start()
-	 *  never races the dying process for its ports or attaches to it. */
+	 *  never races the dying process for its ports or attaches to it. An
+	 *  ATTACHED (foreign) sidecar can't be signalled — ask it to exit over
+	 *  POST /api/shutdown instead (best-effort, bounded; pre-handshake
+	 *  sidecars 404 it and simply keep their ports). */
 	stop(): Promise<void> {
 		const child = this.child;
+		const attachedPort = this.attached ? this.uiPort : 0;
 		this.child = undefined;
 		this.attached = false;
 		this.uiPort = 0;
 		this.targetPort = 0;
 		this.targetBase = '/';
+		if (attachedPort) {
+			return this.shutdownForeign(attachedPort);
+		}
 		if (!child || child.exitCode !== null) {
 			return Promise.resolve();
 		}
@@ -184,6 +213,24 @@ export class Sidecar implements vscode.Disposable {
 	dispose(): void {
 		void this.stop();
 		this.out.dispose();
+	}
+
+	/** Ask a foreign sidecar to exit and wait (≤2s) for its port to actually
+	 *  free, so a follow-up spawn can reclaim the canonical ports. */
+	private async shutdownForeign(uiPort: number): Promise<void> {
+		try {
+			await fetch(`http://127.0.0.1:${uiPort}/api/shutdown`, { method: 'POST', signal: AbortSignal.timeout(1500) });
+		} catch {
+			return; // no shutdown route (pre-handshake sidecar) or already gone
+		}
+		const deadline = Date.now() + 2000;
+		while (Date.now() < deadline) {
+			if (!(await healthz(uiPort))) {
+				this.out.appendLine(`[fedbg] foreign sidecar on :${uiPort} shut down`);
+				return;
+			}
+			await new Promise((r) => setTimeout(r, 200));
+		}
 	}
 
 	/** No auto-npm-install (zero non-user-initiated network) — name the exact bootstrap command instead. */

@@ -33,8 +33,9 @@ function isComponentFile(name: string): boolean {
 	return /^[A-Z]/.test(stem);
 }
 
-/** Whether `<stem>.samples.{ts,tsx,js,jsx}` sits beside a component (T4). */
-function hasSamples(dir: string, componentFile: string): boolean {
+/** Whether `<stem>.samples.{ts,tsx,js,jsx}` sits beside a component (T4).
+ *  Shared with isolation.ts (the auto-skeleton yields to a samples file). */
+export function hasSamples(dir: string, componentFile: string): boolean {
 	const stem = componentFile.slice(0, -path.extname(componentFile).length);
 	return SAMPLE_EXTS.some((ext) => fs.existsSync(path.join(dir, `${stem}.samples.${ext}`)));
 }

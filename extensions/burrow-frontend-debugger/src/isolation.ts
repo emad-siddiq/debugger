@@ -3,16 +3,21 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { hasSamples } from './gallery';
+import { parsePropsSkeleton, preferredExport } from './propsSkeleton';
 
 // Component-isolation workbench (the Framer-like view). Opens the component's
 // REAL source in an editor column (left) and an isolated live preview in a
 // webview beside it (right). The preview iframes the target Vite's `__isolate`
 // harness (see tools/frontend-debugger/server/inspectorPlugin.js), which mounts
 // ONE component alone with a minimal provider shell. Editing the real file →
-// save → Vite Fast Refresh → the preview re-renders. Props are editable in the
-// preview toolbar and pushed to the harness over postMessage.
+// save → Vite Fast Refresh → the preview re-renders. Props flow natively: a
+// required-props SKELETON (parsed from the component's props type) seeds the
+// first render, the harness mirrors its live props up after every render, and
+// the Edit Props command (editProps) pushes changes back over postMessage.
 
 /** Where the running sidecar's target dev server lives + the fs allowlist anchor. */
 export interface IsolateTarget {
@@ -32,15 +37,22 @@ export interface IsolateArgs {
 interface IsolateEnvelope {
 	readonly __burrowIso?: number;
 	readonly type?: string;
-	readonly detail?: string | string[];
+	readonly detail?: string | string[] | Record<string, unknown>;
 }
 
 let preview: vscode.WebviewPanel | undefined;
 
-// Sample prop-set names for the CURRENTLY-isolated component, reported by the
-// harness (`<Component>.samples`). Reset on each isolation; the native picker
-// (pickSample) reads them and applies a choice over postMessage.
+// State for the CURRENTLY-isolated component, reset on each isolation:
+// sample prop-set names reported by the harness (the pickSample picker),
+// the live props the harness mirrors up after every render (the editProps
+// seed), the absolute source path (skeleton re-parses), and the label the
+// envelope handler uses (module-level so the ONE panel listener — registered
+// at creation only — always names the current component, not a stale one).
 let sampleNames: string[] = [];
+let currentProps: Record<string, unknown> | undefined;
+let currentFile: string | undefined;
+let currentTargetDir: string | undefined;
+let currentLabel = '';
 
 /**
  * Reveal the component's source on the left and an isolated preview on the
@@ -55,9 +67,11 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		return;
 	}
 
+	const abs = path.join(target.targetDir, rel);
+
 	// Left: the real editor. Keeps focus so you can start editing immediately.
 	try {
-		const doc = await vscode.workspace.openTextDocument(path.join(target.targetDir, rel));
+		const doc = await vscode.workspace.openTextDocument(abs);
 		await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
 	} catch (err) {
 		void vscode.window.showWarningMessage(`Frontend Debugger: cannot open ${rel} — ${err instanceof Error ? err.message : String(err)}`);
@@ -92,13 +106,40 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	}
 
 	// Right: the isolated preview webview.
-	const props = sanitizeProps(args.props);
-	const url = buildIsolateUrl(target, rel, args.export, props);
-	const label = args.export || defaultLabel(rel);
+	const stem = defaultLabel(rel);
+	let source: string | undefined;
+	try {
+		source = fs.readFileSync(abs, 'utf8');
+	} catch {
+		source = undefined;
+	}
+	// A gallery click carries no export. When the file has a basename-matching
+	// named export and no default, name it explicitly — the harness's fallback
+	// (first PascalCase export) can pick the wrong one in a multi-export file.
+	let exportName = args.export;
+	if (!exportName && source) {
+		exportName = preferredExport(source, stem);
+	}
+	let props = sanitizeProps(args.props);
+	// No seed and no colocated samples → apply the required-props skeleton so
+	// the first click renders the component instead of a missing-props stack.
+	if (!Object.keys(props).length && source && !hasSamples(path.dirname(abs), path.basename(abs))) {
+		const skeleton = parsePropsSkeleton(source, stem);
+		if (skeleton) {
+			props = skeleton.props;
+			vscode.window.setStatusBarMessage(`Isolation: ${exportName || stem} — applied a props skeleton (Edit Props to refine)`, 5000);
+		}
+	}
+	const url = buildIsolateUrl(target, rel, exportName, props);
+	const label = exportName || stem;
 
-	// New component → the previous component's sample names no longer apply. The
-	// harness re-reports `samples` for this one as it loads.
+	// New component → the previous component's state no longer applies. The
+	// harness re-reports `samples`/`props` for this one as it loads.
 	sampleNames = [];
+	currentProps = undefined;
+	currentFile = abs;
+	currentTargetDir = target.targetDir;
+	currentLabel = label;
 
 	if (!preview) {
 		preview = vscode.window.createWebviewPanel(
@@ -107,12 +148,14 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 			{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
-		preview.onDidDispose(() => { preview = undefined; sampleNames = []; }, undefined, context.subscriptions);
-		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg, label), undefined, context.subscriptions);
+		preview.onDidDispose(() => { preview = undefined; sampleNames = []; currentProps = undefined; currentFile = undefined; }, undefined, context.subscriptions);
+		// ONE listener for the panel's life. It reads module state (currentLabel),
+		// so re-isolations must NOT register another — that used to multiply every
+		// envelope by the number of isolations.
+		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg), undefined, context.subscriptions);
 	} else {
 		preview.title = `Preview — ${label}`;
 		preview.reveal(vscode.ViewColumn.Beside, true);
-		preview.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg, label), undefined, context.subscriptions);
 	}
 	preview.webview.html = buildPreviewHtml(target.targetOrigin, url);
 }
@@ -140,7 +183,123 @@ export async function pickSample(): Promise<void> {
 	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'sample', name });
 }
 
-function handleEnvelope(msg: IsolateEnvelope, label: string): void {
+/**
+ * Native props editor: a JSON input seeded with the component's LIVE props
+ * (mirrored up by the harness) over its required-props skeleton, applied to
+ * the preview via `{__burrowIsoCmd:1,type:'props',props}`. String value "ƒ"
+ * marks a function prop — the harness renders it as a no-op stub.
+ */
+export async function editProps(): Promise<void> {
+	if (!preview || !currentFile) {
+		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component first (its preview must be open).');
+		return;
+	}
+	let skeleton: Record<string, unknown> = {};
+	try {
+		const stem = path.basename(currentFile).replace(/\.[jt]sx?$/, '');
+		skeleton = parsePropsSkeleton(fs.readFileSync(currentFile, 'utf8'), stem)?.props ?? {};
+	} catch {
+		// no source, no skeleton — live props alone still seed the editor
+	}
+	const seed = { ...skeleton, ...(currentProps ?? {}) };
+	const raw = await vscode.window.showInputBox({
+		title: `Props — ${currentLabel}`,
+		value: JSON.stringify(seed),
+		prompt: 'JSON object. Use "ƒ" as a value for a function prop (rendered as a no-op stub).',
+		validateInput: (text) => {
+			try {
+				const parsed = JSON.parse(text);
+				return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? undefined : 'Must be a JSON object.';
+			} catch {
+				return 'Not valid JSON.';
+			}
+		},
+	});
+	if (raw === undefined) {
+		return;
+	}
+	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'props', props: JSON.parse(raw) });
+}
+
+/**
+ * Persist the preview's live props as a named sample in the component's
+ * colocated `<Component>.samples.ts` (created if absent, merged if present),
+ * written through the sidecar's allowlisted POST /api/source. The next
+ * isolation then renders the first sample by default — a tuned prop set
+ * becomes durable, the Framer "set sample props once" workflow.
+ */
+export async function saveSample(uiPort: number): Promise<void> {
+	if (!preview || !currentFile || !currentTargetDir || !currentProps || !Object.keys(currentProps).length) {
+		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component (with props applied) first.');
+		return;
+	}
+	if (!uiPort) {
+		void vscode.window.showInformationMessage('Frontend Debugger: the sidecar is not running.');
+		return;
+	}
+	const name = await vscode.window.showInputBox({
+		title: `Save Props as Sample — ${currentLabel}`,
+		value: 'Default',
+		prompt: 'Sample name (a key in the samples map).',
+		validateInput: (text) => (/^[^'\\]+$/.test(text.trim()) && text.trim() ? undefined : 'Name must be non-empty, without quotes or backslashes.'),
+	});
+	if (name === undefined) {
+		return;
+	}
+	const stemAbs = currentFile.replace(/\.[jt]sx?$/, '');
+	const existingAbs = ['ts', 'tsx', 'js', 'jsx'].map((ext) => `${stemAbs}.samples.${ext}`).find((p) => fs.existsSync(p));
+	const targetAbs = existingAbs ?? `${stemAbs}.samples.ts`;
+	const rel = path.relative(currentTargetDir, targetAbs).split(path.sep).join('/');
+	const entry = `'${name.trim()}': ${JSON.stringify(currentProps, null, 2).replace(/\n/g, '\n  ')},`;
+
+	let content: string;
+	if (existingAbs) {
+		const current = fs.readFileSync(existingAbs, 'utf8');
+		// Insert after the samples map's opening brace (samples named export or a
+		// default-exported object) — conservative merge; anything unrecognized is
+		// opened for a manual edit instead of a risky rewrite.
+		const open = /(export\s+const\s+samples[^=]*=\s*\{|export\s+default\s*\{)/.exec(current);
+		if (!open) {
+			void vscode.window.showWarningMessage(`Frontend Debugger: couldn't find the samples map in ${path.basename(existingAbs)} — opening it instead.`);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(existingAbs));
+			return;
+		}
+		const at = open.index + open[0].length;
+		content = `${current.slice(0, at)}\n  ${entry}${current.slice(at)}`;
+	} else {
+		content = [
+			`// DEV-ONLY: sample prop-sets for ${currentLabel} — the Burrow isolation`,
+			`// workbench lists these in its Pick Sample Props picker and renders the`,
+			`// first one by default. String value 'ƒ' marks a function prop (stubbed).`,
+			`export const samples = {`,
+			`  ${entry}`,
+			`};`,
+			``,
+		].join('\n');
+	}
+
+	try {
+		const res = await fetch(`http://127.0.0.1:${uiPort}/api/source`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ file: rel, content }),
+			signal: AbortSignal.timeout(3000),
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({})) as { error?: string };
+			throw new Error(body.error || `HTTP ${res.status}`);
+		}
+	} catch (err) {
+		void vscode.window.showErrorMessage(`Frontend Debugger: saving the sample failed — ${err instanceof Error ? err.message : String(err)}`);
+		return;
+	}
+	vscode.window.setStatusBarMessage(`Isolation: saved sample '${name.trim()}' beside ${currentLabel}`, 4000);
+	// The gallery badge and the harness's sample list both key off the file.
+	void vscode.commands.executeCommand('burrow.frontendDebugger.refreshComponents');
+	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'reload' });
+}
+
+function handleEnvelope(msg: IsolateEnvelope): void {
 	if (!msg || msg.__burrowIso !== 1) {
 		return;
 	}
@@ -150,10 +309,16 @@ function handleEnvelope(msg: IsolateEnvelope, label: string): void {
 		sampleNames = msg.detail.filter((n): n is string => typeof n === 'string');
 		return;
 	}
+	if (msg.type === 'props' && msg.detail && typeof msg.detail === 'object' && !Array.isArray(msg.detail)) {
+		// The harness mirrors its live props (JSON-safe, 'ƒ' markers intact) after
+		// every render — the seed for editProps.
+		currentProps = msg.detail;
+		return;
+	}
 	if (msg.type === 'renderError' && typeof msg.detail === 'string') {
 		// Surface once — the preview already shows the stack inline; this makes a
 		// silently-broken component obvious without staring at the canvas.
-		void vscode.window.setStatusBarMessage(`Isolation: ${label} render error`, 4000);
+		vscode.window.setStatusBarMessage(`Isolation: ${currentLabel} render error`, 4000);
 	}
 }
 
@@ -171,15 +336,17 @@ function resolveSrcRel(targetDir: string, file: string): string | undefined {
 	return path.relative(targetDir, abs).split(path.sep).join('/');
 }
 
-/** Drop the in-page agent's opaque prop placeholders (functions → "ƒ name",
- *  React elements/containers → "«…»") so a seeded props object is JSON-safe. */
+/** Drop the in-page agent's element/container placeholders ("«…»") so a seeded
+ *  props object is JSON-safe. Function placeholders ("ƒ name") are KEPT — the
+ *  harness renders them as no-op stubs, so a captured callback prop still
+ *  satisfies the component instead of going missing. */
 function sanitizeProps(raw: unknown): Record<string, unknown> {
 	if (!raw || typeof raw !== 'object') {
 		return {};
 	}
 	const out: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-		if (typeof value === 'string' && (value.startsWith('ƒ ') || value.startsWith('«'))) {
+		if (typeof value === 'string' && value.startsWith('«')) {
 			continue;
 		}
 		out[key] = value;
