@@ -243,7 +243,7 @@ import product from '../../platform/product/common/product.js';
 			'window.titleBarStyle': {
 				'type': 'string',
 				'enum': ['native', 'custom'],
-				'default': 'custom',
+				'default': 'native', // BURROW patch 0011 — native title strip (WO-01), was 'custom'
 				'scope': ConfigurationScope.APPLICATION,
 				'description': localize('titleBarStyle', "Adjust the appearance of the window title bar to be native by the OS or custom. Changes require a full restart to apply."),
 			},

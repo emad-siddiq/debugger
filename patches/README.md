@@ -48,6 +48,8 @@ Each patch is `NNNN-short-slug.md`:
 | [0003](0003-strip-leaf-contributions.md) | Strip leaf workbench contributions (surveys, issue, tunnel, sync) | 02 | workbench.common.main.ts, workbench.desktop.main.ts | 7 imports | active |
 | [0004](0004-rd-debug-aux-bar-default.md) | Run & Debug defaults to the right auxiliary bar (RD) | 05 | debug.contribution.ts, debugService.ts, debugSession.ts | ~6 lines | active |
 | [0005](0005-suppress-first-launch-onboarding.md) | Suppress the first-launch onboarding overlay | 02 | gettingStarted.contribution.ts | 1 line | active |
+| [0010](0010-compact-editor-gutter.md) | Compact editor gutter (thinner line-number + decorations reserve) | — | editor/common/config/editorOptions.ts | 2 lines | active |
+| [0011](0011-native-title-bar-default.md) | Default window.titleBarStyle to native (chrome removal) | — (WO-01) | workbench/electron-browser/desktop.contribution.ts | 1 line | active |
 
 Task 02 (strip to Go-only) deletes 64 built-in extension dirs (layer 2, no
 ledger entry each) and drops the js-debug `builtInExtensions` from `product.json`
