@@ -105,6 +105,13 @@
 			"markdown.preview.lineHeight": 1.7,
 			"zenMode.showTabs": "none",
 			"chat.commandCenter.enabled": false,
+			"window.titleBarStyle": "native",
+			"window.customTitleBarVisibility": "never",
+			"window.commandCenter": false,
+			"workbench.navigationControl.enabled": false,
+			"workbench.layoutControl.enabled": false,
+			"workbench.editor.editorActionsLocation": "default",
+			"window.title": "${rootName}",
 			"[go]": {
 				"editor.formatOnSave": true,
 				"editor.defaultFormatter": "burrow.burrow-go-base",
