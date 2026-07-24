@@ -7,13 +7,29 @@
 > tables — edit `DECISIONS` in the script and regenerate. The commit plan
 > and Startup budget prose are filled in by hand.
 
-Upstream pin: **1.128.0**. Classified: **96** (keep 28, remove 64 [64 done], dev/test 4).
+Upstream pin: **1.128.0**. Classified: **112** (keep 47, remove 61 [61 done], dev/test 4).
 
 ## Keep
 
 | Extension | Contributes | Why |
 |---|---|---|
 | `burrow-core` | — | our own extension (task 01) |
+| `burrow-db` | — | our own extension (DB explorer) |
+| `burrow-docker` | — | our own extension (docker panel) |
+| `burrow-flow` | — | our own extension (flow view) |
+| `burrow-frontend-debugger` | — | our own extension (frontend debugger host) |
+| `burrow-fullstack` | — | our own extension (fullstack glue) |
+| `burrow-go-base` | — | our own extension (gopls bootstrap) |
+| `burrow-go-debug` | dbg:go | our own extension (Delve debug) |
+| `burrow-go-docs` | — | our own extension (Go docs viewer) |
+| `burrow-go-inspect` | — | our own extension (runtime inspect) |
+| `burrow-go-nav` | — | our own extension (Go navigation) |
+| `burrow-go-test` | — | our own extension (Go test runner) |
+| `burrow-go-viz` | — | our own extension (Go visualizations) |
+| `burrow-http` | — | our own extension (HTTP workbench, task 09) |
+| `burrow-oracle` | — | our own extension (oracle digest) |
+| `burrow-theme-xcode` | 3 theme | our own themes (task 12) |
+| `burrow-ts-base` | — | our own extension (typescript-language-server bootstrap, M4) |
 | `configuration-editing` | lang:jsonc/json | IntelliSense for settings/launch/tasks JSON |
 | `debug-server-ready` | dbg:* | adapter-agnostic auto-open on server-ready (backend dev) |
 | `diff` | lang:diff | diff/patch grammar — cheap, git artifacts |
@@ -33,13 +49,16 @@ Upstream pin: **1.128.0**. Classified: **96** (keep 28, remove 64 [64 done], dev
 | `markdown-language-features` | notebook | markdown preview (ledger: keep preview) |
 | `media-preview` | — | view images/diagrams in the repo (cheap, non-language) |
 | `merge-conflict` | — | in-editor conflict resolution — part of git flow |
+| `python` | lang:python | restored — markdown fenced-code fidelity (Go-adjacent scripts, docs) |
 | `references-view` | — | find-all-references / call hierarchy tree (gopls) |
+| `rust` | lang:rust | restored — markdown fenced-code fidelity |
 | `search-result` | lang:search-result | search-results editor highlighting |
 | `shellscript` | lang:shellscript | bash scripts (ledger: keep shell) |
 | `sql` | lang:sql | migrations (ledger: keep SQL) |
 | `terminal-suggest` | — | completion in the integrated bash terminal |
 | `theme-defaults` | 11 theme | default color + icon theme — task 12 replaces |
 | `theme-seti` | 1 theme | default file-icon theme — task 12 replaces |
+| `typescript-basics` | lang:typescript/typescriptreact/jsonc/json | restored by M4 (N3) — TS/TSX grammar for the frontend + md fences |
 | `yaml` | lang:dockercompose/yaml | compose / k8s / CI configs |
 
 ## Remove (delete extension dir — layer 2)
@@ -89,12 +108,10 @@ Grouped into cohesive `strip:` commits below (see Commit plan). Status
 | `powershell` | — | ✓ removed | non-Go language |
 | `prompt-basics` | — | ✓ removed | chat .prompt.md grammar — chat is stripped |
 | `pug` | — | ✓ removed | templating (web) |
-| `python` | — | ✓ removed | non-Go language |
 | `r` | — | ✓ removed | non-Go language |
 | `razor` | — | ✓ removed | templating (web/.NET) |
 | `restructuredtext` | — | ✓ removed | non-Go markup (Python docs) |
 | `ruby` | — | ✓ removed | non-Go language |
-| `rust` | — | ✓ removed | non-Go language |
 | `scss` | — | ✓ removed | CSS preprocessor (web) |
 | `shaderlab` | — | ✓ removed | shader language |
 | `simple-browser` | — | ✓ removed | embedded web browser — task 09 HTTP workbench supersedes |
@@ -109,7 +126,6 @@ Grouped into cohesive `strip:` commits below (see Commit plan). Status
 | `theme-solarized-light` | — | ✓ removed | surplus stock theme — task 12 ships ours |
 | `theme-tomorrow-night-blue` | — | ✓ removed | surplus stock theme — task 12 ships ours |
 | `tunnel-forwarding` | — | ✓ removed | remote tunnels / port forwarding (code-server-era) |
-| `typescript-basics` | — | ✓ removed | TS grammar — not in Go repos (JS grammar kept) |
 | `typescript-language-features` | — | ✓ removed | heavy TS/JS language service (ledger: drop language services) |
 | `vb` | — | ✓ removed | non-Go language |
 | `xml` | — | ✓ removed | rare in Go repos — minimalism |
