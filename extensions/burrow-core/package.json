@@ -103,6 +103,7 @@
 			},
 			"markdown.preview.fontSize": 15,
 			"markdown.preview.lineHeight": 1.7,
+			"zenMode.showTabs": "none",
 			"chat.commandCenter.enabled": false,
 			"[go]": {
 				"editor.formatOnSave": true,

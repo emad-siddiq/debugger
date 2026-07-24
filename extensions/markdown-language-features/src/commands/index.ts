@@ -10,6 +10,7 @@ import { MarkdownPreviewManager } from '../preview/previewManager';
 import { ContentSecurityPolicyArbiter, PreviewSecuritySelector } from '../preview/security';
 import { TelemetryReporter } from '../telemetryReporter';
 import { InsertLinkFromWorkspace, InsertImageFromWorkspace } from './insertResource';
+import { ReadZenCommand } from './readZen';
 import { RefreshPreviewCommand } from './refreshPreview';
 import { ReloadPlugins } from './reloadPlugins';
 import { RenderDocument } from './renderDocument';
@@ -43,6 +44,7 @@ export function registerMarkdownCommands(
 	commandManager.register(new ReopenAsSourceCommand());
 	commandManager.register(new EditSourceCommand());
 	commandManager.register(new ChoosePreviewFontCommand());
+	commandManager.register(new ReadZenCommand());
 	commandManager.register(new TogglePreviewCommand());
 	commandManager.register(new RefreshPreviewCommand(previewManager, engine));
 	commandManager.register(new ShowPreviewSecuritySelectorCommand(previewSecuritySelector, previewManager));

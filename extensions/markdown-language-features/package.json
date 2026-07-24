@@ -213,6 +213,12 @@
         "category": "Markdown"
       },
       {
+        "command": "markdown.readZen",
+        "title": "%markdown.readZen.title%",
+        "category": "Markdown",
+        "icon": "$(book)"
+      },
+      {
         "command": "markdown.togglePreview",
         "title": "%markdown.togglePreview.title%",
         "category": "Markdown"
@@ -266,6 +272,11 @@
           "command": "markdown.reopenAsSource",
           "when": "activeCustomEditorId == 'vscode.markdown.preview.editor' && !activeCustomEditorTextDiff",
           "group": "navigation@2"
+        },
+        {
+          "command": "markdown.readZen",
+          "when": "!inZenMode && resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !notebookEditorFocused && !activeCustomEditorTextDiff",
+          "group": "navigation@3"
         },
         {
           "command": "markdown.preview.refresh",
@@ -402,6 +413,10 @@
           "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ || activeCustomEditorId == 'vscode.markdown.preview.editor'"
         },
         {
+          "command": "markdown.readZen",
+          "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ || activeCustomEditorId == 'vscode.markdown.preview.editor'"
+        },
+        {
           "command": "markdown.togglePreview",
           "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/"
         }
@@ -418,6 +433,12 @@
         "command": "markdown.togglePreview",
         "key": "shift+ctrl+v",
         "mac": "shift+cmd+v",
+        "when": "!terminalFocus && ((editorFocus && resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !notebookEditorFocused) || activeCustomEditorId == 'vscode.markdown.preview.editor')"
+      },
+      {
+        "command": "markdown.readZen",
+        "key": "ctrl+k r",
+        "mac": "cmd+k r",
         "when": "!terminalFocus && ((editorFocus && resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !notebookEditorFocused) || activeCustomEditorId == 'vscode.markdown.preview.editor')"
       }
     ],
