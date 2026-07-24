@@ -10,6 +10,7 @@ import { activateShared } from './extension.shared';
 import { VsCodeOutputLogger } from './logging';
 import { IMdParser, MarkdownItEngine } from './markdownEngine';
 import { getMarkdownExtensionContributions } from './markdownExtensions';
+import { FencedCodeHighlighter } from './preview/fencedHighlighting';
 import { githubSlugifier } from './slugify';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -19,7 +20,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	const logger = new VsCodeOutputLogger();
 	context.subscriptions.push(logger);
 
-	const engine = new MarkdownItEngine(contributions, githubSlugifier, logger);
+	const fencedHighlighter = new FencedCodeHighlighter();
+	context.subscriptions.push(fencedHighlighter);
+
+	const engine = new MarkdownItEngine(contributions, githubSlugifier, logger, fencedHighlighter);
 
 	const client = await startServer(context, engine);
 	context.subscriptions.push(client);

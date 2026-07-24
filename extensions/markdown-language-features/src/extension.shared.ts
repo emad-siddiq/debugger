@@ -57,6 +57,13 @@ export function activateShared(
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
 		previewManager.updateConfiguration();
 	}));
+
+	// Re-render previews when the color theme changes so fenced code blocks
+	// pick up the new theme's token colors (the highlighter clears its cache
+	// on the same event, having subscribed first).
+	context.subscriptions.push(vscode.languages.onDidChangeSyntaxHighlighting(() => {
+		previewManager.refresh();
+	}));
 }
 
 function registerMarkdownLanguageFeatures(

@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { extendMarkdownIt as extendMarkdownItWithFrontMatter } from './extensions/yamlPreamble/yamlPreamble';
 import { ILogger } from './logging';
 import { MarkdownContributionProvider } from './markdownExtensions';
+import { FencedCodeHighlighter } from './preview/fencedHighlighting';
 import { MarkdownPreviewConfiguration } from './preview/previewConfig';
 import { ISlugifier, SlugBuilder } from './slugify';
 import { ITextDocument } from './types/textDocument';
@@ -107,15 +108,18 @@ export class MarkdownItEngine implements IMdParser {
 
 	readonly #contributionProvider: MarkdownContributionProvider;
 	readonly #logger: ILogger;
+	readonly #fencedHighlighter: FencedCodeHighlighter | undefined;
 
 	public constructor(
 		contributionProvider: MarkdownContributionProvider,
 		slugifier: ISlugifier,
 		logger: ILogger,
+		fencedHighlighter?: FencedCodeHighlighter,
 	) {
 		this.#contributionProvider = contributionProvider;
 		this.slugifier = slugifier;
 		this.#logger = logger;
+		this.#fencedHighlighter = fencedHighlighter;
 
 		contributionProvider.onContributionsChanged(() => {
 			// Markdown plugin contributions may have changed
@@ -134,7 +138,7 @@ export class MarkdownItEngine implements IMdParser {
 		if (!this.#md) {
 			this.#md = (async () => {
 				const markdownIt = await import('markdown-it');
-				let md: MarkdownIt = markdownIt.default(await getMarkdownOptions(() => md));
+				let md: MarkdownIt = markdownIt.default(await getMarkdownOptions(() => md, this.#fencedHighlighter));
 				md.linkify.set({ fuzzyLink: false });
 
 				for (const plugin of this.#contributionProvider.contributions.markdownItPlugins.values()) {
@@ -207,6 +211,12 @@ export class MarkdownItEngine implements IMdParser {
 			resourceProvider,
 			slugifier: this.slugifier.createBuilder(),
 		};
+
+		// Pre-tokenize fenced code blocks with the theme's TextMate colors so the
+		// synchronous markdown-it highlight callback can pick them up from cache.
+		await this.#fencedHighlighter?.prepare(
+			tokens.filter(token => token.type === 'fence')
+				.map(token => ({ info: token.info, content: token.content })));
 
 		const html = engine.renderer.render(tokens, {
 			...engine.options,
@@ -395,11 +405,15 @@ export class MarkdownItEngine implements IMdParser {
 	}
 }
 
-async function getMarkdownOptions(md: () => MarkdownIt): Promise<MarkdownIt.Options> {
+async function getMarkdownOptions(md: () => MarkdownIt, fencedHighlighter: FencedCodeHighlighter | undefined): Promise<MarkdownIt.Options> {
 	const hljs = (await import('highlight.js')).default;
 	return {
 		html: true,
 		highlight: (str: string, lang?: string) => {
+			const themed = fencedHighlighter?.getCachedHtml(str, lang);
+			if (themed !== undefined) {
+				return themed;
+			}
 			lang = normalizeHighlightLang(lang);
 			if (lang && hljs.getLanguage(lang)) {
 				try {
