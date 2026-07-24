@@ -98,6 +98,9 @@
 			"workbench.colorTheme": "Burrow Dark (Xcode-inspired)",
 			"workbench.iconTheme": "burrow-xcode-icons",
 			"workbench.startupEditor": "none",
+			"workbench.editorAssociations": {
+				"*.md": "vscode.markdown.preview.editor"
+			},
 			"chat.commandCenter.enabled": false,
 			"[go]": {
 				"editor.formatOnSave": true,

@@ -14,7 +14,7 @@ import { RefreshPreviewCommand } from './refreshPreview';
 import { ReloadPlugins } from './reloadPlugins';
 import { RenderDocument } from './renderDocument';
 import { ShowLockedPreviewToSideCommand, ShowPreviewCommand, ShowPreviewToSideCommand } from './showPreview';
-import { ReopenAsPreviewCommand, ReopenAsSourceCommand, TogglePreviewCommand } from './reopenAsPreview';
+import { EditSourceCommand, ReopenAsPreviewCommand, ReopenAsSourceCommand, TogglePreviewCommand } from './reopenAsPreview';
 import { CopyImageCommand } from './copyImage';
 import { ShowPreviewSecuritySelectorCommand } from './showPreviewSecuritySelector';
 import { ShowSourceCommand } from './showSource';
@@ -40,6 +40,7 @@ export function registerMarkdownCommands(
 	commandManager.register(new ShowSourceCommand(previewManager));
 	commandManager.register(new ReopenAsPreviewCommand());
 	commandManager.register(new ReopenAsSourceCommand());
+	commandManager.register(new EditSourceCommand());
 	commandManager.register(new TogglePreviewCommand());
 	commandManager.register(new RefreshPreviewCommand(previewManager, engine));
 	commandManager.register(new ShowPreviewSecuritySelectorCommand(previewSecuritySelector, previewManager));

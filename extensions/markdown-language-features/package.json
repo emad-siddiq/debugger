@@ -202,6 +202,12 @@
         "icon": "$(file-code)"
       },
       {
+        "command": "markdown.editSource",
+        "title": "%markdown.editSource.title%",
+        "category": "Markdown",
+        "icon": "$(edit)"
+      },
+      {
         "command": "markdown.togglePreview",
         "title": "%markdown.togglePreview.title%",
         "category": "Markdown"
@@ -297,6 +303,11 @@
           "group": "navigation"
         },
         {
+          "command": "markdown.editSource",
+          "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/",
+          "group": "navigation"
+        },
+        {
           "command": "markdown.findAllFileReferences",
           "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/",
           "group": "4_search"
@@ -306,6 +317,11 @@
         {
           "command": "markdown.showPreview",
           "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !hasCustomMarkdownPreview",
+          "group": "1_open"
+        },
+        {
+          "command": "markdown.editSource",
+          "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/",
           "group": "1_open"
         },
         {
@@ -375,6 +391,10 @@
           "command": "markdown.reopenAsSource",
           "when": "activeCustomEditorId == 'vscode.markdown.preview.editor'",
           "group": "navigation"
+        },
+        {
+          "command": "markdown.editSource",
+          "when": "resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ || activeCustomEditorId == 'vscode.markdown.preview.editor'"
         },
         {
           "command": "markdown.togglePreview",

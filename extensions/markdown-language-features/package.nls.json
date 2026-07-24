@@ -25,6 +25,7 @@
 	"markdown.styles.dec": "A list of URLs or local paths to CSS style sheets to use from the Markdown preview. Relative paths are interpreted relative to the folder open in the Explorer. If there is no open folder, they are interpreted relative to the location of the Markdown file. All `\\` need to be written as `\\\\`.",
 	"markdown.reopenAsPreview.title": "Open as Preview",
 	"markdown.reopenAsSource.title": "Reopen as source file",
+	"markdown.editSource.title": "Edit Markdown",
 	"markdown.togglePreview.title": "Toggle Preview",
 	"markdown.showPreviewSecuritySelector.title": "Change Preview Security Settings",
 	"markdown.trace.extension.desc": "Enable debug logging for the Markdown extension.",

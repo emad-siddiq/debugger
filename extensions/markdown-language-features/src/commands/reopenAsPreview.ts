@@ -22,6 +22,19 @@ export class ReopenAsSourceCommand implements Command {
 	}
 }
 
+export class EditSourceCommand implements Command {
+	public readonly id = 'markdown.editSource';
+
+	public async execute(uri?: vscode.Uri) {
+		if (uri) {
+			// Invoked from a resource context menu (explorer / editor tab)
+			await vscode.commands.executeCommand('vscode.openWith', uri, 'default');
+		} else {
+			await vscode.commands.executeCommand('reopenActiveEditorWith', 'default');
+		}
+	}
+}
+
 export class TogglePreviewCommand implements Command {
 	public readonly id = 'markdown.togglePreview';
 
