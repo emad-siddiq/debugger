@@ -10,7 +10,8 @@
     "dev": "node server/index.js",
     "serve": "NODE_ENV=production node server/index.js",
     "oracle": "node .claude/oracle/oracle.mjs",
-    "verify": "node test/verify.mjs"
+    "verify": "node test/verify.mjs",
+    "sweep": "node test/renderSweep.mjs"
   },
   "dependencies": {
     "@babel/core": "^7.25.9",
