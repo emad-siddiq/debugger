@@ -208,6 +208,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "markdown.choosePreviewFont",
+        "title": "%markdown.choosePreviewFont.title%",
+        "category": "Markdown"
+      },
+      {
         "command": "markdown.togglePreview",
         "title": "%markdown.togglePreview.title%",
         "category": "Markdown"

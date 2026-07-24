@@ -101,6 +101,8 @@
 			"workbench.editorAssociations": {
 				"*.md": "vscode.markdown.preview.editor"
 			},
+			"markdown.preview.fontSize": 15,
+			"markdown.preview.lineHeight": 1.7,
 			"chat.commandCenter.enabled": false,
 			"[go]": {
 				"editor.formatOnSave": true,

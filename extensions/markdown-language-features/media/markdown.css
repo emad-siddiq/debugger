@@ -12,7 +12,11 @@ html, body {
 }
 
 body {
+	/* Reading column: measure capped for comfortable line length, centered */
+	max-width: 72ch;
+	margin-inline: auto;
 	padding-top: 1em;
+	padding-bottom: 4em;
 }
 
 /* Reset margin top for elements */
@@ -23,9 +27,13 @@ p, ol, ul, pre {
 
 h1, h2, h3, h4, h5, h6 {
 	font-weight: 600;
-	margin-top: 24px;
-	margin-bottom: 16px;
-	line-height: 1.25;
+	margin-top: 1.6em;
+	margin-bottom: 0.6em;
+	line-height: 1.3;
+}
+
+h1, h2 {
+	letter-spacing: -0.015em;
 }
 
 #code-csp-warning {
@@ -341,10 +349,12 @@ hr {
 	border: 0;
 	height: 1px;
 	border-bottom: 1px solid;
+	margin: 2.5em auto;
+	width: 60%;
 }
 
 h1 {
-	font-size: 2em;
+	font-size: 1.802em;
 	margin-top: 0;
 	padding-bottom: 0.3em;
 	border-bottom-width: 1px;
@@ -352,31 +362,32 @@ h1 {
 }
 
 h2 {
-	font-size: 1.5em;
+	font-size: 1.424em;
 	padding-bottom: 0.3em;
 	border-bottom-width: 1px;
 	border-bottom-style: solid;
 }
 
 h3 {
-	font-size: 1.25em;
+	font-size: 1.266em;
 }
 
 h4 {
-	font-size: 1em;
+	font-size: 1.125em;
 }
 
 h5 {
-	font-size: 0.875em;
+	font-size: 1em;
 }
 
 h6 {
-	font-size: 0.85em;
+	font-size: 0.889em;
+	color: var(--vscode-descriptionForeground, inherit);
 }
 
 table {
 	border-collapse: collapse;
-	margin-bottom: 0.7em;
+	margin-bottom: 16px;
 }
 
 th {
@@ -394,11 +405,17 @@ table > tbody > tr + tr > td {
 }
 
 blockquote {
-	margin: 0;
-	padding: 0px 16px 0 10px;
-	border-left-width: 5px;
+	margin: 0 0 16px 0;
+	padding: 4px 16px 4px 12px;
+	border-left-width: 3px;
 	border-left-style: solid;
+	border-left-color: var(--vscode-textBlockQuote-border, rgba(127, 127, 127, 0.5));
+	background-color: var(--vscode-textBlockQuote-background, transparent);
 	border-radius: 2px;
+}
+
+blockquote > :last-child {
+	margin-bottom: 0;
 }
 
 code {

@@ -26,6 +26,7 @@
 	"markdown.reopenAsPreview.title": "Open as Preview",
 	"markdown.reopenAsSource.title": "Reopen as source file",
 	"markdown.editSource.title": "Edit Markdown",
+	"markdown.choosePreviewFont.title": "Choose Preview Font",
 	"markdown.togglePreview.title": "Toggle Preview",
 	"markdown.showPreviewSecuritySelector.title": "Change Preview Security Settings",
 	"markdown.trace.extension.desc": "Enable debug logging for the Markdown extension.",
