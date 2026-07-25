@@ -1,0 +1,158 @@
+{
+	"name": "burrow-flow",
+	"displayName": "Burrow API Flows",
+	"description": "The interactive backend API index: every route traced route→middleware→handler→store→SQL→table by the flowscan static analyzer, rendered as a clickable wire diagram. Click any hop to jump to the code, arm a symbol-anchored breakpoint on the handler, send a query to the DB explorer. Feeds on the target project's oracle digest when present; works digest-less on any chi-shaped Go backend.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-flow",
+		"watch": "gulp watch-extension:burrow-flow",
+		"test": "node test/model.test.js && node test/diagram.test.js && node test/httpgen.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.flow.refresh",
+				"title": "Refresh Flows (Oracle Digest + flowscan)",
+				"category": "API Flows",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "burrow.flow.openDiagram",
+				"title": "Open Wire Diagram",
+				"category": "API Flows"
+			},
+			{
+				"command": "burrow.flow.armBreakpoint",
+				"title": "Breakpoint on Route Handler",
+				"category": "API Flows",
+				"icon": "$(debug-breakpoint)"
+			},
+			{
+				"command": "burrow.flow.openHandler",
+				"title": "Open Route Handler",
+				"category": "API Flows",
+				"icon": "$(go-to-file)"
+			},
+			{
+				"command": "burrow.flow.generateHttp",
+				"title": "Generate Route Runner File (api.generated.http)",
+				"category": "API Flows",
+				"icon": "$(send)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "burrow.flow.refresh",
+					"group": "navigation",
+					"when": "view == burrowFlowRoutes"
+				},
+				{
+					"command": "burrow.flow.generateHttp",
+					"group": "navigation",
+					"when": "view == burrowFlowRoutes"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "burrow.flow.armBreakpoint",
+					"group": "inline@1",
+					"when": "view == burrowFlowRoutes && viewItem == flowRoute"
+				},
+				{
+					"command": "burrow.flow.openHandler",
+					"group": "inline@2",
+					"when": "view == burrowFlowRoutes && viewItem == flowRoute"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow API Flows",
+			"properties": {
+				"burrow.flow.backendDir": {
+					"type": "string",
+					"default": "",
+					"description": "The Go backend module directory flowscan analyzes. Empty = auto-detect: the first workspace folder containing backend/go.mod uses its backend/ subdirectory.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.flow.oracleApp": {
+					"type": "string",
+					"default": "nodewatch",
+					"description": "App name passed to the target project's oracle (`go run ./cmd/oracle --digest <app>`). The oracle is optional — without one, flowscan still discovers every registration.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.flow.flowscanDir": {
+					"type": "string",
+					"default": "",
+					"description": "Directory of the flowscan tool (contains its go.mod). Empty = the copy shipped in the Burrow repo at tools/flowscan.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.flow.goBin": {
+					"type": "string",
+					"default": "go",
+					"description": "The go binary used to run the oracle and flowscan.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.flow.baseUrl": {
+					"type": "string",
+					"default": "http://localhost:8080",
+					"description": "Default {{baseUrl}} seeded into the generated Route Runner file (editable there; your edit survives regeneration).",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.flow.seedProfile": {
+					"type": "string",
+					"default": "",
+					"description": "Path to the target project's seed profile (realistic ids and field values used when generating the Route Runner file). Empty = the convention infra/seed/seed.json under the project root. Relative paths resolve against the project root.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-flow",
+					"title": "API",
+					"icon": "$(circuit-board)"
+				}
+			]
+		},
+		"views": {
+			"burrow-flow": [
+				{
+					"id": "burrowFlowRoutes",
+					"name": "Routes"
+				}
+			]
+		}
+	}
+}

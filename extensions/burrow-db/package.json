@@ -74,6 +74,12 @@
 				"title": "Toggle Session Writes (Read-Only Guard)",
 				"category": "Burrow DB",
 				"icon": "$(unlock)"
+			},
+			{
+				"command": "burrow.db.seedWorld",
+				"title": "Seed the DB",
+				"category": "Burrow DB",
+				"icon": "$(database)"
 			}
 		],
 		"keybindings": [
@@ -142,6 +148,11 @@
 					"command": "burrow.db.openPgAdmin",
 					"when": "view == burrowDbExplorer",
 					"group": "navigation@3"
+				},
+				{
+					"command": "burrow.db.seedWorld",
+					"when": "view == burrowDbExplorer",
+					"group": "navigation@4"
 				}
 			]
 		},
@@ -170,6 +181,14 @@
 					"default": 6110,
 					"minimum": 1,
 					"description": "Loopback port Burrow publishes the managed pgAdmin container on (http://127.0.0.1:<port>).",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.db.seedProfile": {
+					"type": "string",
+					"default": "",
+					"description": "Path to the target project's seed profile (per-table starter queries and the Seed the DB actions). Empty = the convention infra/seed/seed.json under the workspace root. Relative paths resolve against it.",
 					"tags": [
 						"burrow"
 					]
