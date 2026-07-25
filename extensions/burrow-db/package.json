@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-db",
 		"watch": "gulp watch-extension:burrow-db",
-		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/grid.test.js && node test/pgadminConfig.test.js && node test/workspaceDsn.test.js"
+		"test": "node test/dsn.test.js && node test/catalog.test.js && node test/starters.test.js && node test/grid.test.js && node test/pgadminConfig.test.js && node test/workspaceDsn.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -56,6 +56,24 @@
 				"command": "burrow.db.stopPgAdmin",
 				"title": "Stop pgAdmin",
 				"category": "Burrow DB"
+			},
+			{
+				"command": "burrow.db.tableInfo",
+				"title": "Table Info (Columns, Types, Keys)",
+				"category": "Burrow DB",
+				"icon": "$(list-flat)"
+			},
+			{
+				"command": "burrow.db.starterQuery",
+				"title": "Starter Queries…",
+				"category": "Burrow DB",
+				"icon": "$(bookmark)"
+			},
+			{
+				"command": "burrow.db.toggleWrites",
+				"title": "Toggle Session Writes (Read-Only Guard)",
+				"category": "Burrow DB",
+				"icon": "$(unlock)"
 			}
 		],
 		"keybindings": [
@@ -69,7 +87,7 @@
 			"activitybar": [
 				{
 					"id": "burrow-db",
-					"title": "Database",
+					"title": "Data",
 					"icon": "$(database)"
 				}
 			]
@@ -78,7 +96,7 @@
 			"burrow-db": [
 				{
 					"id": "burrowDbExplorer",
-					"name": "Explorer"
+					"name": "Database"
 				}
 			]
 		},
@@ -87,6 +105,26 @@
 				{
 					"command": "burrow.db.openTable",
 					"when": "false"
+				},
+				{
+					"command": "burrow.db.tableInfo",
+					"when": "false"
+				},
+				{
+					"command": "burrow.db.starterQuery",
+					"when": "false"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "burrow.db.tableInfo",
+					"when": "view == burrowDbExplorer && viewItem =~ /^burrowDb\\.(table|view|matview)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "burrow.db.starterQuery",
+					"when": "view == burrowDbExplorer && viewItem =~ /^burrowDb\\.(table|view|matview)$/",
+					"group": "inline@2"
 				}
 			],
 			"view/title": [

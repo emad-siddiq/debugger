@@ -13,7 +13,9 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onStartupFinished"
+		"onDebug",
+		"onStartupFinished",
+		"onView:burrowDebugConfig"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -25,7 +27,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-fullstack",
 		"watch": "gulp watch-extension:burrow-fullstack",
-		"test": "node test/db.test.js"
+		"test": "node test/db.test.js && node test/toggles.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -67,8 +69,37 @@
 					"tags": [
 						"burrow"
 					]
+				},
+				"burrow.debugConfig.toggles": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "boolean"
+					},
+					"default": {},
+					"description": "Debug Config panel state: toggle id → enabled. Managed by the Debug Config view; ids come from the built-in manifest or the project's .vscode/debug-toggles.json. Other extensions read skipAuth here (the Route Runner omits auth headers while it is on).",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-fullstack",
+					"title": "Run",
+					"icon": "$(run-all)"
+				}
+			]
+		},
+		"views": {
+			"burrow-fullstack": [
+				{
+					"id": "burrowDebugConfig",
+					"name": "Debug Config",
+					"type": "webview"
+				}
+			]
 		}
 	}
 }

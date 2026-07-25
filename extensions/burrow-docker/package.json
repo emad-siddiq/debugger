@@ -25,20 +25,12 @@
 		"test": "node test/dockerCli.test.js"
 	},
 	"contributes": {
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "burrow-docker",
-					"title": "Docker",
-					"icon": "$(server-environment)"
-				}
-			]
-		},
 		"views": {
-			"burrow-docker": [
+			"burrow-db": [
 				{
 					"id": "burrowDockerContainers",
-					"name": "Containers"
+					"name": "Containers",
+					"visibility": "collapsed"
 				},
 				{
 					"id": "burrowDockerImages",
