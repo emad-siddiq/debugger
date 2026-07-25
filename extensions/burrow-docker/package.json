@@ -44,6 +44,11 @@
 				"view": "burrowDockerContainers",
 				"when": "!burrow.docker.daemonRunning",
 				"contents": "The Docker daemon isn't responding.\nStart Docker Desktop (or your daemon), then retry.\n[Retry](command:burrow.docker.refresh)"
+			},
+			{
+				"view": "burrowDockerResources",
+				"when": "!burrow.docker.daemonRunning",
+				"contents": "The Docker daemon isn't responding, so there are no images, volumes or networks to list.\n[Retry](command:burrow.docker.refresh)"
 			}
 		],
 		"commands": [
