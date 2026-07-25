@@ -16,6 +16,7 @@ import {
 	languages,
 	window,
 } from 'vscode';
+import { claimSurface } from './toolSurface';
 import { DocViewer } from './viewer';
 import { parseDocTarget } from './godoc';
 
@@ -44,6 +45,11 @@ export function activate(context: ExtensionContext): void {
 	const viewer = new DocViewer();
 	context.subscriptions.push(
 		viewer,
+		// Tool-surface isolation (docs/plans/02 §6): Go Docs is a Files-tool
+		// surface — it has no rail view of its own, so it only claims its tab,
+		// which is enough for the registry to tidy it when another tool takes
+		// over the editor area.
+		claimSurface('files', { viewType: 'burrowGoDocs' }),
 		commands.registerCommand('burrow.goDocs.open', (arg?: unknown) =>
 			openDocs(viewer, typeof arg === 'string' ? arg : undefined)),
 		languages.registerHoverProvider(GO, new GoDocHoverProvider()),

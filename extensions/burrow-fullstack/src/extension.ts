@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DebugConfigProvider } from './configView';
 import { FullStackProvider, Tier, hostPortOf, portOpen } from './statusView';
+import { announceOnVisible } from './toolSurface';
 import { composeUpArgs, resolveComposeFile } from './db';
 import { SeedRunner } from './seed';
 import { DEFAULT_MANIFEST, ToggleManifest, activeProcesses, effectiveState, envPatch, parseManifest } from './toggles';
@@ -181,6 +182,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		tiersView,
 		tiersTree,
 		tiersView.watch(tiersTree),
+		// Tool-surface isolation (docs/plans/02 §6): the Run tool announces
+		// itself; its transient surface (the Test Lab) is claimed by burrow-go-test.
+		announceOnVisible('run', tiersTree),
 		vscode.debug.onDidChangeActiveDebugSession(() => void tiersView.refresh()),
 		vscode.debug.onDidChangeActiveStackItem(() => void tiersView.refresh()),
 		vscode.window.registerWebviewViewProvider(DebugConfigProvider.viewId, view),

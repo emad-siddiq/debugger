@@ -80,6 +80,11 @@
 				"title": "Seed the DB",
 				"category": "Burrow DB",
 				"icon": "$(database)"
+			},
+			{
+				"command": "burrow.db.openTableInPgAdmin",
+				"title": "Open in pgAdmin",
+				"category": "Burrow DB"
 			}
 		],
 		"keybindings": [
@@ -131,6 +136,11 @@
 					"command": "burrow.db.starterQuery",
 					"when": "view == burrowDbExplorer && viewItem =~ /^burrowDb\\.(table|view|matview)$/",
 					"group": "inline@2"
+				},
+				{
+					"command": "burrow.db.openTableInPgAdmin",
+					"when": "view == burrowDbExplorer && viewItem =~ /^burrowDb\\.(table|view|matview)$/",
+					"group": "9_external@1"
 				}
 			],
 			"view/title": [
@@ -158,6 +168,13 @@
 					"command": "burrow.db.seedWorld",
 					"when": "view == burrowDbExplorer",
 					"group": "1_more@3"
+				}
+			],
+			"editor/title": [
+				{
+					"command": "burrow.focus.toggle",
+					"when": "activeWebviewPanelId == burrow.db.pgadmin || activeWebviewPanelId == burrow.db.grid",
+					"group": "navigation@100"
 				}
 			]
 		},

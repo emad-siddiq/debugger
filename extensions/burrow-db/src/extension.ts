@@ -141,6 +141,18 @@ export function activate(context: ExtensionContext): BurrowDbApi {
 		claimSurface('data', { viewType: 'burrow.db.grid' }),
 
 		commands.registerCommand('burrow.db.openPgAdmin', () => pgAdmin.open()),
+		// Native-first routing (docs/plans/02 §3.6 step 2): browsing and peeking
+		// stay in the native grid, which is faster and theme-true; pgAdmin is
+		// reached FROM a row, for the jobs the grid cannot do — ERDs, explain
+		// plans, grants.
+		commands.registerCommand('burrow.db.openTableInPgAdmin', async (node?: unknown) => {
+			const entry = tableEntryOf(node);
+			if (entry) {
+				void window.setStatusBarMessage(`pgAdmin: opening for ${entry.schema}.${entry.name}`, 4000);
+			}
+			await pgAdmin.open();
+		}),
+		claimSurface('data', { viewType: 'burrow.db.pgadmin' }),
 		commands.registerCommand('burrow.db.stopPgAdmin', () => pgAdmin.stop()),
 
 		commands.registerCommand('burrow.db.refresh', () => explorer.refresh()),
