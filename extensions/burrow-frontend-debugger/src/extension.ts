@@ -10,6 +10,7 @@ import { openPanel, refreshPanel, postToApp, setIsolationHandler, setRouteChoice
 import { openIsolation, IsolateArgs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
 import { ComponentsProvider } from './gallery';
 import { Sidecar, sidecarPhase } from './sidecar';
+import { announceOnVisible, claimSurface } from './toolSurface';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
 import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
@@ -44,7 +45,14 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		return cfg.targetDir ? path.join(cfg.targetDir, 'src') : undefined;
 	});
 	const componentsView = vscode.window.createTreeView('burrowComponents', { treeDataProvider: components });
-	context.subscriptions.push(componentsView);
+	context.subscriptions.push(
+		componentsView,
+		// Tool-surface isolation (docs/plans/02 §6): the Components tool owns the
+		// app panel and the isolation preview, and neither should outlive it.
+		announceOnVisible('components', componentsView),
+		claimSurface('components', { viewType: 'burrow.frontendDebugger' }),
+		claimSurface('components', { viewType: 'burrow.frontendIsolation' }),
+	);
 
 	// Revealing the Components view warm-starts the sidecar in the background so
 	// the first isolate/open click lands on a running dev server. Best-effort:

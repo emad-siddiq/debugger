@@ -7,6 +7,7 @@ import { ExtensionContext, TextDocument, Uri, commands, languages, window, works
 import { HttpCodeLensProvider } from './codelens';
 import { convertPostmanCollection } from './postman';
 import { RequestsProvider } from './requestsTree';
+import { announceOnVisible, claimSurface } from './toolSurface';
 import { HttpWorkbench } from './workbench';
 
 // burrow-http — the HTTP workbench (architecture task 09), a file-backed Postman-class
@@ -29,11 +30,15 @@ export function activate(context: ExtensionContext): void {
 	// The API view's Requests section (docs/plans/02 §3.5) — an index of the
 	// workspace's .http files and what the last sends answered.
 	const requests = new RequestsProvider();
+	// Tool-surface isolation (docs/plans/02 §6).
+	const requestsView = window.createTreeView(RequestsProvider.viewId, { treeDataProvider: requests });
 
 	context.subscriptions.push(
 		workbench,
 		requests,
-		window.registerTreeDataProvider(RequestsProvider.viewId, requests),
+		requestsView,
+		announceOnVisible('api', requestsView),
+		claimSurface('api', { viewType: 'burrowHttpWorkbench' }),
 		commands.registerCommand('burrow.http.refreshRequests', () => requests.refresh()),
 		languages.registerCodeLensProvider(HTTP_SELECTOR, new HttpCodeLensProvider()),
 

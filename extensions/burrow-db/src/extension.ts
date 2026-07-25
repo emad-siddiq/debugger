@@ -5,6 +5,7 @@
 
 import { ExtensionContext, QuickPickItem, StatusBarAlignment, commands, window, workspace } from 'vscode';
 import { describeDsn, parsePostgresUrl, pickConnectionString } from './dsn';
+import { announceOnVisible, claimSurface } from './toolSurface';
 import { findWorkspaceDatabaseUrl } from './workspaceDsn';
 import { PgQueryClient, QueryClient } from './query';
 import { StarterQuery, buildColumnsSql, buildPreviewSql, loadSchemaTree, starterQueries } from './catalog';
@@ -119,6 +120,10 @@ export function activate(context: ExtensionContext): BurrowDbApi {
 	// and embedded in a webview. Reaches the host-published db over the host.
 	const pgAdmin = new PgAdmin(context.extensionPath);
 
+	// Tool-surface isolation (docs/plans/02 §6): the Data tool announces itself
+	// and claims the surfaces it opens, so they do not outlive it.
+	const dbView = window.createTreeView('burrowDbExplorer', { treeDataProvider: explorer });
+
 	// The session-writes pill: visible only while the guard is lifted.
 	const writesPill = window.createStatusBarItem(StatusBarAlignment.Right, 90);
 	writesPill.text = '$(unlock) DB writes ON';
@@ -131,7 +136,9 @@ export function activate(context: ExtensionContext): BurrowDbApi {
 	context.subscriptions.push(
 		pgAdmin,
 		writesPill,
-		window.registerTreeDataProvider('burrowDbExplorer', explorer),
+		dbView,
+		announceOnVisible('data', dbView),
+		claimSurface('data', { viewType: 'burrow.db.grid' }),
 
 		commands.registerCommand('burrow.db.openPgAdmin', () => pgAdmin.open()),
 		commands.registerCommand('burrow.db.stopPgAdmin', () => pgAdmin.stop()),

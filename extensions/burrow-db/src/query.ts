@@ -66,7 +66,12 @@ export class PgQueryClient implements QueryClient {
 	private client: PgClientLike | undefined;
 	private opening: Promise<PgClientLike> | undefined;
 
-	constructor(private readonly connectionString: string, private readonly ssl: boolean) { }
+	constructor(
+		private readonly connectionString: string,
+		private readonly ssl: boolean,
+		/** Session read-only default; lifted only by the explicit write toggle. */
+		private readonly readOnly: boolean = true,
+	) { }
 
 	/**
 	 * Run a query, opening the connection on first use. Concurrent first calls
@@ -106,7 +111,8 @@ export class PgQueryClient implements QueryClient {
 			// verify-full is a later slice; accept the server cert so `sslmode=require` connects.
 			ssl: this.ssl ? { rejectUnauthorized: false } : undefined,
 			// Read-only default (task 10) — set on the session at connect time.
-			options: '-c default_transaction_read_only=on',
+			// The write toggle (burrow.db.toggleWrites) reopens without it.
+			options: this.readOnly ? '-c default_transaction_read_only=on' : undefined,
 			application_name: 'burrow-db',
 		});
 		await client.connect();

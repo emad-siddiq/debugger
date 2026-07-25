@@ -105,3 +105,48 @@ export function buildPreviewSql(schema: string, table: string, limit = 100): str
 	const rows = Math.max(1, Math.floor(limit));
 	return `SELECT * FROM ${quoteIdent(schema)}.${quoteIdent(table)} LIMIT ${rows}`;
 }
+
+/** Single-quote a Postgres string literal, escaping embedded quotes. */
+export function quoteLiteral(value: string): string {
+	return '\'' + value.replace(/'/g, '\'\'') + '\'';
+}
+
+/**
+ * Column metadata for the "table info" grid: name, type, nullability, default,
+ * and a PK flag — the one-glance "how does my data look" panel.
+ */
+export function buildColumnsSql(schema: string, table: string): string {
+	const s = quoteLiteral(schema);
+	const t = quoteLiteral(table);
+	return `SELECT c.ordinal_position AS "#", c.column_name AS "column", c.data_type AS "type",
+       c.is_nullable AS "nullable", c.column_default AS "default",
+       CASE WHEN pk.column_name IS NOT NULL THEN 'PK' ELSE '' END AS "key"
+FROM information_schema.columns c
+LEFT JOIN (
+  SELECT kcu.column_name
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+  WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = ${s} AND tc.table_name = ${t}
+) pk ON pk.column_name = c.column_name
+WHERE c.table_schema = ${s} AND c.table_name = ${t}
+ORDER BY c.ordinal_position`;
+}
+
+/** A starter query offered for every table in the QuickPick. */
+export interface StarterQuery {
+	readonly label: string;
+	readonly sql: string;
+}
+
+/** The seeded per-table starter queries (saved user starters are appended by the caller). */
+export function starterQueries(schema: string, table: string, limit = 100): StarterQuery[] {
+	const rows = Math.max(1, Math.floor(limit));
+	const rel = `${quoteIdent(schema)}.${quoteIdent(table)}`;
+	return [
+		{ label: `$(eye) Peek — first ${rows} rows`, sql: buildPreviewSql(schema, table, rows) },
+		{ label: `$(history) Recent — last ${rows} rows by first column`, sql: `SELECT * FROM ${rel} ORDER BY 1 DESC LIMIT ${rows}` },
+		{ label: '$(symbol-numeric) Count rows', sql: `SELECT count(*) FROM ${rel}` },
+		{ label: '$(list-flat) Columns (types, defaults, PK)', sql: buildColumnsSql(schema, table) },
+	];
+}
