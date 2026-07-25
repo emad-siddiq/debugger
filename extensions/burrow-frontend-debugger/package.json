@@ -30,7 +30,14 @@
 			{
 				"command": "burrow.frontendDebugger.open",
 				"title": "Open Frontend Debugger",
-				"category": "Burrow"
+				"category": "Burrow",
+				"icon": "$(play)"
+			},
+			{
+				"command": "burrow.frontendDebugger.showInApp",
+				"title": "Show in App",
+				"category": "Burrow",
+				"icon": "$(eye)"
 			},
 			{
 				"command": "burrow.frontendDebugger.openInBrowser",
@@ -48,18 +55,6 @@
 				"title": "Reload Preview",
 				"category": "Burrow",
 				"icon": "$(refresh)"
-			},
-			{
-				"command": "burrow.frontendDebugger.pickSample",
-				"title": "Pick Sample Props",
-				"category": "Burrow",
-				"icon": "$(symbol-property)"
-			},
-			{
-				"command": "burrow.frontendDebugger.editProps",
-				"title": "Edit Props…",
-				"category": "Burrow",
-				"icon": "$(json)"
 			},
 			{
 				"command": "burrow.frontendDebugger.saveSample",
@@ -97,9 +92,21 @@
 		"menus": {
 			"view/title": [
 				{
+					"command": "burrow.frontendDebugger.open",
+					"when": "view == burrowComponents",
+					"group": "navigation@1"
+				},
+				{
 					"command": "burrow.frontendDebugger.refreshComponents",
 					"when": "view == burrowComponents",
-					"group": "navigation"
+					"group": "navigation@2"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "burrow.frontendDebugger.showInApp",
+					"when": "view == burrowComponents && viewItem == burrowComponent",
+					"group": "inline"
 				}
 			],
 			"editor/title": [
@@ -114,19 +121,14 @@
 					"group": "navigation@1"
 				},
 				{
-					"command": "burrow.frontendDebugger.pickSample",
+					"command": "burrow.frontendDebugger.saveSample",
 					"when": "activeWebviewPanelId == burrow.frontendIsolation",
 					"group": "navigation@2"
 				},
 				{
-					"command": "burrow.frontendDebugger.editProps",
+					"command": "burrow.frontendDebugger.showInApp",
 					"when": "activeWebviewPanelId == burrow.frontendIsolation",
 					"group": "navigation@3"
-				},
-				{
-					"command": "burrow.frontendDebugger.saveSample",
-					"when": "activeWebviewPanelId == burrow.frontendIsolation",
-					"group": "navigation@4"
 				}
 			]
 		},
@@ -150,7 +152,7 @@
 		"viewsWelcome": [
 			{
 				"view": "burrowComponents",
-				"contents": "No React components found. Open a workspace whose frontend is a Vite/React app, then refresh.\n[Refresh](command:burrow.frontendDebugger.refreshComponents)"
+				"contents": "No React components found. Open a workspace whose frontend is a Vite/React app, then refresh.\n[Refresh](command:burrow.frontendDebugger.refreshComponents)\n[Open App](command:burrow.frontendDebugger.open)"
 			}
 		],
 		"configuration": {
@@ -210,6 +212,11 @@
 					"default": "",
 					"description": "URL to open in the browser. Empty = auto (the runCommand dev-server URL, or the sidecar target URL)."
 				},
+				"burrow.frontendDebugger.autoStartOnComponentsView": {
+					"type": "boolean",
+					"default": true,
+					"description": "Warm-start the dev sidecar in the background when the Components view is revealed, so the first isolate/open is instant. Failures log to the Frontend Debugger output channel."
+				},
 				"burrow.frontendDebugger.openMaximized": {
 					"type": "boolean",
 					"default": true,
@@ -217,8 +224,19 @@
 				},
 				"burrow.frontendDebugger.designLayout": {
 					"type": "boolean",
+					"default": false,
+					"markdownDescription": "When isolating a component, also hide the side bars and bottom panel so the source | preview columns fill the window (Framer-style design mode). Off by default: isolating arranges the columns but leaves your file tree alone, and hiding chrome is **Focus Mode**'s job (`⌘⇧↩`, `Esc` to exit). With this on, `⌘B` / `⌘J` are the only way to bring the chrome back.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.frontendDebugger.tidyTabs": {
+					"type": "boolean",
 					"default": true,
-					"description": "When isolating a component, hide the side bars and bottom panel so the source | preview columns fill the window (Framer-style design mode). Cmd+B / Cmd+J restore the chrome."
+					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
 		}

@@ -79,11 +79,17 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	const abs = path.join(target.targetDir, rel);
 	const previousFile = currentFile;
 	const previousCss = currentCss;
+	// Tab-tidy (docs/plans/04 §5.2): the isolation trio is a *workspace*, not a
+	// growing pile — twenty components should not leave twenty tab pairs behind.
+	// Opening as preview tabs makes the workbench itself do most of the work
+	// (one preview tab per group, self-replacing, and your first keystroke pins
+	// it), so the explicit close below only has to catch what that misses.
+	const tidy = vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('tidyTabs', true);
 
 	// Left: the real editor. Keeps focus so you can start editing immediately.
 	try {
 		const doc = await vscode.workspace.openTextDocument(abs);
-		await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+		await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: tidy });
 	} catch (err) {
 		void vscode.window.showWarningMessage(`Frontend Debugger: cannot open ${rel} — ${err instanceof Error ? err.message : String(err)}`);
 		return;
@@ -93,17 +99,19 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	if (cssAbs) {
 		try {
 			const cssDoc = await vscode.workspace.openTextDocument(cssAbs);
-			await vscode.window.showTextDocument(cssDoc, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
+			await vscode.window.showTextDocument(cssDoc, { viewColumn: vscode.ViewColumn.Two, preview: tidy, preserveFocus: true });
 		} catch {
 			// the stylesheet row is optional
 		}
 	}
 
 	// One component = its tabs only: with the new component's editors open,
-	// close the PREVIOUS component's source/CSS tabs (dirty editors survive,
-	// shared files are kept). Ordered before setEditorLayout — closing can
-	// collapse a group and renumber view columns.
-	await closeStaleComponentTabs([previousFile, previousCss], new Set([abs, cssAbs].filter((p): p is string => !!p)));
+	// close the PREVIOUS component's source/CSS tabs (dirty and pinned editors
+	// survive, shared files are kept). Ordered before setEditorLayout — closing
+	// can collapse a group and renumber view columns.
+	if (tidy) {
+		await closeStaleComponentTabs([previousFile, previousCss], new Set([abs, cssAbs].filter((p): p is string => !!p)));
+	}
 
 	// Framer-mode "design" layout: source slim on the left, the live canvas wider
 	// on the right. When the component has a colocated stylesheet, the left
@@ -118,12 +126,13 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		// layout is a nicety, not a requirement
 	}
 
-	// Option B (recon §8): a dedicated design mode — hide the side bars and the
-	// bottom panel so source | canvas fill the window, Framer-style. Both
-	// columns stay visible (no group maximize). Best-effort and setting-gated;
-	// Cmd+B / Cmd+J bring the chrome back (the workbench exposes no visibility
-	// query to restore it automatically on close).
-	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('designLayout', true)) {
+	// Opt-in only (docs/plans/04 §5.1): isolating a component arranges the
+	// columns, it does not take your file tree away. Hiding chrome is Focus
+	// Mode's job and Focus Mode gives it back on Esc, whereas this path could
+	// not — the workbench exposes no visibility query, so ⌘B / ⌘J were the only
+	// way home. Left as a setting for anyone who wants the old Framer-style
+	// full-bleed canvas; both columns stay visible either way (no group maximize).
+	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('designLayout', false)) {
 		for (const command of ['workbench.action.closeSidebar', 'workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']) {
 			try {
 				await vscode.commands.executeCommand(command);
@@ -197,18 +206,30 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 
 /**
  * "One component = its tabs only": close the previous component's source/CSS
- * tabs across every group. Dirty editors are kept (never discard unsaved
- * work), files the NEW component also uses are kept (shared stylesheet), and
- * the preview webview tab is never a text input so it is untouched.
+ * tabs across every group.
+ *
+ * Three kinds of tab survive, and the reasons differ. **Dirty** ones because
+ * closing them would discard unsaved work — that is announced, since a tab
+ * staying put when you expected it to go is otherwise just confusing.
+ * **Pinned** ones because pinning is the explicit "keep this across tools"
+ * gesture (burrow-core's tab registry uses the same rule). And files the NEW
+ * component also uses, e.g. a shared stylesheet. The preview webview is never
+ * a text input, so it is untouched.
  */
 async function closeStaleComponentTabs(stale: readonly (string | undefined)[], keep: ReadonlySet<string>): Promise<void> {
 	const staleSet = new Set(stale.filter((p): p is string => !!p && !keep.has(p)));
 	if (!staleSet.size) {
 		return;
 	}
-	const tabs = vscode.window.tabGroups.all
+	const mine = vscode.window.tabGroups.all
 		.flatMap((group) => group.tabs)
-		.filter((tab) => tab.input instanceof vscode.TabInputText && staleSet.has(tab.input.uri.fsPath) && !tab.isDirty);
+		.filter((tab) => tab.input instanceof vscode.TabInputText && staleSet.has(tab.input.uri.fsPath));
+	const kept = mine.filter((tab) => tab.isDirty);
+	if (kept.length) {
+		const names = kept.map((tab) => path.basename((tab.input as vscode.TabInputText).uri.fsPath)).join(', ');
+		vscode.window.setStatusBarMessage(`Isolation: kept ${names} — unsaved changes`, 4000);
+	}
+	const tabs = mine.filter((tab) => !tab.isDirty && !tab.isPinned);
 	if (!tabs.length) {
 		return;
 	}

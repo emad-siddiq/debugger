@@ -181,14 +181,16 @@ export async function setEditorFullScreen(on: boolean): Promise<void> {
 	}
 	maximized = on;
 	if (on) {
-		// Hides the side bar + auxiliary bar and maximizes the group when
-		// several exist; the panel is closed separately.
-		await vscode.commands.executeCommand('workbench.action.maximizeEditorHideSidebar');
+		// Maximize the GROUP only (docs/plans/04 §5.1). This used to run
+		// `maximizeEditorHideSidebar`, which also confiscated the side bars and
+		// then could not give them back — the workbench exposes no visibility
+		// query to restore them from, so ⌘B was the only way home. Hiding chrome
+		// belongs to Focus Mode now, which has an Esc that undoes it.
+		await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
 		await vscode.commands.executeCommand('workbench.action.closePanel');
 	} else if (vscode.window.tabGroups.all.length > 1) {
 		// Only unmaximize when a maximize could have happened (toggle is not
-		// precondition-guarded through executeCommand). The side bars stay
-		// hidden — the workbench exposes no visibility query to restore them.
+		// precondition-guarded through executeCommand).
 		await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
 	}
 }
