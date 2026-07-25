@@ -29,7 +29,7 @@ export interface FrontendDebuggerApi {
 	readonly isolation: () => { file: string; label: string; props?: Record<string, unknown> } | undefined;
 	/** Whether the dev sidecar is up, and on which port — the Run view's
 	 *  Frontend tier reads this instead of probing a port it does not own. */
-	readonly sidecar: () => { phase: 'stopped' | 'starting' | 'running'; uiPort: number };
+	readonly sidecar: () => { phase: 'stopped' | 'starting' | 'running'; uiPort: number; targetUrl?: string };
 }
 
 export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi {
@@ -254,7 +254,18 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		vscode.commands.registerCommand('burrow.frontendDebugger.showLogs', () => sidecar!.out.show(true)),
 	);
 
-	return { isolation: () => currentIsolation(), sidecar: () => sidecarPhase() };
+	return {
+		isolation: () => currentIsolation(),
+		sidecar: () => {
+			const phase = sidecarPhase();
+			// The URL the target app is actually served at — the Full Stack
+			// compound points Chrome here instead of guessing a port.
+			const base = sidecar!.targetBase.endsWith('/') ? sidecar!.targetBase : `${sidecar!.targetBase}/`;
+			return sidecar!.targetPort
+				? { ...phase, targetUrl: `http://localhost:${sidecar!.targetPort}${base}` }
+				: phase;
+		},
+	};
 }
 
 export function deactivate(): void {

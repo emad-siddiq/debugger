@@ -81,6 +81,14 @@
 					"tags": [
 						"burrow"
 					]
+				},
+				"burrow.fullstack.chromeConfig": {
+					"type": "string",
+					"default": "Frontend: debug in Chrome (:5173)",
+					"markdownDescription": "The workspace launch configuration the compound uses for the browser tier. Its url, webRoot and sourcemap settings are the project's own contract, so Burrow runs it verbatim. When no configuration by this name exists, Chrome is launched at the URL the frontend-debugger sidecar reports instead. Empty = always synthesize.",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
 		},

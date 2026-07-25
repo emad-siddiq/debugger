@@ -246,28 +246,127 @@ async function debugFullStack(out: vscode.OutputChannel, afterBackendUp?: () => 
 	const backendConfig = cfg('backendConfig', 'Backend: debug (Auth0 OFF)');
 	const folder = vscode.workspace.workspaceFolders?.[0];
 
-	try {
-		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'Full Stack', cancellable: false },
-			async (progress) => {
-				progress.report({ message: `database (${service})…` });
-				await runDocker(composeUpArgs(composeFile, service), out);
+	// A FAN-OUT, not a chain (docs/plans/04 §8). Every tier is attempted and each
+	// reports for itself; one that cannot start no longer strands the others.
+	// Leaving a developer with a running database, no frontend and a modal was
+	// the worst of both worlds — and the Run view's rows say what is up anyway,
+	// so the compound's job is to try everything and then be honest about it.
+	const results: { tier: string; ok: boolean; why?: string }[] = [];
+	const attempt = async (tier: string, run: () => Promise<boolean | void>): Promise<boolean> => {
+		try {
+			const ok = await run();
+			results.push({ tier, ok: ok !== false });
+			return ok !== false;
+		} catch (err) {
+			out.appendLine(`[fullstack] ${tier}: ${errText(err)}`);
+			results.push({ tier, ok: false, why: errText(err) });
+			return false;
+		}
+	};
 
-				progress.report({ message: 'backend (dlv)…' });
+	await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: 'Full Stack', cancellable: false },
+		async (progress) => {
+			progress.report({ message: `database (${service})…` });
+			await attempt('database', () => runDocker(composeUpArgs(composeFile, service), out));
+
+			progress.report({ message: 'backend (dlv)…' });
+			const backendUp = await attempt('backend', async () => {
 				const started = await vscode.debug.startDebugging(folder, backendConfig);
 				if (!started) {
-					throw new Error(`could not start the "${backendConfig}" launch configuration — check .vscode/launch.json or set burrow.fullstack.backendConfig.`);
+					throw new Error(`the "${backendConfig}" configuration did not start — check .vscode/launch.json, that dlv is installed, and (on macOS) that Developer Mode is enabled: sudo DevToolsSecurity -enable`);
 				}
+				return true;
+			});
+			if (backendUp) {
 				afterBackendUp?.();
+			}
 
-				progress.report({ message: 'frontend (live)…' });
-				await openFrontendLive();
-			},
-		);
-		void vscode.window.showInformationMessage('Full Stack up: database + backend (dlv) + frontend (live).');
+			progress.report({ message: 'frontend (live)…' });
+			await attempt('frontend', () => openFrontendLive());
+
+			progress.report({ message: 'browser (chrome)…' });
+			await attempt('browser', () => startBrowserDebug(out, folder));
+		},
+	);
+
+	const up = results.filter((r) => r.ok).map((r) => r.tier);
+	const down = results.filter((r) => !r.ok);
+	out.appendLine(`[fullstack] up: ${up.join(', ') || 'nothing'}${down.length ? ` — did not start: ${down.map((d) => d.tier).join(', ')}` : ''}`);
+	if (!down.length) {
+		void vscode.window.showInformationMessage('Full Stack up: database + backend (dlv) + frontend (live) + Chrome.');
+		return;
+	}
+	// Name what did NOT come up, with the first reason — a compound that says
+	// "failed" without saying which tier is a compound you debug twice.
+	const detail = down[0].why ? ` ${down[0].tier}: ${down[0].why}` : '';
+	void vscode.window.showWarningMessage(
+		`Full Stack: ${up.length ? `${up.join(' + ')} up` : 'nothing came up'} · ${down.map((d) => d.tier).join(', ')} did not.${detail}`,
+		'Show Logs',
+	).then((choice) => {
+		if (choice === 'Show Logs') {
+			out.show(true);
+		}
+	});
+}
+
+/**
+ * The browser tier: merkle's OWN chrome launch configuration if it has one —
+ * §8 calls the workspace's `launch.json` the invariant contract, and its url,
+ * webRoot and sourcemap settings are the project's business, not ours. Only
+ * when there is no such config do we synthesize one, pointed at the URL the
+ * frontend-debugger sidecar reports rather than a guessed port.
+ *
+ * Returns false (never throws) when the browser cannot start: the stack is up
+ * without it, and stranding a running backend over a missing Chrome would be
+ * the worse failure.
+ */
+async function startBrowserDebug(out: vscode.OutputChannel, folder: vscode.WorkspaceFolder | undefined): Promise<boolean> {
+	const named = cfg('chromeConfig', 'Frontend: debug in Chrome (:5173)');
+	try {
+		if (named && folder && hasLaunchConfig(folder, named)) {
+			out.appendLine(`[fullstack] browser: starting "${named}" from the workspace launch.json`);
+			return await vscode.debug.startDebugging(folder, named);
+		}
+		const url = await sidecarTargetUrl();
+		if (!url) {
+			out.appendLine('[fullstack] browser: no chrome launch config and the sidecar reported no URL — skipped');
+			return false;
+		}
+		out.appendLine(`[fullstack] browser: no "${named}" config — launching Chrome at ${url}`);
+		return await vscode.debug.startDebugging(folder, {
+			type: 'chrome',
+			request: 'launch',
+			name: 'Full Stack: Chrome',
+			url,
+			webRoot: folder ? `${folder.uri.fsPath}/frontend` : undefined,
+		} as vscode.DebugConfiguration);
 	} catch (err) {
-		out.show(true);
-		void vscode.window.showErrorMessage(`Full Stack: ${errText(err)}`);
+		out.appendLine(`[fullstack] browser: ${errText(err)}`);
+		return false;
+	}
+}
+
+/** Does the workspace's launch.json define this configuration? Read through the
+ *  workspace configuration API, so a multi-root or settings-level `launch`
+ *  block counts too. */
+function hasLaunchConfig(folder: vscode.WorkspaceFolder, name: string): boolean {
+	const configs = vscode.workspace.getConfiguration('launch', folder.uri).get<{ name?: string }[]>('configurations') ?? [];
+	return configs.some((c) => c?.name === name);
+}
+
+/** Where the frontend-debugger is actually serving the app. */
+async function sidecarTargetUrl(): Promise<string | undefined> {
+	try {
+		const ext = vscode.extensions.getExtension('burrow.burrow-frontend-debugger');
+		if (!ext) {
+			return undefined;
+		}
+		const api = (ext.isActive ? ext.exports : await ext.activate()) as
+			{ sidecar?: () => { targetUrl?: string } } | undefined;
+		return api?.sidecar?.()?.targetUrl;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -287,9 +386,13 @@ async function stopFullStack(out: vscode.OutputChannel, seeds: SeedRunner): Prom
 	// Stop the seed emitters, the backend debug session and the frontend
 	// sidecar; leave the database running — shared state a stop shouldn't tear down.
 	seeds.stopAll();
-	await run(() => vscode.commands.executeCommand('workbench.action.debug.stop'));
+	// EVERY session, not the focused one. `workbench.action.debug.stop` ends
+	// whichever session the debug UI is pointed at, so with Chrome attached
+	// alongside dlv it left one running; `stopDebugging()` with no argument is
+	// the API that means all of them.
+	await run(() => vscode.debug.stopDebugging());
 	await run(() => vscode.commands.executeCommand('burrow.frontendDebugger.stop'));
-	out.appendLine('[fullstack] stopped seeds + backend + frontend (database left running)');
+	out.appendLine('[fullstack] stopped seeds + backend + browser + frontend (database left running)');
 	void vscode.window.showInformationMessage('Full Stack stopped (database left running).');
 }
 
