@@ -26,7 +26,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-nav",
 		"watch": "gulp watch-extension:burrow-go-nav",
-		"test": "node test/query.test.js && node test/packageindex.test.js"
+		"test": "node test/query.test.js && node test/packageindex.test.js && node test/seed.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -34,6 +34,24 @@
 				"command": "burrow.nav.goToSymbol",
 				"title": "Go to Symbol…",
 				"category": "Go"
+			},
+			{
+				"command": "burrow.find.everywhere",
+				"title": "Find Everywhere",
+				"category": "Burrow",
+				"icon": "$(search)"
+			},
+			{
+				"command": "burrow.find.files",
+				"title": "Find: Files",
+				"category": "Burrow",
+				"icon": "$(go-to-file)"
+			},
+			{
+				"command": "burrow.find.symbols",
+				"title": "Find: Symbols",
+				"category": "Burrow",
+				"icon": "$(symbol-method)"
 			}
 		],
 		"keybindings": [
@@ -43,12 +61,41 @@
 				"mac": "alt+cmd+o",
 				"win": "ctrl+alt+o",
 				"linux": "ctrl+alt+o"
+			},
+			{
+				"command": "burrow.find.everywhere",
+				"key": "shift+cmd+f",
+				"mac": "shift+cmd+f",
+				"win": "ctrl+shift+f",
+				"linux": "ctrl+shift+f",
+				"when": "!terminalFocus"
 			}
 		],
 		"menus": {
 			"commandPalette": [
 				{
 					"command": "burrow.nav.goToSymbol"
+				},
+				{
+					"command": "burrow.find.everywhere"
+				},
+				{
+					"command": "burrow.find.files"
+				},
+				{
+					"command": "burrow.find.symbols"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.find.files",
+					"group": "navigation@-2",
+					"when": "view == workbench.view.search"
+				},
+				{
+					"command": "burrow.find.symbols",
+					"group": "navigation@-1",
+					"when": "view == workbench.view.search"
 				}
 			]
 		},

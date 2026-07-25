@@ -134,7 +134,9 @@
 			"editor.minimap.enabled": false,
 			"editor.multiCursorModifier": "alt",
 			"editor.fontFamily": "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
-			"workbench.colorTheme": "Burrow Dark (Xcode-inspired)",
+			"workbench.colorTheme": "GitHub Dark",
+			"workbench.preferredDarkColorTheme": "GitHub Dark",
+			"workbench.preferredLightColorTheme": "GitHub Light",
 			"workbench.iconTheme": "burrow-xcode-icons",
 			"workbench.startupEditor": "none",
 			"workbench.editorAssociations": {
@@ -171,6 +173,11 @@
 			"scm.diffDecorations": "gutter",
 			"breadcrumbs.enabled": true,
 			"window.density.editorTabHeight": "compact",
+			"search.searchOnType": true,
+			"search.showLineNumbers": true,
+			"search.collapseResults": "auto",
+			"search.useReplacePreview": true,
+			"search.seedWithNearestWord": true,
 			"[go]": {
 				"editor.formatOnSave": true,
 				"editor.defaultFormatter": "burrow.burrow-go-base",
