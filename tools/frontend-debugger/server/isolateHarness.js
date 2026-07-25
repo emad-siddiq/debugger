@@ -6,11 +6,16 @@
 //               Tablet 768 / Desktop 1280; stage is also drag-resizable) ·
 //               labeled backgrounds (App/Dark/Checker) · dev|prod-css ·
 //               🎯 Inspect · panel ⚙
-//   props panel — THE one props-editing surface: typed controls from the
+//   side panel — two tabs (⚙ toggles the whole panel).
+//               Props: THE one props-editing surface — typed controls from the
 //               extension's parsed schema (`schema` query param), grouped
 //               Required then Optional, sample picker + Save-sample embedded,
 //               per-prop ⟲ + Reset-all, raw JSON tucked behind an Advanced
 //               disclosure (sole editor when there is no schema).
+//               Breakpoints: the @media queries in the loaded stylesheets —
+//               the ones affecting this component first, then the rest; a live
+//               dot per query, → Npx sizes the stage, clicking one opens its
+//               source line in the CSS editor.
 //   inspect   — 🎯 toggle: hover highlights the rendered part with its
 //               component name (from the data-inspect-* stamps); click reveals
 //               its JSX + CSS in the editor (reveal envelope); Alt-click /
@@ -29,7 +34,8 @@
 // materialize() converts per-kind at render time: ƒ→no-op stub (returns null,
 // so it also works as a component type), element strings→<span>, set→Set;
 // $-prefixed keys are metadata and never reach the component.
-// Envelopes up: ready | renderError | samples | props | saveSample | reveal | isolate.
+// Envelopes up: ready | renderError | samples | props | saveSample | reveal |
+// revealCss | isolate.
 // Commands down: props | sample | reload | schema.
 
 function esc(json) {
@@ -100,12 +106,36 @@ export function buildIsolateHtml(cfg) {
   #iso-canvas.bg-dark #iso-stage.frame { background: #101418; outline-color: #333c45; }
   #burrow-iso-root { padding: 16px; min-height: 40px; }
   #iso-panel {
-    flex: none; width: 280px; overflow-y: auto; background: #15181e; color: #c9d1d9;
+    flex: none; width: 280px; overflow: hidden; background: #15181e; color: #c9d1d9;
     border-left: 1px solid #2b3138; padding: 8px; display: flex; flex-direction: column; gap: 8px;
   }
   #iso-panel.hidden { display: none; }
   #iso-panel h3 { margin: 2px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; }
   #iso-panel .phint { color: #6e7681; font-size: 10px; margin-top: 1px; }
+  #iso-tabs { flex: none; display: flex; gap: 2px; border-bottom: 1px solid #2b3138; }
+  #iso-tabs .ptab {
+    border: 0; background: none; color: #8b949e; font: inherit; cursor: pointer;
+    padding: 3px 8px; border-bottom: 2px solid transparent;
+  }
+  #iso-tabs .ptab:hover { color: #e6edf3; }
+  #iso-tabs .ptab.on { color: #e6edf3; border-bottom-color: #2f81f7; }
+  #iso-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .bp-note { color: #6e7681; font-size: 10px; line-height: 1.45; }
+  .bp-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .bp-row.hl .bp-media { color: #e6edf3; }
+  .bp-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #30363d; border: 1px solid #444c56; }
+  .bp-dot.active { background: #3fb950; border-color: #3fb950; }
+  .bp-media {
+    flex: 1; color: #8b949e; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bp-media.link { cursor: pointer; text-decoration: underline dotted #444c56; }
+  .bp-media.link:hover { color: #58a6ff; }
+  .mini {
+    border: 1px solid #2b3138; background: #1c2128; color: #c9d1d9; border-radius: 4px;
+    padding: 0 5px; font: 10px/1.6 system-ui, sans-serif; cursor: pointer; flex: none;
+  }
+  .mini:hover { background: #262c34; }
   #iso-panel details { border-top: 1px solid #2b3138; padding-top: 6px; }
   #iso-panel summary { cursor: pointer; color: #8b949e; font-size: 11px; user-select: none; }
   #iso-panel .pfoot { margin-top: 4px; }
@@ -243,6 +273,18 @@ const showError = (msg) => {
 const canvas = document.getElementById('iso-canvas')
 const stage = document.getElementById('iso-stage')
 const panel = document.getElementById('iso-panel')
+
+// Stage width has two callers — the top bar's presets and the breakpoints
+// tab's jump buttons — so one function owns it and keeps the preset row's
+// highlight honest (a jump to 480px lights no preset; a jump to 768 lights the
+// tablet one). 0 = Fit: the stage hugs the component instead of framing it.
+let widthButtons = []
+function setStageWidth(w) {
+  if (w === 0) { stage.classList.remove('frame'); stage.style.width = '' }
+  else { stage.classList.add('frame'); stage.style.width = w + 'px' }
+  for (const b of widthButtons) b.classList.toggle('on', Number(b.getAttribute('data-w')) === w)
+}
+
 function buildTopBar(label) {
   const top = document.getElementById('iso-top')
   top.innerHTML = ''
@@ -252,14 +294,11 @@ function buildTopBar(label) {
     ['📱 768', 768, 'Tablet width — 768px'],
     ['💻 1280', 1280, 'Desktop width — 1280px'],
   ]
-  const pbtns = presets.map(([txt, w, tip]) => el('button', {
-    class: 'tbtn' + (w === 0 ? ' on' : ''), title: tip,
-    onclick: (e) => {
-      pbtns.forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on')
-      if (w === 0) { stage.classList.remove('frame'); stage.style.width = '' }
-      else { stage.classList.add('frame'); stage.style.width = w + 'px' }
-    },
+  widthButtons = presets.map(([txt, w, tip]) => el('button', {
+    class: 'tbtn' + (w === 0 ? ' on' : ''), title: tip, 'data-w': w,
+    onclick: () => setStageWidth(w),
   }, txt))
+  const pbtns = widthButtons
   const bgs = [
     ['App', '', "The app's own background"],
     ['Dark', 'bg-dark', 'Dark canvas — check light-on-dark rendering'],
@@ -438,7 +477,123 @@ function setInspect(on) {
   }
 }
 
-// ---- props panel -----------------------------------------------------------
+// ---- breakpoints tab -------------------------------------------------------
+// The media queries in play, read straight off the live document.styleSheets —
+// the same walk the in-page agent does for the whole app (agent.js
+// matchedRulesFor), scoped to the isolated subtree: a query "affects this
+// component" when one of its rules matches something under #burrow-iso-root.
+//
+// What the dot means matters. A width query matches against THIS DOCUMENT's
+// viewport — the preview frame — not against the stage, because the stage is a
+// div and resizing a div never crosses a breakpoint. So the dot reports what is
+// actually rendering right now (and re-reads on resize, since dragging the
+// editor group edge is how you cross one in the workbench), the → buttons size
+// the stage for layout, and the note at the top of the tab says which is which
+// instead of leaving the two to be confused.
+const STATE_PSEUDO = /:(hover|focus|focus-within|focus-visible|active|visited|target|enabled|disabled|checked|valid|invalid|required|optional|placeholder-shown)/g
+const PSEUDO_EL = /::?(before|after|first-line|first-letter|placeholder|selection|marker|backdrop|file-selector-button)/g
+
+// Parse a width number out of a media query so we can jump the stage to it.
+function widthOf(media) {
+  const m = media.match(/(max|min)-width:\\s*(\\d+)px/)
+  if (!m) return null
+  const px = Number(m[2])
+  // Both bounds are inclusive, so the number itself sits inside the rule.
+  return m[1] === 'max' ? Math.max(320, px) : px
+}
+
+const mediaMatches = (mt) => { try { return window.matchMedia(mt).matches } catch (e) { return false } }
+
+/** Does anything in the isolated subtree match this rule? A :hover rule still
+ *  affects the component, so the state-free form of the selector counts too. */
+function hitsComponent(root, selectorText) {
+  if (!selectorText) return false
+  for (const part of selectorText.split(',')) {
+    const sel = part.trim()
+    if (!sel) continue
+    const base = sel.replace(PSEUDO_EL, '').replace(STATE_PSEUDO, '').trim()
+    for (const s of (base && base !== sel) ? [sel, base] : [sel]) {
+      try { if (root.querySelector(s)) return true } catch (e) {}
+    }
+  }
+  return false
+}
+
+/** Every distinct @media in the loaded stylesheets: live match state, whether
+ *  it touches this component, and one selector inside it — the handle the
+ *  extension resolves back to an authored file:line. The CSSOM can't give that
+ *  directly: a Vite dev <style> node names the module that imported the CSS
+ *  (merkle's index.css manifest), not the file the rule was written in, so a
+ *  selector + its media goes to the sidecar's provenance lookup instead. */
+function scanBreakpoints() {
+  const root = document.getElementById('burrow-iso-root')
+  const seen = new Map()
+  const walk = (rules, media) => {
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i]
+      if (rule.type === 4) {
+        const mt = rule.media && rule.media.mediaText
+        if (mt && !seen.has(mt)) seen.set(mt, { media: mt, active: mediaMatches(mt), affects: false, selector: null })
+        walk(rule.cssRules, mt || media)
+      } else if (rule.type === 12) {
+        walk(rule.cssRules, media)
+      } else if (rule.type === 1 && media) {
+        const entry = seen.get(media)
+        if (!entry || !rule.selectorText) continue
+        if (!entry.selector) entry.selector = rule.selectorText
+        if (!entry.affects && root && hitsComponent(root, rule.selectorText)) {
+          entry.affects = true
+          // Prefer a rule that actually reaches this component: it lands the
+          // reveal in the component's own stylesheet rather than wherever the
+          // block happened to open.
+          entry.selector = rule.selectorText
+        }
+      }
+    }
+  }
+  const sheets = document.styleSheets
+  for (let s = 0; s < sheets.length; s++) {
+    let rules
+    try { rules = sheets[s].cssRules } catch (e) { continue } // cross-origin sheet
+    if (rules) walk(rules, null)
+  }
+  // Widest first, so the list reads as a ladder down to the smallest phone;
+  // feature queries (reduced-motion, coarse pointers) are not breakpoints and
+  // sit at the end.
+  return [...seen.values()].sort((a, b) => (widthOf(b.media) || -1) - (widthOf(a.media) || -1))
+}
+
+function bpRow(entry) {
+  const w = widthOf(entry.media)
+  const canReveal = EMBEDDED && !!entry.selector
+  const media = el('span', {
+    class: 'bp-media' + (canReveal ? ' link' : ''),
+    title: canReveal ? 'Open this block in the CSS editor (' + entry.selector + ')' : entry.media,
+  }, entry.media)
+  if (canReveal) media.addEventListener('click', () => report('revealCss', { media: entry.media, selector: entry.selector }))
+  return el('div', { class: 'bp-row' + (entry.affects ? ' hl' : '') },
+    el('span', {
+      class: 'bp-dot' + (entry.active ? ' active' : ''),
+      title: entry.active ? 'Matching right now' : 'Not matching at this preview width',
+    }),
+    media,
+    w ? el('button', { class: 'mini', title: 'Size the stage to ' + w + 'px', onclick: () => setStageWidth(w) }, '→ ' + w + 'px') : null)
+}
+
+function buildBreakpointsTab(body) {
+  const all = scanBreakpoints()
+  const affecting = all.filter((e) => e.affects)
+  body.append(el('div', { class: 'bp-note' },
+    'Dots follow the preview frame (' + window.innerWidth + 'px wide) — drag the editor edge to cross a breakpoint. → sizes the stage.'))
+  body.append(el('h3', null, 'Affecting this component'))
+  if (!affecting.length) body.append(el('div', { class: 'phint' }, 'No responsive rules reach this component.'))
+  for (const entry of affecting) body.append(bpRow(entry))
+  body.append(el('h3', null, 'All breakpoints in the stylesheet'))
+  if (!all.length) body.append(el('div', { class: 'phint' }, 'This preview loaded no @media rules.'))
+  for (const entry of all) body.append(bpRow(entry))
+}
+
+// ---- props tab -------------------------------------------------------------
 let textTimer = null
 const applySoon = () => { clearTimeout(textTimer); textTimer = setTimeout(() => renderFn(), 200) }
 
@@ -520,8 +675,41 @@ function applySample(name, sample) {
   renderFn()
 }
 
+// The panel is one aside with two tabs; ⚙ in the top bar shows/hides the whole
+// thing. Every rebuild goes through here so the strip and the body can never
+// disagree about which tab is showing.
+let panelTab = 'props'
+const PANEL_TABS = [
+  ['props', 'Props', 'Edit the props this preview renders with'],
+  ['breakpoints', 'Breakpoints', 'The media queries in play, and what they match right now'],
+]
+
 function buildPanel() {
   panel.innerHTML = ''
+  const tabs = el('div', { id: 'iso-tabs' })
+  for (const [key, label, tip] of PANEL_TABS) {
+    tabs.append(el('button', {
+      class: 'ptab' + (panelTab === key ? ' on' : ''), title: tip,
+      onclick: () => { panelTab = key; buildPanel() },
+    }, label))
+  }
+  const body = el('div', { id: 'iso-body' })
+  panel.append(tabs, body)
+  if (panelTab === 'breakpoints') buildBreakpointsTab(body)
+  else buildPropsTab(body)
+}
+
+// Dots are only true for the width the frame has right now, so re-read them
+// when it changes. Guarded to the breakpoints tab: rebuilding the props tab
+// under a half-typed JSON textarea would throw the edit away.
+let bpTimer = null
+window.addEventListener('resize', () => {
+  if (panelTab !== 'breakpoints' || panel.classList.contains('hidden')) return
+  clearTimeout(bpTimer)
+  bpTimer = setTimeout(buildPanel, 120)
+})
+
+function buildPropsTab(body) {
   const sampleNames = Object.keys(sampleMap)
   if (sampleNames.length || EMBEDDED) {
     const row = el('div', { class: 'srow' })
@@ -538,20 +726,20 @@ function buildPanel() {
         onclick: () => report('saveSample', rawProps),
       }, '💾 Save as sample…'))
     }
-    panel.append(el('h3', null, 'Sample props'), row)
+    body.append(el('h3', null, 'Sample props'), row)
   }
   if (schema) {
     const required = schema.filter((s) => s.required)
     const optional = schema.filter((s) => !s.required)
     if (required.length) {
-      panel.append(el('h3', null, 'Required'))
-      for (const spec of required) panel.append(propRow(spec))
+      body.append(el('h3', null, 'Required'))
+      for (const spec of required) body.append(propRow(spec))
     }
     if (optional.length) {
-      panel.append(el('h3', null, 'Optional'))
-      for (const spec of optional) panel.append(propRow(spec))
+      body.append(el('h3', null, 'Optional'))
+      for (const spec of optional) body.append(propRow(spec))
     }
-    panel.append(el('div', { class: 'prow pfoot' }, el('button', {
+    body.append(el('div', { class: 'prow pfoot' }, el('button', {
       class: 'tbtn', title: 'Discard every edit and go back to the props this preview started with',
       onclick: () => { rawProps = JSON.parse(JSON.stringify(seedProps)); buildPanel(); renderFn() },
     }, '⟲ Reset all to defaults')))
@@ -570,7 +758,7 @@ function buildPanel() {
     el('summary', null, 'Advanced — all props as JSON'),
     el('div', { class: 'prow' }, raw))
   if (!schema) adv.setAttribute('open', '')
-  panel.append(adv)
+  body.append(adv)
 }
 
 // ---- boot ------------------------------------------------------------------

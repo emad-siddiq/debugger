@@ -20,7 +20,9 @@ import { makeTypeResolver } from './typeResolver';
 // the component's props type seeds the first render; the harness mirrors its
 // live props up after every render for Save-as-sample). The harness's 🎯
 // Inspect mode sends `reveal` (open the clicked part's JSX + CSS lines) and
-// `isolate` (enter a child component) envelopes handled here. Isolating
+// `isolate` (enter a child component) envelopes handled here, and its
+// Breakpoints tab sends `revealCss` (open an `@media` block where it was
+// authored). Isolating
 // component B replaces component A's source/CSS tabs (dirty editors are kept),
 // so the editor area always shows exactly one component.
 
@@ -339,6 +341,11 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 		void revealPick(msg.detail);
 		return;
 	}
+	if (msg.type === 'revealCss' && isRecord(msg.detail) && typeof msg.detail.selector === 'string') {
+		// Breakpoints tab click: open the @media block where it was authored.
+		void revealMediaBlock(String(msg.detail.selector), typeof msg.detail.media === 'string' ? msg.detail.media : '');
+		return;
+	}
 	if (msg.type === 'isolate' && isRecord(msg.detail) && typeof msg.detail.file === 'string') {
 		// 🎯 Inspect drill-in: enter the child component. Route through the
 		// public command so the full flow (sidecar ensure, tab replacement,
@@ -419,39 +426,98 @@ async function revealPick(detail: Record<string, unknown>): Promise<void> {
 	}
 
 	const classes = Array.isArray(detail.classes) ? detail.classes.filter((c): c is string => typeof c === 'string' && !!c) : [];
-	if (!classes.length || !currentUiPort) {
+	if (!classes.length) {
 		return;
+	}
+	// Prefer a rule from the component's own stylesheet — a class also styled by
+	// a theme file should reveal where the component defines it.
+	const results = await cssProvenance(rel, classes.map((c) => ({ selector: `.${c}` })));
+	const hit = results.find((r) => r.origin === 'component') ?? results[0];
+	if (hit?.file) {
+		await revealCssAt(hit.file, hit.line ?? 1, generation);
+	}
+}
+
+/**
+ * Breakpoints-tab click: reveal where an `@media` block was authored. The CSSOM
+ * cannot say — Vite's dev style node names the module that imported the CSS,
+ * which for a manifest-style `index.css` is never the file the rule lives in —
+ * so the harness sends a selector from inside the block and the sidecar's
+ * provenance lookup (which matches on selector AND media) finds the source.
+ * Lands on the rule, one line inside the block that was clicked.
+ */
+async function revealMediaBlock(selector: string, media: string): Promise<void> {
+	const generation = isolationGeneration;
+	const rel = currentTargetDir && currentFile ? resolveSrcRel(currentTargetDir, currentFile) : undefined;
+	const results = await cssProvenance(rel, [{ selector, media }]);
+	if (!results[0]?.file) {
+		vscode.window.setStatusBarMessage(`Isolation: no source found for ${media}`, 3000);
+		return;
+	}
+	await revealCssAt(results[0].file, results[0].line ?? 1, generation);
+}
+
+interface CssProvenanceHit {
+	readonly found?: boolean;
+	readonly file?: string | null;
+	readonly line?: number | null;
+	readonly origin?: string;
+}
+
+/** Ask the sidecar which authored file:line defines each rule (POST
+ *  /api/css/provenance). Returns only the hits; unreachable sidecar → none. */
+async function cssProvenance(componentFile: string | undefined, rules: readonly { selector: string; media?: string }[]): Promise<CssProvenanceHit[]> {
+	if (!currentUiPort || !rules.length) {
+		return [];
 	}
 	try {
 		const res = await fetch(`http://127.0.0.1:${currentUiPort}/api/css/provenance`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ componentFile: rel, rules: classes.map((c) => ({ selector: `.${c}` })) }),
+			body: JSON.stringify({ componentFile: componentFile ?? null, rules }),
 			signal: AbortSignal.timeout(3000),
 		});
-		if (!res.ok || generation !== isolationGeneration) {
-			return;
+		if (!res.ok) {
+			return [];
 		}
-		const body = await res.json() as { results?: { found?: boolean; file?: string | null; line?: number | null; origin?: string }[] };
-		const results = (body.results ?? []).filter((r) => r.found && r.file);
-		const hit = results.find((r) => r.origin === 'component') ?? results[0];
-		if (!hit?.file || generation !== isolationGeneration) {
-			return;
-		}
-		const cssAbs = path.join(targetDir, hit.file);
-		const cssDoc = await vscode.workspace.openTextDocument(cssAbs);
-		const cssPos = new vscode.Position(Math.max(0, (hit.line ?? 1) - 1), 0);
+		const body = await res.json() as { results?: CssProvenanceHit[] };
+		return (body.results ?? []).filter((r) => r.found && r.file);
+	} catch {
+		// no matching rule / sidecar unreachable — callers degrade quietly
+		return [];
+	}
+}
+
+/**
+ * Open a stylesheet in the CSS column at one line, focus staying in the
+ * preview. Both surfaces that reveal CSS come through here — the 🎯 pick and
+ * the Breakpoints tab — so the allowlist, the column, and the pin-vs-peek rule
+ * are decided in one place. `file` may be absolute or target-relative; anything
+ * outside the target's `src/` is refused.
+ */
+async function revealCssAt(file: string, line: number, generation: number): Promise<void> {
+	const targetDir = currentTargetDir;
+	const rel = targetDir ? resolveSrcRel(targetDir, file) : undefined;
+	if (!targetDir || !rel) {
+		return;
+	}
+	const abs = path.join(targetDir, rel);
+	try {
+		const doc = await vscode.workspace.openTextDocument(abs);
 		if (generation !== isolationGeneration) {
 			return;
 		}
-		await vscode.window.showTextDocument(cssDoc, {
+		const pos = new vscode.Position(Math.max(0, line - 1), 0);
+		await vscode.window.showTextDocument(doc, {
 			viewColumn: vscode.ViewColumn.Two,
-			preview: cssAbs !== currentCss,
+			// The isolated component's own stylesheet keeps its tab; any other
+			// sheet is a peek.
+			preview: abs !== currentCss,
 			preserveFocus: true,
-			selection: new vscode.Range(cssPos, cssPos),
+			selection: new vscode.Range(pos, pos),
 		});
 	} catch {
-		// no matching rule / sidecar unreachable — the JSX reveal already happened
+		// a stylesheet that moved out from under the preview is not an error
 	}
 }
 
