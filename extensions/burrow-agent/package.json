@@ -1,0 +1,109 @@
+{
+	"name": "burrow-agent",
+	"displayName": "Burrow Agent",
+	"description": "The agent panel: a right-hand conversation wired to your local Claude Code CLI (your account, no API key). See docs/plans/03-agent-panel.md.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-agent",
+		"watch": "gulp watch-extension:burrow-agent",
+		"test": "node test/transport.test.js && node test/sessions.test.js"
+	},
+	"contributes": {
+		"viewsContainers": {
+			"secondarySidebar": [
+				{
+					"id": "burrow-agent",
+					"title": "Agent",
+					"icon": "$(sparkle)"
+				}
+			]
+		},
+		"views": {
+			"burrow-agent": [
+				{
+					"id": "burrowAgentChat",
+					"name": "Agent",
+					"type": "webview"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "burrow.agent.toggle",
+				"title": "Toggle Agent Panel",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.agent.newSession",
+				"title": "New Agent Session",
+				"category": "Burrow",
+				"icon": "$(add)"
+			},
+			{
+				"command": "burrow.agent.cycleSize",
+				"title": "Cycle Agent Panel Size",
+				"category": "Burrow",
+				"icon": "$(screen-full)"
+			},
+			{
+				"command": "burrow.agent.stop",
+				"title": "Stop the Agent Turn",
+				"category": "Burrow",
+				"icon": "$(stop-circle)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "burrow.agent.newSession",
+					"when": "view == burrowAgentChat",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.agent.cycleSize",
+					"when": "view == burrowAgentChat",
+					"group": "navigation@2"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Agent",
+			"properties": {
+				"burrow.agent.cliPath": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "The Claude Code CLI to spawn. Empty = look for `claude` on PATH, then `~/.local/bin/claude`. Your Claude Code **account** is the only credential — `ANTHROPIC_*` variables are stripped from the child environment, and no API key is stored, requested, or supported.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.model": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Model alias passed to the CLI (`opus`, `sonnet`, …). Empty = whatever your CLI defaults to.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,495 @@
+/*---------------------------------------------------------------------------------------------
+ *  Burrow — Go IDE. Licensed under the MIT License.
+ *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+import { PanelSizer } from './layout';
+import { Session, SessionStore, Turn } from './sessions';
+import { Transport, TransportEvent } from './transport';
+
+// The panel itself: the transcript, the composer, the vertical session rail
+// (docs/plans/03 §8). It owns one Transport per session — created on that
+// session's first message, killed when its tab closes — and turns wire events
+// into rendered turns.
+//
+// The webview is deliberately dumb: it renders the state it is given and posts
+// back intent (send / switch / new / close / stop / size / escape). Every
+// decision, including which session an arriving delta belongs to, is made here,
+// because a user who switches tabs mid-answer must not see the answer land in
+// the wrong transcript.
+
+interface Inbound {
+	readonly type: string;
+	readonly text?: string;
+	readonly id?: string;
+}
+
+/** What the webview renders. Posted whole on every change except deltas, which
+ *  are streamed to keep a long answer from re-laying out on every token. */
+interface ViewState {
+	readonly type: 'state';
+	readonly tabs: readonly { readonly id: string; readonly title: string; readonly active: boolean }[];
+	readonly turns: readonly Turn[];
+	readonly streaming: boolean;
+	readonly footer: string;
+	readonly notice?: { readonly text: string; readonly action?: string };
+}
+
+export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable {
+
+	public static readonly viewId = 'burrowAgentChat';
+
+	private view: vscode.WebviewView | undefined;
+	private readonly transports = new Map<string, Transport>();
+	/** The turn currently being written into, and whose session it belongs to. */
+	private streaming: { readonly sessionId: string; readonly turn: Turn; text: string } | undefined;
+	private notice: { text: string; action?: string } | undefined;
+
+	constructor(
+		private readonly context: vscode.ExtensionContext,
+		private readonly sessions: SessionStore,
+		private readonly sizer: PanelSizer,
+	) { }
+
+	resolveWebviewView(view: vscode.WebviewView): void {
+		this.view = view;
+		view.webview.options = { enableScripts: true };
+		view.webview.html = html(nonce());
+		view.webview.onDidReceiveMessage((msg: Inbound) => void this.onMessage(msg), undefined, this.context.subscriptions);
+		view.onDidDispose(() => { this.view = undefined; }, undefined, this.context.subscriptions);
+	}
+
+	dispose(): void {
+		for (const transport of this.transports.values()) {
+			transport.dispose();
+		}
+		this.transports.clear();
+	}
+
+	/** Reveal the panel, or put it away if it is already the thing on screen —
+	 *  the ⌘⌥D behaviour from the plan's acceptance list. */
+	async toggle(): Promise<void> {
+		if (this.view?.visible) {
+			await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+		} else {
+			await vscode.commands.executeCommand(`${AgentPanel.viewId}.focus`);
+		}
+	}
+
+	async newSession(): Promise<void> {
+		if (!this.sessions.create()) {
+			this.notice = { text: `That is ${this.sessions.all.length} conversations already — close one to start another.` };
+		}
+		await vscode.commands.executeCommand(`${AgentPanel.viewId}.focus`);
+		this.render();
+	}
+
+	/** Abandon the answer in flight; the conversation itself survives (the next
+	 *  message respawns the CLI with `--resume`). */
+	stop(): void {
+		if (!this.streaming) {
+			return;
+		}
+		this.transports.get(this.streaming.sessionId)?.cancel();
+	}
+
+	private async onMessage(msg: Inbound): Promise<void> {
+		switch (msg?.type) {
+			case 'ready':
+				return this.render();
+			case 'send':
+				return this.send(String(msg.text ?? ''));
+			case 'switch':
+				this.sessions.activate(String(msg.id));
+				return this.render();
+			case 'new':
+				return void this.newSession();
+			case 'close':
+				return this.closeSession(String(msg.id));
+			case 'stop':
+				return this.stop();
+			case 'size':
+				await this.sizer.cycle();
+				return this.render();
+			case 'escape':
+				// Esc leaves the biggest state first and only then hands focus
+				// back — otherwise a full-screen panel would need two presses to
+				// get out of the way, which is the thing Esc is for (plans/01 §4).
+				if (!await this.sizer.collapseFromFull()) {
+					await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+				}
+				return this.render();
+			case 'openSetting':
+				return void vscode.commands.executeCommand('workbench.action.openSettings', 'burrow.agent.cliPath');
+			default:
+				return;
+		}
+	}
+
+	private closeSession(id: string): void {
+		this.transports.get(id)?.dispose();
+		this.transports.delete(id);
+		if (this.streaming?.sessionId === id) {
+			this.streaming = undefined;
+		}
+		this.sessions.close(id);
+		this.render();
+	}
+
+	private send(text: string): void {
+		const question = text.trim();
+		if (!question || this.streaming) {
+			return;
+		}
+		const session = this.sessions.current;
+		this.notice = undefined;
+		this.sessions.append(session.id, { role: 'you', text: question });
+		// The answer's turn exists before a byte arrives: the panel shows an
+		// empty agent bubble immediately so a slow first token reads as thinking
+		// rather than as nothing happening.
+		const turn: Turn = { role: 'agent', text: '' };
+		this.sessions.append(session.id, turn);
+		this.streaming = { sessionId: session.id, turn, text: '' };
+		this.render();
+		this.transportFor(session).send(question);
+	}
+
+	private transportFor(session: Session): Transport {
+		const existing = this.transports.get(session.id);
+		if (existing) {
+			return existing;
+		}
+		const config = vscode.workspace.getConfiguration('burrow.agent');
+		const transport = new Transport({
+			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
+			cliPath: config.get<string>('cliPath', '').trim(),
+			model: config.get<string>('model', '').trim(),
+			resume: session.resume,
+		}, (event) => this.onTransportEvent(session.id, event));
+		this.transports.set(session.id, transport);
+		return transport;
+	}
+
+	private onTransportEvent(sessionId: string, event: TransportEvent): void {
+		const live = this.streaming?.sessionId === sessionId ? this.streaming : undefined;
+		switch (event.kind) {
+			case 'session':
+				this.sessions.setResume(sessionId, event.id);
+				return;
+			case 'delta':
+				if (live) {
+					live.text += event.text;
+					live.turn.text = live.text;
+					// Streamed, not re-rendered: appending is the one thing the
+					// webview does on its own.
+					void this.view?.webview.postMessage({ type: 'delta', text: event.text });
+				}
+				return;
+			case 'text':
+				// Only useful when partial messages are unavailable; `result`
+				// carries the same prose and is the authority below.
+				if (live && !live.text) {
+					live.text = event.text;
+					live.turn.text = event.text;
+					this.render();
+				}
+				return;
+			case 'result':
+				if (live) {
+					live.turn.text = event.text || live.text;
+					live.turn.costUsd = event.costUsd;
+					live.turn.tokens = event.tokens;
+					live.turn.durationMs = event.durationMs;
+					if (event.isError && !live.turn.text) {
+						live.turn.text = 'the CLI ended the turn without an answer';
+					}
+					this.streaming = undefined;
+					this.sessions.flush();
+					this.render();
+				}
+				return;
+			case 'rateLimit':
+				// Worth saying out loud: the developer's own weekly budget is
+				// what this panel spends.
+				if (event.status !== 'allowed' && event.utilization >= 0.75) {
+					this.notice = { text: `Claude usage is at ${Math.round(event.utilization * 100)}% of your ${event.status.includes('7') ? 'weekly' : 'current'} limit.` };
+					this.render();
+				}
+				return;
+			case 'failed':
+				this.fail(sessionId, event.message, event.missingCli);
+				return;
+			case 'ended':
+				if (live) {
+					// Cancelled or died mid-answer: keep whatever was said.
+					live.turn.text = live.text || 'no answer — the turn was stopped';
+					this.streaming = undefined;
+					this.sessions.flush();
+					this.render();
+				}
+				return;
+		}
+	}
+
+	private fail(sessionId: string, text: string, missingCli?: boolean): void {
+		if (this.streaming?.sessionId === sessionId) {
+			// Drop the empty placeholder; the error takes its place.
+			const turns = this.sessions.all.find((s) => s.id === sessionId)?.turns;
+			if (turns && turns[turns.length - 1] === this.streaming.turn && !this.streaming.turn.text) {
+				turns.pop();
+			}
+			this.streaming = undefined;
+		}
+		this.sessions.append(sessionId, { role: 'error', text });
+		this.notice = missingCli ? { text: 'The panel needs the Claude Code CLI.', action: 'openSetting' } : undefined;
+		this.render();
+	}
+
+	private render(): void {
+		if (!this.view) {
+			return;
+		}
+		const current = this.sessions.current;
+		const state: ViewState = {
+			type: 'state',
+			tabs: this.sessions.all.map((s) => ({ id: s.id, title: s.title, active: s.id === current.id })),
+			turns: current.turns,
+			streaming: this.streaming?.sessionId === current.id,
+			footer: footer(current, this.sizer.size),
+			notice: this.notice,
+		};
+		void this.view.webview.postMessage(state);
+	}
+}
+
+/** The one status line: which conversation, what the last answer cost, and the
+ *  standing fact that the agent cannot write anything. */
+function footer(session: Session, size: string): string {
+	const last = [...session.turns].reverse().find((t) => t.role === 'agent' && t.costUsd !== undefined);
+	const parts = [session.resume ? `session ${session.resume.slice(0, 4)}` : 'new session'];
+	if (last?.tokens) {
+		parts.push(`${last.tokens.toLocaleString()} tok`);
+	}
+	if (last?.costUsd !== undefined) {
+		parts.push(`$${last.costUsd < 0.01 ? last.costUsd.toFixed(4) : last.costUsd.toFixed(2)}`);
+	}
+	parts.push('plan mode');
+	parts.push(size);
+	return parts.join(' · ');
+}
+
+function nonce(): string {
+	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	let out = '';
+	for (let i = 0; i < 32; i++) {
+		out += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return out;
+}
+
+function html(cspNonce: string): string {
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${cspNonce}'; script-src 'nonce-${cspNonce}'">
+<style nonce="${cspNonce}">
+	* { box-sizing: border-box; }
+	html, body { height: 100%; margin: 0; }
+	body {
+		display: flex; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size);
+		color: var(--vscode-foreground); background: var(--vscode-sideBar-background);
+	}
+	#main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+	#log { flex: 1; overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
+	.turn { display: flex; flex-direction: column; gap: 3px; }
+	.who { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; opacity: .6; }
+	.body { white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+	.turn.error .body { color: var(--vscode-errorForeground); white-space: pre-wrap; }
+	.body code { font-family: var(--vscode-editor-font-family); font-size: .95em; background: var(--vscode-textCodeBlock-background); padding: 0 3px; border-radius: 3px; }
+	.body pre {
+		margin: 4px 0; padding: 7px 9px; overflow-x: auto; border-radius: 5px;
+		background: var(--vscode-textCodeBlock-background); font-family: var(--vscode-editor-font-family);
+		font-size: .95em; line-height: 1.45; white-space: pre;
+	}
+	.body pre code { background: none; padding: 0; }
+	.body strong { font-weight: 600; }
+	.body ul { margin: 3px 0; padding-left: 18px; }
+	.caret::after {
+		content: ''; display: inline-block; width: 6px; height: 1em; vertical-align: text-bottom;
+		background: var(--vscode-foreground); opacity: .5; animation: blink 1s steps(2, start) infinite;
+	}
+	@keyframes blink { to { visibility: hidden; } }
+	#empty { margin: auto; text-align: center; opacity: .55; padding: 16px; line-height: 1.6; }
+	#notice {
+		margin: 6px 8px 0; padding: 6px 8px; border-radius: 5px; font-size: 11px; line-height: 1.45;
+		background: var(--vscode-inputValidation-warningBackground, rgba(255,200,0,.12));
+		border: 1px solid var(--vscode-inputValidation-warningBorder, transparent);
+		display: flex; gap: 8px; align-items: baseline;
+	}
+	#notice button { flex: none; }
+	#composer { flex: none; border-top: 1px solid var(--vscode-panel-border); padding: 6px 8px; display: flex; flex-direction: column; gap: 5px; }
+	#ask {
+		width: 100%; resize: none; min-height: 46px; max-height: 40vh; padding: 5px 7px; border-radius: 5px;
+		font-family: inherit; font-size: inherit; line-height: 1.45;
+		color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+		border: 1px solid var(--vscode-input-border, transparent);
+	}
+	#ask:focus { outline: 1px solid var(--vscode-focusBorder); }
+	#row { display: flex; align-items: center; gap: 8px; }
+	#foot { flex: 1; font-size: 10px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	button {
+		font: inherit; font-size: 11px; padding: 1px 8px; border-radius: 4px; cursor: pointer;
+		color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+		background: var(--vscode-button-secondaryBackground, transparent);
+		border: 1px solid var(--vscode-contrastBorder, var(--vscode-panel-border));
+	}
+	button.go { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: transparent; }
+	button:hover { filter: brightness(1.15); }
+	#rail {
+		flex: none; width: 22px; border-left: 1px solid var(--vscode-panel-border);
+		display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0;
+	}
+	.dot {
+		width: 9px; height: 9px; border-radius: 50%; cursor: pointer; flex: none;
+		border: 1px solid var(--vscode-foreground); opacity: .45;
+	}
+	.dot:hover { opacity: .8; }
+	.dot.on { background: var(--vscode-foreground); opacity: 1; }
+	#add { margin-top: auto; opacity: .6; cursor: pointer; padding: 0 4px; line-height: 1; }
+	#add:hover { opacity: 1; }
+</style>
+</head>
+<body>
+	<div id="main">
+		<div id="notice" hidden></div>
+		<div id="log"></div>
+		<div id="composer">
+			<textarea id="ask" rows="2" placeholder="Ask about this repo…  ⌘↩ to send"></textarea>
+			<div id="row">
+				<span id="foot"></span>
+				<button id="stop" hidden>Stop</button>
+				<button id="size" title="Full screen, and back (Esc also comes back)">⛶</button>
+				<button id="send" class="go">Ask ⌘↩</button>
+			</div>
+		</div>
+	</div>
+	<div id="rail"><span id="add" title="New session">+</span></div>
+<script nonce="${cspNonce}">
+	const vscode = acquireVsCodeApi();
+	const post = (type, extra) => vscode.postMessage(Object.assign({ type }, extra || {}));
+	const $ = (id) => document.getElementById(id);
+	const log = $('log'), ask = $('ask'), rail = $('rail'), add = $('add');
+	let streaming = false;
+
+	// Markdown-lite: enough for an answer in a narrow column — fenced code,
+	// inline code, bold, bullets. Everything is escaped first, so this renders
+	// text, never markup.
+	const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	function md(src) {
+		const blocks = esc(src).split(/\`\`\`/);
+		return blocks.map((part, i) => {
+			if (i % 2 === 1) {
+				return '<pre><code>' + part.replace(/^[a-zA-Z0-9_-]*\\n/, '') + '</code></pre>';
+			}
+			return part
+				.replace(/\`([^\`\\n]+)\`/g, '<code>$1</code>')
+				.replace(/\\*\\*([^*\\n]+)\\*\\*/g, '<strong>$1</strong>')
+				.replace(/^#{1,6} +(.+)$/gm, '<strong>$1</strong>');
+		}).join('');
+	}
+
+	function renderTurn(turn) {
+		const el = document.createElement('div');
+		el.className = 'turn ' + turn.role;
+		const who = document.createElement('div');
+		who.className = 'who';
+		who.textContent = turn.role === 'you' ? 'you' : turn.role === 'error' ? 'burrow' : 'agent';
+		const body = document.createElement('div');
+		body.className = 'body';
+		if (turn.role === 'agent') { body.innerHTML = md(turn.text); }
+		else { body.textContent = turn.text; }
+		el.append(who, body);
+		return el;
+	}
+
+	function render(state) {
+		streaming = state.streaming;
+		log.innerHTML = '';
+		if (!state.turns.length) {
+			const empty = document.createElement('div');
+			empty.id = 'empty';
+			empty.textContent = 'Ask about the code you have open. The agent reads and answers — it never writes.';
+			log.append(empty);
+		} else {
+			for (const turn of state.turns) { log.append(renderTurn(turn)); }
+			if (streaming) { log.lastElementChild.querySelector('.body').classList.add('caret'); }
+		}
+		$('foot').textContent = state.footer;
+		$('stop').hidden = !streaming;
+		$('send').disabled = streaming;
+		const notice = $('notice');
+		notice.hidden = !state.notice;
+		if (state.notice) {
+			notice.innerHTML = '';
+			const text = document.createElement('span');
+			text.textContent = state.notice.text;
+			notice.append(text);
+			if (state.notice.action) {
+				const button = document.createElement('button');
+				button.textContent = 'Open setting';
+				button.addEventListener('click', () => post('openSetting'));
+				notice.append(button);
+			}
+		}
+		// One dot per session, newest at the bottom; + stays last.
+		for (const dot of [...rail.querySelectorAll('.dot')]) { dot.remove(); }
+		for (const tab of state.tabs) {
+			const dot = document.createElement('span');
+			dot.className = 'dot' + (tab.active ? ' on' : '');
+			dot.title = tab.title;
+			dot.addEventListener('click', () => post('switch', { id: tab.id }));
+			dot.addEventListener('auxclick', (e) => { if (e.button === 1) { post('close', { id: tab.id }); } });
+			dot.addEventListener('contextmenu', (e) => { e.preventDefault(); post('close', { id: tab.id }); });
+			rail.insertBefore(dot, add);
+		}
+		log.scrollTop = log.scrollHeight;
+	}
+
+	window.addEventListener('message', (e) => {
+		const d = e.data;
+		if (!d) { return; }
+		if (d.type === 'state') { render(d); return; }
+		if (d.type === 'delta') {
+			const body = log.lastElementChild && log.lastElementChild.querySelector('.body');
+			if (body) {
+				body.dataset.raw = (body.dataset.raw || '') + d.text;
+				body.innerHTML = md(body.dataset.raw);
+				body.classList.add('caret');
+				log.scrollTop = log.scrollHeight;
+			}
+		}
+	});
+
+	function send() {
+		const text = ask.value.trim();
+		if (!text || streaming) { return; }
+		ask.value = '';
+		post('send', { text: text });
+	}
+	$('send').addEventListener('click', send);
+	$('stop').addEventListener('click', () => post('stop'));
+	$('size').addEventListener('click', () => post('size'));
+	add.addEventListener('click', () => post('new'));
+	ask.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+	});
+	// Esc belongs to the workbench, not to this iframe (plans/01 §4): the panel
+	// hands it back so one press leaves full-screen or returns focus to the editor.
+	window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { post('escape'); } });
+	post('ready');
+</script>
+</body>
+</html>`;
+}

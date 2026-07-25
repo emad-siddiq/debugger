@@ -56,6 +56,7 @@ function onExtensionCompilationEnd(): void {
 // A stripped extension is removed here in lockstep with deleting its dir —
 // a stale entry points gulp at a missing tsconfig and fails the build.
 const compilations = [
+	'extensions/burrow-agent/tsconfig.json',
 	'extensions/burrow-core/tsconfig.json',
 	'extensions/burrow-db/tsconfig.json',
 	'extensions/burrow-docker/tsconfig.json',

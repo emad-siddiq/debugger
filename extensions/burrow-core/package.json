@@ -71,7 +71,7 @@
 				"when": "inZenMode && !suggestWidgetVisible && !inQuickOpen && !findWidgetVisible && !parameterHintsVisible && !renameInputVisible && !inSnippetMode && !terminalFocus && !inlineSuggestionVisible"
 			},
 			{
-				"command": "workbench.action.toggleAuxiliaryBar",
+				"command": "burrow.agent.toggle",
 				"key": "ctrl+alt+d",
 				"mac": "cmd+alt+d"
 			},
