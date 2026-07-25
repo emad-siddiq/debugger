@@ -19,9 +19,21 @@ interface ToolsApi {
 	claim(toolId: string, marker: { uri: vscode.Uri } | { viewType: string }): vscode.Disposable;
 }
 
-function tools(): ToolsApi | undefined {
+/**
+ * burrow-core's registry, waited for if it has not activated yet. This is not
+ * paranoia: a tool with a `workspaceContains` activation event (burrow-http has one
+ * for .http files) activates BEFORE burrow-core's `onStartupFinished`, and resolving
+ * the API once, eagerly, silently dropped its claim for the life of the window —
+ * the tab then never tidied and nothing said why.
+ */
+async function tools(): Promise<ToolsApi | undefined> {
 	try {
-		return (vscode.extensions.getExtension('burrow.burrow-core')?.exports as { tools?: ToolsApi } | undefined)?.tools;
+		const core = vscode.extensions.getExtension('burrow.burrow-core');
+		if (!core) {
+			return undefined;
+		}
+		const exports = (core.isActive ? core.exports : await core.activate()) as { tools?: ToolsApi } | undefined;
+		return exports?.tools;
 	} catch {
 		return undefined;
 	}
@@ -29,17 +41,31 @@ function tools(): ToolsApi | undefined {
 
 /** Announce this tool when its rail view becomes visible. */
 export function announceOnVisible(toolId: string, view: { onDidChangeVisibility: vscode.Event<{ visible: boolean }>; visible: boolean }): vscode.Disposable {
+	const announce = () => void tools().then((api) => api?.activated(toolId));
 	if (view.visible) {
-		tools()?.activated(toolId);
+		announce();
 	}
 	return view.onDidChangeVisibility((e) => {
 		if (e.visible) {
-			tools()?.activated(toolId);
+			announce();
 		}
 	});
 }
 
-/** Register a transient surface this tool just opened. */
+/** Register a transient surface this tool opens. Safe to call at activation:
+ *  the claim lands as soon as the registry exists, and the returned Disposable
+ *  withdraws it whenever that happens to be. */
 export function claimSurface(toolId: string, marker: { uri: vscode.Uri } | { viewType: string }): vscode.Disposable {
-	return tools()?.claim(toolId, marker) ?? new vscode.Disposable(() => undefined);
+	let claim: vscode.Disposable | undefined;
+	let withdrawn = false;
+	void tools().then((api) => {
+		claim = api?.claim(toolId, marker);
+		if (withdrawn) {
+			claim?.dispose();
+		}
+	});
+	return new vscode.Disposable(() => {
+		withdrawn = true;
+		claim?.dispose();
+	});
 }
