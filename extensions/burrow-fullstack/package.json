@@ -15,7 +15,8 @@
 	"activationEvents": [
 		"onDebug",
 		"onStartupFinished",
-		"onView:burrowDebugConfig"
+		"onView:burrowDebugConfig",
+		"onView:burrowFullStackStatus"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -95,9 +96,34 @@
 		"views": {
 			"burrow-fullstack": [
 				{
+					"id": "burrowFullStackStatus",
+					"name": "Full Stack"
+				},
+				{
 					"id": "burrowDebugConfig",
 					"name": "Debug Config",
-					"type": "webview"
+					"type": "webview",
+					"visibility": "collapsed"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowFullStackStatus",
+				"contents": "Nothing running yet. One click brings up Postgres, debugs the Go backend under dlv, and opens the frontend live.\n[Debug Full Stack](command:burrow.fullstack.debug)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "burrow.fullstack.debug",
+					"when": "view == burrowFullStackStatus",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.fullstack.stop",
+					"when": "view == burrowFullStackStatus",
+					"group": "navigation@2"
 				}
 			]
 		}

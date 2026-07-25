@@ -45,7 +45,14 @@ function seedProfile(): SeedProfile | undefined {
 	return loadSeedProfile(root, configured || undefined);
 }
 
-export function activate(context: ExtensionContext): void {
+/** What burrow-db lets other extensions READ (the Run view's Postgres tier,
+ *  and the agent panel's Data context layer). Read-only by construction: a
+ *  snapshot, no client handle, no setters. */
+export interface BurrowDbApi {
+	readonly connection: () => { label: string; connectionString: string; writes: boolean } | undefined;
+}
+
+export function activate(context: ExtensionContext): BurrowDbApi {
 	// One lazily-opened client, keyed by the connection string that produced it.
 	// A settings change (or a swap to DATABASE_URL) reopens it on next use.
 	let client: QueryClient | undefined;
@@ -302,6 +309,13 @@ export function activate(context: ExtensionContext): void {
 	if (!connectionString()) {
 		void window.setStatusBarMessage('Burrow DB: set burrow.db.connectionString or DATABASE_URL to connect.', 8000);
 	}
+
+	return {
+		connection: () => {
+			const conn = connectionString();
+			return conn ? { label: describeDsn(parsePostgresUrl(conn)), connectionString: conn, writes: allowWrites } : undefined;
+		},
+	};
 }
 
 export function deactivate(): void {

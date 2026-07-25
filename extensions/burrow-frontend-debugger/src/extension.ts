@@ -9,7 +9,7 @@ import { resolveConfig } from './config';
 import { openPanel, refreshPanel, postToApp, setIsolationHandler, setRouteChoicesHandler } from './panel';
 import { openIsolation, IsolateArgs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
 import { ComponentsProvider } from './gallery';
-import { Sidecar } from './sidecar';
+import { Sidecar, sidecarPhase } from './sidecar';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
 import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
@@ -26,6 +26,9 @@ let sidecar: Sidecar | undefined;
 export interface FrontendDebuggerApi {
 	/** The component on the isolation canvas right now, if any. */
 	readonly isolation: () => { file: string; label: string; props?: Record<string, unknown> } | undefined;
+	/** Whether the dev sidecar is up, and on which port — the Run view's
+	 *  Frontend tier reads this instead of probing a port it does not own. */
+	readonly sidecar: () => { phase: 'stopped' | 'starting' | 'running'; uiPort: number };
 }
 
 export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi {
@@ -243,7 +246,7 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		vscode.commands.registerCommand('burrow.frontendDebugger.showLogs', () => sidecar!.out.show(true)),
 	);
 
-	return { isolation: () => currentIsolation() };
+	return { isolation: () => currentIsolation(), sidecar: () => sidecarPhase() };
 }
 
 export function deactivate(): void {
