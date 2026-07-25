@@ -142,6 +142,7 @@
 			"workbench.layoutControl.enabled": false,
 			"workbench.editor.editorActionsLocation": "default",
 			"window.title": "${rootName}",
+			"security.workspace.trust.enabled": false,
 			"workbench.tree.indent": 12,
 			"workbench.tree.renderIndentGuides": "onHover",
 			"workbench.sash.size": 8,

@@ -50,6 +50,7 @@ Each patch is `NNNN-short-slug.md`:
 | [0005](0005-suppress-first-launch-onboarding.md) | Suppress the first-launch onboarding overlay | 02 | gettingStarted.contribution.ts | 1 line | active |
 | [0010](0010-compact-editor-gutter.md) | Compact editor gutter (thinner line-number + decorations reserve) | — | editor/common/config/editorOptions.ts | 2 lines | active |
 | [0011](0011-native-title-bar-default.md) | Default window.titleBarStyle to native (chrome removal) | — (WO-01) | workbench/electron-browser/desktop.contribution.ts | 1 line | active |
+| [0012](0012-workspace-trust-off-by-default.md) | Workspace Trust off by default (single-project IDE) | — (WO-19) | workbench/contrib/workspace/browser/workspace.contribution.ts | 1 line | active |
 
 Task 02 (strip to Go-only) deletes 64 built-in extension dirs (layer 2, no
 ledger entry each) and drops the js-debug `builtInExtensions` from `product.json`
