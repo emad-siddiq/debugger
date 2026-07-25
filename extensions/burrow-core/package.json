@@ -31,9 +31,35 @@
 				"command": "burrow.about",
 				"title": "About Burrow",
 				"category": "Burrow"
+			},
+			{
+				"command": "burrow.focus.toggle",
+				"title": "Toggle Focus Mode",
+				"category": "Burrow",
+				"icon": "$(screen-full)"
 			}
 		],
+		"menus": {
+			"editor/title": [
+				{
+					"command": "burrow.focus.toggle",
+					"group": "navigation@100",
+					"when": "editorIsOpen || activeWebviewPanelId"
+				}
+			]
+		},
 		"keybindings": [
+			{
+				"command": "burrow.focus.toggle",
+				"key": "ctrl+shift+enter",
+				"mac": "cmd+shift+enter",
+				"when": "!terminalFocus"
+			},
+			{
+				"command": "workbench.action.exitZenMode",
+				"key": "escape",
+				"when": "inZenMode && !suggestWidgetVisible && !inQuickOpen && !findWidgetVisible && !parameterHintsVisible && !renameInputVisible && !inSnippetMode && !terminalFocus && !inlineSuggestionVisible"
+			},
 			{
 				"command": "workbench.action.toggleAuxiliaryBar",
 				"key": "ctrl+alt+d",
@@ -104,6 +130,10 @@
 			"markdown.preview.fontSize": 15,
 			"markdown.preview.lineHeight": 1.7,
 			"zenMode.showTabs": "none",
+			"zenMode.hideLineNumbers": false,
+			"zenMode.centerLayout": true,
+			"zenMode.restore": false,
+			"zenMode.silentNotifications": true,
 			"chat.commandCenter.enabled": false,
 			"window.titleBarStyle": "native",
 			"window.customTitleBarVisibility": "never",

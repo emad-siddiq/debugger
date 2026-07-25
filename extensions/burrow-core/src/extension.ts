@@ -19,6 +19,12 @@ export function activate(context: ExtensionContext): void {
 				`Burrow — Go IDE · burrow-core ${ext} · editor base ${vscodeVersion}`,
 			);
 		}),
+		// Focus Mode = tuned Zen Mode (docs/plans/01 §4). One named command so every
+		// surface (editor title bar, tool webviews, keybinding) drives the same toggle
+		// and Esc exits via the same path. State is workbench-owned; we only toggle it.
+		commands.registerCommand('burrow.focus.toggle', () =>
+			commands.executeCommand('workbench.action.toggleZenMode'),
+		),
 	);
 }
 
