@@ -14,6 +14,7 @@
 	"activationEvents": [
 		"onCommand:burrow.http.importPostman",
 		"onLanguage:http",
+		"onView:burrowHttpRequests",
 		"workspaceContains:**/*.http"
 	],
 	"main": "./out/extension.js",
@@ -47,6 +48,12 @@
 				"title": "Import Postman Collection as .http",
 				"category": "Burrow",
 				"icon": "$(cloud-download)"
+			},
+			{
+				"command": "burrow.http.refreshRequests",
+				"title": "Refresh Requests",
+				"category": "Burrow",
+				"icon": "$(refresh)"
 			}
 		],
 		"keybindings": [
@@ -63,6 +70,11 @@
 					"command": "burrow.http.openWorkbench",
 					"group": "navigation@99",
 					"when": "editorLangId == http || resourceExtname == .http"
+				},
+				{
+					"command": "burrow.focus.toggle",
+					"when": "activeWebviewPanelId == burrowHttpWorkbench",
+					"group": "navigation@100"
 				}
 			],
 			"commandPalette": [
@@ -73,6 +85,35 @@
 				{
 					"command": "burrow.http.openWorkbench",
 					"when": "editorLangId == http || resourceExtname == .http"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.http.send",
+					"when": "view == burrowHttpRequests && editorLangId == http",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.http.refreshRequests",
+					"when": "view == burrowHttpRequests",
+					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.http.importPostman",
+					"when": "view == burrowHttpRequests",
+					"group": "1_more@1"
+				},
+				{
+					"command": "burrow.http.openWorkbench",
+					"when": "view == burrowHttpRequests",
+					"group": "1_more@2"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "burrow.http.send",
+					"when": "view == burrowHttpRequests && viewItem == burrowHttpRequest",
+					"group": "inline"
 				}
 			]
 		},
@@ -89,6 +130,21 @@
 					]
 				}
 			}
-		}
+		},
+		"views": {
+			"burrow-flow": [
+				{
+					"id": "burrowHttpRequests",
+					"name": "Requests",
+					"visibility": "collapsed"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowHttpRequests",
+				"contents": "No .http files in this workspace. Burrow reads the humao/JetBrains dialect — one file can hold every request for a service.\n[Import a Postman collection](command:burrow.http.importPostman)"
+			}
+		]
 	}
 }

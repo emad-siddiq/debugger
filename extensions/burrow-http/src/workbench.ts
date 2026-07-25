@@ -12,6 +12,7 @@
 import { Disposable, TextDocument, Uri, ViewColumn, WebviewPanel, commands, window, workspace } from 'vscode';
 import { interpolate, parseHttpFile, resolveRequest, resolveVariables } from './httpFile';
 import { renderError, renderResponse } from './render';
+import { rememberResponse } from './requestsTree';
 import { sendRequest } from './send';
 
 /** A 24-char nonce for the strict inline-script CSP. */
@@ -102,6 +103,16 @@ export class HttpWorkbench implements Disposable {
 		try {
 			const result = await sendRequest(resolved, { timeoutMs: this.timeoutMs() });
 			panel.webview.postMessage({ type: 'response', html: renderResponse(result) });
+			// The API view's Requests section shows what the last few sends
+			// answered (docs/plans/02 §3.5) — recorded here, where the result is.
+			rememberResponse({
+				method: resolved.method,
+				url: interpolate(resolved.url, { variables }),
+				status: result.status,
+				ms: Math.round(result.durationMs),
+				file: this.docUri,
+				line: request.line,
+			});
 		} catch (err) {
 			const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 			panel.webview.postMessage({ type: 'response', html: renderError(message) });

@@ -6,6 +6,7 @@
 import { ExtensionContext, TextDocument, Uri, commands, languages, window, workspace } from 'vscode';
 import { HttpCodeLensProvider } from './codelens';
 import { convertPostmanCollection } from './postman';
+import { RequestsProvider } from './requestsTree';
 import { HttpWorkbench } from './workbench';
 
 // burrow-http — the HTTP workbench (architecture task 09), a file-backed Postman-class
@@ -25,9 +26,15 @@ function isHttpDocument(document: TextDocument): boolean {
 
 export function activate(context: ExtensionContext): void {
 	const workbench = new HttpWorkbench();
+	// The API view's Requests section (docs/plans/02 §3.5) — an index of the
+	// workspace's .http files and what the last sends answered.
+	const requests = new RequestsProvider();
 
 	context.subscriptions.push(
 		workbench,
+		requests,
+		window.registerTreeDataProvider(RequestsProvider.viewId, requests),
+		commands.registerCommand('burrow.http.refreshRequests', () => requests.refresh()),
 		languages.registerCodeLensProvider(HTTP_SELECTOR, new HttpCodeLensProvider()),
 
 		// Reveal the workbench for the active `.http` editor.

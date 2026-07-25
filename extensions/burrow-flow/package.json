@@ -62,13 +62,18 @@
 			"view/title": [
 				{
 					"command": "burrow.flow.refresh",
-					"group": "navigation",
-					"when": "view == burrowFlowRoutes"
+					"when": "view == burrowFlowRoutes",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.flow.openDiagram",
+					"when": "view == burrowFlowRoutes",
+					"group": "navigation@2"
 				},
 				{
 					"command": "burrow.flow.generateHttp",
-					"group": "navigation",
-					"when": "view == burrowFlowRoutes"
+					"when": "view == burrowFlowRoutes",
+					"group": "1_more@1"
 				}
 			],
 			"view/item/context": [
@@ -153,6 +158,12 @@
 					"name": "Routes"
 				}
 			]
-		}
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowFlowRoutes",
+				"contents": "No routes indexed yet. Burrow reads the Go backend's router to list every endpoint merkle serves.\n[Scan the backend](command:burrow.flow.refresh)"
+			}
+		]
 	}
 }

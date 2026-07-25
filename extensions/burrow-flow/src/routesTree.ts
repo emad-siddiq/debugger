@@ -12,15 +12,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { Flow, FlowsDoc, groupFlows, handlerOf } from './model';
 
-type Node = GroupItem | FlowItem | PlaceholderItem;
-
-class PlaceholderItem extends vscode.TreeItem {
-	constructor(message: string) {
-		super(message, vscode.TreeItemCollapsibleState.None);
-		this.iconPath = new vscode.ThemeIcon('info');
-		this.command = { command: 'burrow.flow.refresh', title: 'Refresh Flows' };
-	}
-}
+type Node = GroupItem | FlowItem;
 
 class GroupItem extends vscode.TreeItem {
 	constructor(name: string, readonly flows: Flow[]) {
@@ -86,7 +78,11 @@ export class FlowsTree implements vscode.TreeDataProvider<Node>, vscode.Disposab
 			return el instanceof GroupItem ? el.flows.map(flow => new FlowItem(flow)) : [];
 		}
 		if (!this.doc || !this.doc.flows?.length) {
-			return [new PlaceholderItem('No flows yet — run "API Flows: Refresh Flows"')];
+			// EMPTY, not a fake row: an empty tree is what lets the view's
+			// designed `viewsWelcome` render (docs/plans/02 contract rule 4 —
+			// one sentence and one button, never a list item pretending to be a
+			// message).
+			return [];
 		}
 		return [...groupFlows(this.doc.flows).entries()].map(([name, flows]) => new GroupItem(name, flows));
 	}
