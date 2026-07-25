@@ -33,6 +33,11 @@
 				"category": "Burrow"
 			},
 			{
+				"command": "burrow.tools.closeTransientTabs",
+				"title": "Close Tool Tabs",
+				"category": "Burrow"
+			},
+			{
 				"command": "burrow.focus.toggle",
 				"title": "Toggle Focus Mode",
 				"category": "Burrow",
@@ -109,6 +114,14 @@
 					"type": "boolean",
 					"default": true,
 					"markdownDescription": "Hide the permanent **Breakpoints** view — breakpoint management moves to a popover (the **Burrow: Breakpoints…** command, `⇧⌘B`, and the 🐞 button on the debug toolbar). Set to `false` to bring the permanent Breakpoints pane back.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.workbench.tidyToolTabs": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Close a rail tool's transient tabs (query grids, response panes, isolation previews, …) when you switch to another tool in the Activity Bar. Dirty or pinned tabs always survive — pin a tab to keep it across tools. Set to `false` to keep every tool's tabs open; the **Burrow: Close Tool Tabs** command still tidies on demand.",
 					"tags": [
 						"burrow"
 					]

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ExtensionContext, commands, window, version as vscodeVersion } from 'vscode';
+import { BurrowToolsApi, createToolsApi } from './tools';
 
 // burrow-core is the first built-in extension (layer 4 of the fork strategy).
 // For task 01 it exists only to prove the built-in path: it compiles in the
@@ -11,7 +12,13 @@ import { ExtensionContext, commands, window, version as vscodeVersion } from 'vs
 // Later Burrow services (selection follow, oracle, shared UI) land here or in
 // sibling burrow-* extensions.
 
-export function activate(context: ExtensionContext): void {
+/** burrow-core's cross-extension API surface (reach via `extensions.getExtension('burrow.burrow-core')?.exports`). */
+export interface BurrowCoreApi {
+	/** Tool-surface isolation registry — see ./tools.ts (docs/plans/02 §6). */
+	readonly tools: BurrowToolsApi;
+}
+
+export function activate(context: ExtensionContext): BurrowCoreApi {
 	context.subscriptions.push(
 		commands.registerCommand('burrow.about', () => {
 			const ext = context.extension.packageJSON.version;
@@ -26,6 +33,7 @@ export function activate(context: ExtensionContext): void {
 			commands.executeCommand('workbench.action.toggleZenMode'),
 		),
 	);
+	return { tools: createToolsApi(context) };
 }
 
 export function deactivate(): void {
