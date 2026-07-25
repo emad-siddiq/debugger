@@ -302,6 +302,12 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 	if (!msg || msg.__burrowIso !== 1) {
 		return;
 	}
+	if (msg.type === 'exitFocus') {
+		// Esc bridge (docs/plans/01 §4): the harness owns the focused document, so
+		// the keystroke reaches the workbench only by this route.
+		void vscode.commands.executeCommand('burrow.focus.exit');
+		return;
+	}
 	if (msg.type === 'samples') {
 		// The harness found a colocated <Component>.samples.* — its own panel
 		// renders the picker; nothing to cache on the extension side anymore.

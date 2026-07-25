@@ -11,7 +11,7 @@
 // are later slices; this cut renders a capped result and lets you re-run edited
 // SQL in place. Colours come from workbench CSS variables so it themes for free.
 
-import { Disposable, ViewColumn, WebviewPanel, window } from 'vscode';
+import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
 import { GridModel } from './grid';
 import { nonce } from './webview';
 
@@ -27,7 +27,8 @@ type Outbound =
 
 type Inbound =
 	| { readonly type: 'ready' }
-	| { readonly type: 'run'; readonly sql: string };
+	| { readonly type: 'run'; readonly sql: string }
+	| { readonly type: 'exitFocus' };
 
 export class GridPanel {
 
@@ -69,7 +70,9 @@ export class GridPanel {
 	}
 
 	private async onMessage(message: Inbound): Promise<void> {
-		if (message.type === 'ready') {
+		if (message.type === 'exitFocus') {
+			void commands.executeCommand('burrow.focus.exit');
+		} else if (message.type === 'ready') {
 			await this.execute(this.lastSql);
 		} else if (message.type === 'run' && typeof message.sql === 'string') {
 			this.lastSql = message.sql;
@@ -162,6 +165,13 @@ export class GridPanel {
 		$run.onclick = run;
 		$sql.addEventListener('keydown', e => {
 			if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { run(); e.preventDefault(); }
+		});
+
+		// Esc bridge (docs/plans/01 §4): this webview has focus, so the workbench
+		// never sees the keystroke — hand it back so Focus Mode exits from here
+		// exactly as it does from an editor.
+		window.addEventListener('keydown', e => {
+			if (e.key === 'Escape') { post({ type: 'exitFocus' }); }
 		});
 
 		function setStatus(text, isError) {

@@ -9,7 +9,7 @@
 // the user picks (re-reading + re-parsing the document so live edits count), and renders
 // the response with render.ts. It owns a single reusable panel.
 
-import { Disposable, TextDocument, Uri, ViewColumn, WebviewPanel, window, workspace } from 'vscode';
+import { Disposable, TextDocument, Uri, ViewColumn, WebviewPanel, commands, window, workspace } from 'vscode';
 import { interpolate, parseHttpFile, resolveRequest, resolveVariables } from './httpFile';
 import { renderError, renderResponse } from './render';
 import { sendRequest } from './send';
@@ -64,10 +64,13 @@ export class HttpWorkbench implements Disposable {
 		}
 	}
 
-	/** Handle a message posted from the webview (`send` with a request index). */
+	/** Handle a message posted from the webview (`send` with a request index, or
+	 *  the Esc bridge's `exitFocus`). */
 	private onMessage(message: { type?: string; index?: number }): void {
 		if (message.type === 'send' && typeof message.index === 'number') {
 			void this.send(message.index);
+		} else if (message.type === 'exitFocus') {
+			void commands.executeCommand('burrow.focus.exit');
 		}
 	}
 
@@ -154,6 +157,12 @@ export class HttpWorkbench implements Disposable {
 				result.innerHTML = '<div class="note">Sending…</div>';
 				vscode.postMessage({ type: 'send', index });
 			}
+		});
+		// Esc bridge (docs/plans/01 §4): this webview has focus, so the workbench
+		// never sees the keystroke — hand it back so Focus Mode exits from here
+		// exactly as it does from an editor.
+		window.addEventListener('keydown', e => {
+			if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); }
 		});
 		window.addEventListener('message', event => {
 			const msg = event.data;

@@ -32,6 +32,15 @@ export function activate(context: ExtensionContext): BurrowCoreApi {
 		commands.registerCommand('burrow.focus.toggle', () =>
 			commands.executeCommand('workbench.action.toggleZenMode'),
 		),
+		// The one exit (docs/plans/01 §4, WO-04). A webview iframe swallows Esc
+		// before the workbench ever sees it, so every Burrow webview posts the
+		// keystroke back to its extension host and lands here instead of each
+		// tool inventing its own way out. Unconditional by design: the workbench
+		// command tests the zen context itself and is a no-op outside Focus Mode,
+		// so callers never have to know which mode they are in.
+		commands.registerCommand('burrow.focus.exit', () =>
+			commands.executeCommand('workbench.action.exitZenMode'),
+		),
 	);
 	return { tools: createToolsApi(context) };
 }

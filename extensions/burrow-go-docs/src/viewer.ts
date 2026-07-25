@@ -38,7 +38,8 @@ type Inbound =
 	| { readonly type: 'ready' }
 	| { readonly type: 'navigate'; readonly input: string }
 	| { readonly type: 'back' }
-	| { readonly type: 'close' };
+	| { readonly type: 'close' }
+	| { readonly type: 'focus' };
 
 /** The command that maximizes / restores the active editor group ("fullscreen"). */
 const MAXIMIZE_COMMAND = 'workbench.action.toggleMaximizeEditorGroup';
@@ -147,6 +148,10 @@ export class DocViewer implements Disposable {
 			case 'close':
 				this.panel?.dispose();
 				return;
+			case 'focus':
+				// The shared Focus Mode, not a viewer-local one (docs/plans/01 §5).
+				void commands.executeCommand('burrow.focus.toggle');
+				return;
 		}
 	}
 
@@ -245,6 +250,7 @@ export class DocViewer implements Disposable {
 		<button id="back" title="Back (previously viewed symbol)" disabled>&#8592;</button>
 		<span id="label">Go Docs</span>
 		<input id="search" type="text" placeholder="Search a package or symbol — e.g. net/http.Request.ParseForm — then Enter" />
+		<button id="focus" title="Focus Mode (⌘⇧↩)">&#9974;</button>
 		<button id="close" title="Close (Esc)">&#10005;</button>
 	</div>
 	<div id="content"><div class="status">Loading…</div></div>
@@ -255,6 +261,10 @@ export class DocViewer implements Disposable {
 		const search = document.getElementById('search');
 		const back = document.getElementById('back');
 		document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+		// One maximize gesture across every Burrow tool (docs/plans/01 §5): this
+		// button drives the shared burrow.focus.toggle, it does not invent a
+		// viewer-local fullscreen.
+		document.getElementById('focus').addEventListener('click', () => vscode.postMessage({ type: 'focus' }));
 		back.addEventListener('click', () => vscode.postMessage({ type: 'back' }));
 		search.addEventListener('keydown', e => {
 			if (e.key === 'Enter') {

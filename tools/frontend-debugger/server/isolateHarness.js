@@ -410,6 +410,14 @@ function onPickDblClick(e) {
 }
 function onPickKey(e) { if (e.key === 'Escape') setInspect(false) }
 
+// Esc bridge (Burrow docs/plans/01 section 4). Focus lives in this iframe, so
+// the IDE never sees the keystroke; report it up and the extension exits Focus
+// Mode. Inspect mode claims Escape first (onPickKey above) — one Escape should
+// leave inspect, not the whole mode, so this stays out of the way while it is on.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !inspectOn) report('exitFocus')
+})
+
 function setInspect(on) {
   if (on === inspectOn) return
   inspectOn = on

@@ -8,8 +8,13 @@ import { Command } from '../commandManager';
 
 /**
  * Distraction-free reading: ensure the markdown file is showing as a rendered
- * preview, then toggle the workbench's Zen Mode (full screen, centered layout —
- * tuned via burrow-core's zenMode.* configuration defaults). `Esc Esc` exits.
+ * preview, then enter Focus Mode.
+ *
+ * Burrow keeps exactly one Focus implementation (docs/plans/01 §5) — this
+ * delegates to `burrow.focus.toggle` rather than calling `toggleZenMode`
+ * itself, so ⌘K R and the ⛶ button land in the same state and single-Esc
+ * leaves it. Falls back to the workbench command when burrow-core is absent,
+ * which keeps ⌘K R working in a plain Code - OSS build of this extension.
  */
 export class ReadZenCommand implements Command {
 	public readonly id = 'markdown.readZen';
@@ -21,6 +26,9 @@ export class ReadZenCommand implements Command {
 		} else if (vscode.window.activeTextEditor) {
 			await vscode.commands.executeCommand('reopenActiveEditorWith', 'vscode.markdown.preview.editor');
 		}
-		await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+		const focus = (await vscode.commands.getCommands(true)).includes('burrow.focus.toggle')
+			? 'burrow.focus.toggle'
+			: 'workbench.action.toggleZenMode';
+		await vscode.commands.executeCommand(focus);
 	}
 }

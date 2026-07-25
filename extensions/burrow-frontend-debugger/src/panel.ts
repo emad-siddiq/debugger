@@ -21,6 +21,15 @@ interface HostMessage {
 	readonly on?: boolean;
 	readonly export?: string;
 	readonly props?: unknown;
+	readonly name?: string | null;
+	readonly choices?: readonly RouteChoice[];
+}
+
+/** One candidate route for a Show-in-App disambiguation QuickPick. */
+export interface RouteChoice {
+	readonly path: string;
+	readonly label: string;
+	readonly name: string | null;
 }
 
 /** Set by the extension so the inspector's "Isolate" button (an openIsolation
@@ -28,6 +37,13 @@ interface HostMessage {
 type IsolationHandler = (args: { file: string; export?: string; props?: unknown }) => void;
 let isolationHandler: IsolationHandler | undefined;
 export function setIsolationHandler(fn: IsolationHandler): void { isolationHandler = fn; }
+
+/** Set by the extension: the SPA found SEVERAL routes rendering a Show-in-App
+ *  component and asks for a native QuickPick (a `routeChoices` host envelope);
+ *  the handler answers by re-posting `showInApp` with the chosen route. */
+type RouteChoicesHandler = (args: { file: string; name: string | null; choices: readonly RouteChoice[] }) => void;
+let routeChoicesHandler: RouteChoicesHandler | undefined;
+export function setRouteChoicesHandler(fn: RouteChoicesHandler): void { routeChoicesHandler = fn; }
 
 let current: vscode.WebviewPanel | undefined;
 let targetDir = '';
@@ -84,10 +100,20 @@ function buildHtml(uiPort: number): string {
 	<iframe src="${origin}/?embed=burrow" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
+		const frame = document.querySelector('iframe');
 		window.addEventListener('message', (e) => {
-			if (e.origin !== '${origin}') { return; }
 			const d = e.data;
-			if (!d || d.__fedbgHost !== 1 || typeof d.type !== 'string') { return; }
+			if (!d) { return; }
+			// Extension → SPA commands (Show in App): messages from the extension
+			// carry the __fedbgCmd envelope and do NOT come from the SPA origin —
+			// relay them into the iframe. Never reflected back out (the SPA origin
+			// check below only forwards __fedbgHost envelopes upward).
+			if (d.__fedbgCmd === 1 && e.origin !== '${origin}') {
+				if (frame.contentWindow) { frame.contentWindow.postMessage(d, '${origin}'); }
+				return;
+			}
+			if (e.origin !== '${origin}') { return; }
+			if (d.__fedbgHost !== 1 || typeof d.type !== 'string') { return; }
 			vscode.postMessage(d);
 		});
 	</script>
@@ -99,13 +125,30 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
 	if (!msg || typeof msg !== 'object') {
 		return;
 	}
-	if (msg.type === 'openSource') {
+	if (msg.type === 'exitFocus') {
+		// Esc bridge (docs/plans/01 §4): the SPA iframe owns the focused document,
+		// so the keystroke reaches the workbench only by this route.
+		await vscode.commands.executeCommand('burrow.focus.exit');
+	} else if (msg.type === 'openSource') {
 		await openSource(msg);
 	} else if (msg.type === 'setFullScreen') {
 		await setEditorFullScreen(!!msg.on);
 	} else if (msg.type === 'openIsolation' && typeof msg.file === 'string' && msg.file) {
 		isolationHandler?.({ file: msg.file, export: msg.export, props: msg.props });
+	} else if (msg.type === 'routeChoices' && typeof msg.file === 'string' && Array.isArray(msg.choices) && msg.choices.length) {
+		routeChoicesHandler?.({ file: msg.file, name: typeof msg.name === 'string' ? msg.name : null, choices: msg.choices });
 	}
+}
+
+/** Forward a command envelope to the embedded SPA (extension → app direction).
+ *  The panel shim relays `__fedbgCmd` messages into the SPA iframe; the SPA's
+ *  host.ts dispatches them. Returns false when no panel is open. */
+export function postToApp(msg: Record<string, unknown>): boolean {
+	if (!current) {
+		return false;
+	}
+	void current.webview.postMessage({ __fedbgCmd: 1, ...msg });
+	return true;
 }
 
 async function openSource(msg: HostMessage): Promise<void> {
