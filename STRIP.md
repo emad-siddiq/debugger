@@ -7,7 +7,7 @@
 > tables — edit `DECISIONS` in the script and regenerate. The commit plan
 > and Startup budget prose are filled in by hand.
 
-Upstream pin: **1.128.0**. Classified: **112** (keep 47, remove 61 [61 done], dev/test 4).
+Upstream pin: **1.128.0**. Classified: **113** (keep 48, remove 61 [61 done], dev/test 4).
 
 ## Keep
 
@@ -41,6 +41,7 @@ Upstream pin: **1.128.0**. Classified: **112** (keep 47, remove 61 [61 done], de
 | `go` | lang:go | the point — Go language + grammar |
 | `ini` | lang:ini/properties | .ini/.gitconfig/.editorconfig-adjacent configs |
 | `javascript` | lang:javascriptreact/javascript/jsx-tags | bare JS grammar for the odd .js config (ledger) |
+| `js-debug` | lang:wat, dbg:pwa-node/node/node-terminal/pwa-extensionHost/extensionHost/pwa-chrome/chrome/pwa-msedge/msedge | restored (WO-16) — vendored ms-vscode.js-debug 1.105.0 (MIT, engines ^1.80.0), the chrome/pwa-chrome debugger for merkle frontend TSX breakpoints |
 | `json` | lang:json/jsonc/jsonl/snippets | JSON grammar — configs everywhere |
 | `json-language-features` | — | JSON schema validation for configs |
 | `log` | lang:log | log-file colorizer — we read logs |
@@ -134,7 +135,7 @@ Grouped into cohesive `strip:` commits below (see Commit plan). Status
 
 | Entry | Where | Status | Why |
 |---|---|---|---|
-| `ms-vscode.js-debug` | product.json builtInExtensions | ✓ done | Node/JS debugger — Delve is the only debugger aboard |
+| `ms-vscode.js-debug` | vendored dir (was product.json builtInExtensions) | restored | RESTORED (WO-16) — vendored prebuilt into extensions/js-debug; chrome/pwa-chrome for merkle frontend TSX breakpoints. Delve still owns Go. |
 | `ms-vscode.js-debug-companion` | product.json builtInExtensions | ✓ done | js-debug browser companion |
 | `ms-vscode.vscode-js-profile-table` | product.json builtInExtensions | ✓ done | js-debug profile viewer |
 | `GitHub.copilot / copilot-chat (defaultChatAgent)` | product.json defaultChatAgent | DEFERRED | integrated AI — not yet (ledger); load-bearing config, excise separately |

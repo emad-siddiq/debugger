@@ -17,6 +17,7 @@ redistribution; keep it current as bundled tools are added (tasks 03+).
 | gopls (golang.org/x/tools/gopls) | BSD-3-Clause | language server |
 | Delve (go-delve/delve) | MIT | debugger backend (`dlv dap`) |
 | vscode-go (golang/vscode-go) | MIT | vendored as `extensions/go-base` |
+| js-debug (microsoft/vscode-js-debug) | MIT | vendored prebuilt as `extensions/js-debug` (v1.105.0, extracted from an official VS Code 1.108.1 build; `engines.vscode ^1.80.0`); chrome/pwa-chrome debugger for merkle frontend TSX breakpoints. Its own `LICENSE.txt` + `ThirdPartyNotices.txt` travel in the vendored dir. |
 
 ## Explicitly NOT included
 

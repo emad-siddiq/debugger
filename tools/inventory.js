@@ -26,6 +26,7 @@ const EXT_DIR = path.join(ROOT, 'extensions');
 //         'p'       patch/product-level (workbench contribution no-op)  — kept for symmetry
 //         'interim' keep for now, task 12 replaces (themes)
 //         'devtest' dev/test fixture, already excluded from the product build
+//         'vendor'  third-party prebuilt extension vendored into extensions/ (pinned, offline)
 const DECISIONS = {
   // ---- KEEP: the Go IDE core surface --------------------------------------
   'burrow-core': { action: 'keep', via: 'core', why: 'our own extension (task 01)' },
@@ -113,6 +114,7 @@ const DECISIONS = {
   'shaderlab': { action: 'remove', via: 'd', why: 'shader language' },
   'swift': { action: 'remove', via: 'd', why: 'non-Go language' },
   'typescript-basics': { action: 'keep', via: 'lang', why: 'restored by M4 (N3) — TS/TSX grammar for the frontend + md fences' },
+  'js-debug': { action: 'keep', via: 'vendor', why: 'restored (WO-16) — vendored ms-vscode.js-debug 1.105.0 (MIT, engines ^1.80.0), the chrome/pwa-chrome debugger for merkle frontend TSX breakpoints' },
   'typescript-language-features': { action: 'remove', via: 'd', why: 'heavy TS/JS language service (ledger: drop language services)' },
   'vb': { action: 'remove', via: 'd', why: 'non-Go language' },
   'xml': { action: 'remove', via: 'd', why: 'rare in Go repos — minimalism' },
@@ -162,7 +164,7 @@ const DECISIONS = {
 // fork (removing it crashes accounts/onboarding/sessions at startup), so its
 // excision is a dedicated follow-on (see Commit plan → Deferred).
 const PRODUCT_REMOVALS = [
-  { name: 'ms-vscode.js-debug', why: 'Node/JS debugger — Delve is the only debugger aboard', where: 'product.json builtInExtensions', status: 'done' },
+  { name: 'ms-vscode.js-debug', why: 'RESTORED (WO-16) — vendored prebuilt into extensions/js-debug; chrome/pwa-chrome for merkle frontend TSX breakpoints. Delve still owns Go.', where: 'vendored dir (was product.json builtInExtensions)', status: 'restored' },
   { name: 'ms-vscode.js-debug-companion', why: 'js-debug browser companion', where: 'product.json builtInExtensions', status: 'done' },
   { name: 'ms-vscode.vscode-js-profile-table', why: 'js-debug profile viewer', where: 'product.json builtInExtensions', status: 'done' },
   { name: 'GitHub.copilot / copilot-chat (defaultChatAgent)', why: 'integrated AI — not yet (ledger); load-bearing config, excise separately', where: 'product.json defaultChatAgent', status: 'DEFERRED' },
