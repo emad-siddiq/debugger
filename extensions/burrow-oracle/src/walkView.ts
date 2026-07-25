@@ -48,6 +48,7 @@ export class OracleWalkProvider implements WebviewViewProvider {
 
 	private view?: WebviewView;
 	private tree?: PackageTreeNode;
+	private count = 0;
 	private status = 'Run “Oracle: Walk Go Packages” to map this codebase.';
 
 	/** Wire the webview: strict CSP, and a click → reveal-in-explorer bridge. */
@@ -66,6 +67,9 @@ export class OracleWalkProvider implements WebviewViewProvider {
 	update(tree: PackageTreeNode, packageCount: number): void {
 		this.tree = tree;
 		this.status = `${packageCount} package${packageCount === 1 ? '' : 's'} walked.`;
+		// The section ships collapsed (docs/plans/02 §3.1), so the count has to
+		// live in its title — collapsed must never mean hidden.
+		this.count = packageCount;
 		this.render();
 	}
 
@@ -77,6 +81,9 @@ export class OracleWalkProvider implements WebviewViewProvider {
 
 	/** Rebuild the HTML from the current tree + status. No-op until the view resolves. */
 	private render(): void {
+		if (this.view) {
+			this.view.description = this.count ? String(this.count) : undefined;
+		}
 		if (!this.view) {
 			return;
 		}

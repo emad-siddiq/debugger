@@ -105,7 +105,7 @@
 				"burrow.agent.cliPath": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "The Claude Code CLI to spawn. Empty = look for `claude` on PATH, then `~/.local/bin/claude`. Your Claude Code **account** is the only credential \u2014 `ANTHROPIC_*` variables are stripped from the child environment, and no API key is stored, requested, or supported.",
+					"markdownDescription": "The Claude Code CLI to spawn. Empty = look for `claude` on PATH, then `~/.local/bin/claude`. Your Claude Code **account** is the only credential — `ANTHROPIC_*` variables are stripped from the child environment, and no API key is stored, requested, or supported.",
 					"tags": [
 						"burrow"
 					]
@@ -113,7 +113,7 @@
 				"burrow.agent.model": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "Model alias passed to the CLI (`opus`, `sonnet`, \u2026). Empty = whatever your CLI defaults to.",
+					"markdownDescription": "Model alias passed to the CLI (`opus`, `sonnet`, …). Empty = whatever your CLI defaults to.",
 					"tags": [
 						"burrow"
 					]
@@ -129,7 +129,7 @@
 				"burrow.agent.memory.enabled": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Read the repo's own `.claude/memory/*.yaml` rows into the context envelope when they apply to the file you have open. Deterministic \u2014 no model call decides what to load.",
+					"markdownDescription": "Read the repo's own `.claude/memory/*.yaml` rows into the context envelope when they apply to the file you have open. Deterministic — no model call decides what to load.",
 					"tags": [
 						"burrow"
 					]
@@ -145,7 +145,7 @@
 				"burrow.agent.insights.enabled": {
 					"type": "boolean",
 					"default": false,
-					"markdownDescription": "Produce an automatic three-bullet card about the file you open.\n\n**Off by default, deliberately:** every card is a real turn against your Claude Code account, and on a large repo a turn can cost around $0.30 \u2014 a background feature should not spend that until you ask it to. Cards are cached per file+content, so re-opening something you have already looked at is free.",
+					"markdownDescription": "Produce an automatic three-bullet card about the file you open.\n\n**Off by default, deliberately:** every card is a real turn against your Claude Code account, and on a large repo a turn can cost around $0.30 — a background feature should not spend that until you ask it to. Cards are cached per file+content, so re-opening something you have already looked at is free.",
 					"tags": [
 						"burrow"
 					]
@@ -180,7 +180,7 @@
 						"type": "string"
 					},
 					"default": [],
-					"markdownDescription": "Extra paths the agent may never read, send, or patch, on top of the built-in list (`**/.env*`, `**/infra/secrets/**`, `**/*.pem`, `**/*.key`, `**/secret*`, `**/.claude/settings.local.json`, `**/node_modules/**`, `**/.git/**`). The built-ins always apply \u2014 this list can only add to them.",
+					"markdownDescription": "Extra paths the agent may never read, send, or patch, on top of the built-in list (`**/.env*`, `**/infra/secrets/**`, `**/*.pem`, `**/*.key`, `**/secret*`, `**/.claude/settings.local.json`, `**/node_modules/**`, `**/.git/**`). The built-ins always apply — this list can only add to them.",
 					"tags": [
 						"burrow"
 					]

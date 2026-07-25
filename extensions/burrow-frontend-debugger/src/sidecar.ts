@@ -88,6 +88,31 @@ async function freePort(preferred: number): Promise<number> {
  * port it attaches instead of spawning — that is also the tool-dev workflow
  * (`npm run dev` in a terminal, then open the panel).
  */
+// Is the dev server up? One module-level answer, because two surfaces need it
+// and neither owns the Sidecar: the Components view renders it as its top row
+// (docs/plans/02 §3.7 — nothing auto-starts without saying so) and the tree
+// refreshes on the event. Kept beside the state it reports rather than threaded
+// through activate().
+export type SidecarPhase = 'stopped' | 'starting' | 'running';
+
+let phase: SidecarPhase = 'stopped';
+let phasePort = 0;
+const phaseEmitter = new vscode.EventEmitter<void>();
+export const onSidecarPhase = phaseEmitter.event;
+
+export function sidecarPhase(): { readonly phase: SidecarPhase; readonly uiPort: number } {
+	return { phase, uiPort: phasePort };
+}
+
+function setPhase(next: SidecarPhase, uiPort = 0): void {
+	if (phase === next && phasePort === uiPort) {
+		return;
+	}
+	phase = next;
+	phasePort = uiPort;
+	phaseEmitter.fire();
+}
+
 export class Sidecar implements vscode.Disposable {
 
 	readonly out = vscode.window.createOutputChannel('Frontend Debugger');
@@ -109,10 +134,22 @@ export class Sidecar implements vscode.Disposable {
 		return this.attached || !!this.child;
 	}
 
+	/** Thin wrapper so a failed start cannot leave the Components view saying
+	 *  "starting…" forever — every exit from the attempt reports a phase. */
 	async start(cfg: SidecarConfig, opts?: { forceSpawn?: boolean }): Promise<number> {
+		try {
+			return await this.startInner(cfg, opts);
+		} catch (err) {
+			setPhase(this.running ? 'running' : 'stopped', this.running ? this.uiPort : 0);
+			throw err;
+		}
+	}
+
+	private async startInner(cfg: SidecarConfig, opts?: { forceSpawn?: boolean }): Promise<number> {
 		if (this.running && this.uiPort) {
 			return this.uiPort;
 		}
+		setPhase('starting');
 		// Attach only to a sidecar that proves it runs the SAME tool version as
 		// this window would spawn (rev handshake). A long-lived pre-upgrade
 		// sidecar squatting on the port would otherwise serve stale server code
@@ -127,6 +164,7 @@ export class Sidecar implements vscode.Disposable {
 				this.targetPort = probe.port ?? cfg.targetPort;
 				this.targetBase = probe.base ?? cfg.targetBase;
 				this.out.appendLine(`[fedbg] attached to an already-running sidecar on :${cfg.uiPort} (rev ${probe.rev}, target :${this.targetPort}${this.targetBase})`);
+				setPhase('running', this.uiPort);
 				return this.uiPort;
 			}
 			this.out.appendLine(`[fedbg] sidecar on :${cfg.uiPort} is stale (rev ${probe?.rev || 'none'} ≠ ${wantRev || 'unknown'}) — spawning fresh on fallback ports`);
@@ -170,6 +208,7 @@ export class Sidecar implements vscode.Disposable {
 			}
 			this.child = undefined;
 			this.uiPort = 0;
+			setPhase('stopped');
 			void vscode.window
 				.showWarningMessage(`Frontend Debugger sidecar exited unexpectedly (code ${code ?? '?'}).`, 'Restart', 'Show Logs')
 				.then((choice) => {
@@ -192,6 +231,7 @@ export class Sidecar implements vscode.Disposable {
 			await this.stop();
 			throw new Error(`a different sidecar is answering on :${foreignPort} — stop it (or Restart Sidecar) and retry`);
 		}
+		setPhase('running', this.uiPort);
 		return this.uiPort;
 	}
 
@@ -208,6 +248,7 @@ export class Sidecar implements vscode.Disposable {
 		this.uiPort = 0;
 		this.targetPort = 0;
 		this.targetBase = '/';
+		setPhase('stopped');
 		if (attachedPort) {
 			return this.shutdownForeign(attachedPort);
 		}

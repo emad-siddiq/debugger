@@ -56,6 +56,13 @@
 					"group": "navigation@100",
 					"when": "editorIsOpen || activeWebviewPanelId"
 				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.focus.toggle",
+					"group": "navigation@100",
+					"when": "view == workbench.view.search"
+				}
 			]
 		},
 		"keybindings": [
@@ -191,7 +198,11 @@
 				"editor.codeActionsOnSave": {
 					"source.organizeImports": "explicit"
 				}
-			}
+			},
+			"explorer.compactFolders": false,
+			"explorer.confirmDelete": true,
+			"explorer.confirmDragAndDrop": true,
+			"search.searchEditor.singleClickBehaviour": "peekDefinition"
 		}
 	}
 }

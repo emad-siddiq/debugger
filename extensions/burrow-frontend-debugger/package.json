@@ -1,7 +1,7 @@
 {
 	"name": "burrow-frontend-debugger",
 	"displayName": "Burrow Frontend Debugger",
-	"description": "Visual React component debugger as an editor panel: embeds the target app via the tools/frontend-debugger sidecar and bridges component/CSS reveals into the editor. See docs/architecture/15-frontend-debugger.md.",
+	"description": "Browse merkle's React components, open one in isolation, or find it in the running app. Embeds the target app via the tools/frontend-debugger sidecar and bridges component/CSS reveals into the editor. See docs/architecture/15-frontend-debugger.md.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -100,6 +100,31 @@
 					"command": "burrow.frontendDebugger.refreshComponents",
 					"when": "view == burrowComponents",
 					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.frontendDebugger.toggleMode",
+					"when": "view == burrowComponents",
+					"group": "1_state@1"
+				},
+				{
+					"command": "burrow.frontendDebugger.openInBrowser",
+					"when": "view == burrowComponents",
+					"group": "1_state@2"
+				},
+				{
+					"command": "burrow.frontendDebugger.restart",
+					"when": "view == burrowComponents",
+					"group": "9_sidecar@1"
+				},
+				{
+					"command": "burrow.frontendDebugger.stop",
+					"when": "view == burrowComponents",
+					"group": "9_sidecar@2"
+				},
+				{
+					"command": "burrow.frontendDebugger.showLogs",
+					"when": "view == burrowComponents",
+					"group": "9_sidecar@3"
 				}
 			],
 			"view/item/context": [
@@ -152,7 +177,7 @@
 		"viewsWelcome": [
 			{
 				"view": "burrowComponents",
-				"contents": "No React components found. Open a workspace whose frontend is a Vite/React app, then refresh.\n[Refresh](command:burrow.frontendDebugger.refreshComponents)\n[Open App](command:burrow.frontendDebugger.open)"
+				"contents": "No React components found. Burrow looks for PascalCase `.tsx`/`.jsx` files under the target frontend's `src/`.\n[Set the frontend folder](command:workbench.action.openSettings?%22burrow.frontendDebugger.targetDir%22)"
 			}
 		],
 		"configuration": {

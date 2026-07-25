@@ -106,9 +106,10 @@
 			"explorer": [
 				{
 					"id": "burrowOracleWalk",
-					"name": "Oracle Walk",
+					"name": "Oracle Notes",
 					"type": "webview",
-					"when": "workspaceFolderCount != 0"
+					"when": "workspaceFolderCount != 0",
+					"visibility": "collapsed"
 				}
 			]
 		}
