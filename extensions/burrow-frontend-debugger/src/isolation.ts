@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { hasSamples } from './gallery';
-import { parsePropsSchema, parsePropsSkeleton, preferredExport, PropSpec } from './propsSkeleton';
+import { parsePropsSchema, preferredExport, PropSpec } from './propsSkeleton';
 import { makeTypeResolver } from './typeResolver';
 
 // Component-isolation workbench (the Framer-like view). Opens the component's
@@ -15,10 +15,14 @@ import { makeTypeResolver } from './typeResolver';
 // webview beside it (right). The preview iframes the target Vite's `__isolate`
 // harness (see tools/frontend-debugger/server/inspectorPlugin.js), which mounts
 // ONE component alone with a minimal provider shell. Editing the real file →
-// save → Vite Fast Refresh → the preview re-renders. Props flow natively: a
-// required-props SKELETON (parsed from the component's props type) seeds the
-// first render, the harness mirrors its live props up after every render, and
-// the Edit Props command (editProps) pushes changes back over postMessage.
+// save → Vite Fast Refresh → the preview re-renders. Props are edited in ONE
+// place — the harness's own props panel (a required-props SKELETON parsed from
+// the component's props type seeds the first render; the harness mirrors its
+// live props up after every render for Save-as-sample). The harness's 🎯
+// Inspect mode sends `reveal` (open the clicked part's JSX + CSS lines) and
+// `isolate` (enter a child component) envelopes handled here. Isolating
+// component B replaces component A's source/CSS tabs (dirty editors are kept),
+// so the editor area always shows exactly one component.
 
 /** Where the running sidecar's target dev server lives + the fs allowlist anchor. */
 export interface IsolateTarget {
@@ -45,17 +49,19 @@ interface IsolateEnvelope {
 let preview: vscode.WebviewPanel | undefined;
 
 // State for the CURRENTLY-isolated component, reset on each isolation:
-// sample prop-set names reported by the harness (the pickSample picker),
-// the live props the harness mirrors up after every render (the editProps
-// seed), the absolute source path (skeleton re-parses), and the label the
-// envelope handler uses (module-level so the ONE panel listener — registered
-// at creation only — always names the current component, not a stale one).
-let sampleNames: string[] = [];
+// the live props the harness mirrors up after every render (the Save-as-sample
+// payload), the absolute source + colocated-CSS paths (tab replacement and the
+// reveal targets), and the label the envelope handler uses (module-level so
+// the ONE panel listener — registered at creation only — always names the
+// current component, not a stale one). `isolationGeneration` fences async
+// reveal work: responses landing after a re-isolation are dropped.
 let currentProps: Record<string, unknown> | undefined;
 let currentFile: string | undefined;
+let currentCss: string | undefined;
 let currentTargetDir: string | undefined;
 let currentUiPort = 0;
 let currentLabel = '';
+let isolationGeneration = 0;
 
 /**
  * Reveal the component's source on the left and an isolated preview on the
@@ -71,6 +77,8 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	}
 
 	const abs = path.join(target.targetDir, rel);
+	const previousFile = currentFile;
+	const previousCss = currentCss;
 
 	// Left: the real editor. Keeps focus so you can start editing immediately.
 	try {
@@ -81,19 +89,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		return;
 	}
 
-	// Framer-mode "design" layout: source slim on the left, the live canvas wider
-	// on the right. When the component has a colocated stylesheet, the left
-	// column splits into source (top) | CSS (bottom) so markup, styles, and the
-	// live component are all on one screen. Best-effort — a project that can't
-	// set the layout still gets the plain columns.
 	const cssAbs = findColocatedCss(abs);
-	try {
-		await vscode.commands.executeCommand('vscode.setEditorLayout', cssAbs
-			? { orientation: 0, groups: [{ groups: [{ size: 0.62 }, { size: 0.38 }], size: 0.42 }, { size: 0.58 }] }
-			: { orientation: 0, groups: [{ size: 0.42 }, { size: 0.58 }] });
-	} catch {
-		// layout is a nicety, not a requirement
-	}
 	if (cssAbs) {
 		try {
 			const cssDoc = await vscode.workspace.openTextDocument(cssAbs);
@@ -101,6 +97,25 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		} catch {
 			// the stylesheet row is optional
 		}
+	}
+
+	// One component = its tabs only: with the new component's editors open,
+	// close the PREVIOUS component's source/CSS tabs (dirty editors survive,
+	// shared files are kept). Ordered before setEditorLayout — closing can
+	// collapse a group and renumber view columns.
+	await closeStaleComponentTabs([previousFile, previousCss], new Set([abs, cssAbs].filter((p): p is string => !!p)));
+
+	// Framer-mode "design" layout: source slim on the left, the live canvas wider
+	// on the right. When the component has a colocated stylesheet, the left
+	// column splits into source (top) | CSS (bottom) so markup, styles, and the
+	// live component are all on one screen. Best-effort — a project that can't
+	// set the layout still gets the plain columns.
+	try {
+		await vscode.commands.executeCommand('vscode.setEditorLayout', cssAbs
+			? { orientation: 0, groups: [{ groups: [{ size: 0.62 }, { size: 0.38 }], size: 0.42 }, { size: 0.58 }] }
+			: { orientation: 0, groups: [{ size: 0.42 }, { size: 0.58 }] });
+	} catch {
+		// layout is a nicety, not a requirement
 	}
 
 	// Option B (recon §8): a dedicated design mode — hide the side bars and the
@@ -139,21 +154,26 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	// first click renders the component instead of a missing-props stack.
 	const schema = source ? parsePropsSchema(source, stem, makeTypeResolver(abs, target.targetDir)) : undefined;
 	let props = sanitizeProps(args.props);
+	// Where the props the harness is about to render came from, so it can label
+	// the preview honestly: a live capture from the running app, or values this
+	// extension synthesized from the types.
+	let propsSource: 'capture' | 'synth' | undefined = Object.keys(props).length ? 'capture' : undefined;
 	if (!Object.keys(props).length && schema && schema.required.length && !hasSamples(path.dirname(abs), path.basename(abs))) {
 		props = schema.skeleton;
-		vscode.window.setStatusBarMessage(`Isolation: ${exportName || stem} — applied a props skeleton (edit live in the preview's props panel)`, 5000);
+		propsSource = 'synth';
 	}
-	const url = buildIsolateUrl(target, rel, exportName, props, schema?.specs);
+	const url = buildIsolateUrl(target, rel, exportName, props, schema?.specs, propsSource);
 	const label = exportName || stem;
 
 	// New component → the previous component's state no longer applies. The
 	// harness re-reports `samples`/`props` for this one as it loads.
-	sampleNames = [];
 	currentProps = undefined;
 	currentFile = abs;
+	currentCss = cssAbs;
 	currentTargetDir = target.targetDir;
 	currentUiPort = target.uiPort;
 	currentLabel = label;
+	isolationGeneration++;
 
 	const previewColumn = cssAbs ? vscode.ViewColumn.Three : vscode.ViewColumn.Beside;
 	if (!preview) {
@@ -163,7 +183,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 			{ viewColumn: previewColumn, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
-		preview.onDidDispose(() => { preview = undefined; sampleNames = []; currentProps = undefined; currentFile = undefined; }, undefined, context.subscriptions);
+		preview.onDidDispose(() => { preview = undefined; currentProps = undefined; currentFile = undefined; currentCss = undefined; }, undefined, context.subscriptions);
 		// ONE listener for the panel's life. It reads module state (currentLabel),
 		// so re-isolations must NOT register another — that used to multiply every
 		// envelope by the number of isolations.
@@ -176,64 +196,27 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 }
 
 /**
- * Native sample-props picker (Framer-mode T4). Shows the sample names the
- * harness reported for the isolated component and applies the chosen one live
- * (`{__burrowIsoCmd:1,type:'sample',name}` → harness re-renders with those
- * props). No-ops with a hint when nothing is isolated or the component has no
- * colocated `<Component>.samples.*` file.
+ * "One component = its tabs only": close the previous component's source/CSS
+ * tabs across every group. Dirty editors are kept (never discard unsaved
+ * work), files the NEW component also uses are kept (shared stylesheet), and
+ * the preview webview tab is never a text input so it is untouched.
  */
-export async function pickSample(): Promise<void> {
-	if (!preview) {
-		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component first (its preview must be open).');
+async function closeStaleComponentTabs(stale: readonly (string | undefined)[], keep: ReadonlySet<string>): Promise<void> {
+	const staleSet = new Set(stale.filter((p): p is string => !!p && !keep.has(p)));
+	if (!staleSet.size) {
 		return;
 	}
-	if (!sampleNames.length) {
-		void vscode.window.showInformationMessage('Frontend Debugger: this component has no colocated <Component>.samples.* file.');
+	const tabs = vscode.window.tabGroups.all
+		.flatMap((group) => group.tabs)
+		.filter((tab) => tab.input instanceof vscode.TabInputText && staleSet.has(tab.input.uri.fsPath) && !tab.isDirty);
+	if (!tabs.length) {
 		return;
 	}
-	const name = await vscode.window.showQuickPick(sampleNames, { placeHolder: 'Apply a sample prop-set to the preview' });
-	if (!name) {
-		return;
-	}
-	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'sample', name });
-}
-
-/**
- * Native props editor: a JSON input seeded with the component's LIVE props
- * (mirrored up by the harness) over its required-props skeleton, applied to
- * the preview via `{__burrowIsoCmd:1,type:'props',props}`. String value "ƒ"
- * marks a function prop — the harness renders it as a no-op stub.
- */
-export async function editProps(): Promise<void> {
-	if (!preview || !currentFile) {
-		void vscode.window.showInformationMessage('Frontend Debugger: isolate a component first (its preview must be open).');
-		return;
-	}
-	let skeleton: Record<string, unknown> = {};
 	try {
-		const stem = path.basename(currentFile).replace(/\.[jt]sx?$/, '');
-		skeleton = parsePropsSkeleton(fs.readFileSync(currentFile, 'utf8'), stem)?.props ?? {};
+		await vscode.window.tabGroups.close(tabs, true);
 	} catch {
-		// no source, no skeleton — live props alone still seed the editor
+		// leftover tabs are clutter, not a failure — never block the isolation
 	}
-	const seed = { ...skeleton, ...(currentProps ?? {}) };
-	const raw = await vscode.window.showInputBox({
-		title: `Props — ${currentLabel}`,
-		value: JSON.stringify(seed),
-		prompt: 'JSON object. Use "ƒ" as a value for a function prop (rendered as a no-op stub).',
-		validateInput: (text) => {
-			try {
-				const parsed = JSON.parse(text);
-				return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? undefined : 'Must be a JSON object.';
-			} catch {
-				return 'Not valid JSON.';
-			}
-		},
-	});
-	if (raw === undefined) {
-		return;
-	}
-	void preview.webview.postMessage({ __burrowIsoCmd: 1, type: 'props', props: JSON.parse(raw) });
 }
 
 /**
@@ -319,10 +302,26 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 	if (!msg || msg.__burrowIso !== 1) {
 		return;
 	}
-	if (msg.type === 'samples' && Array.isArray(msg.detail)) {
-		// The harness found a colocated <Component>.samples.* — cache the names for
-		// the native picker (pickSample).
-		sampleNames = msg.detail.filter((n): n is string => typeof n === 'string');
+	if (msg.type === 'samples') {
+		// The harness found a colocated <Component>.samples.* — its own panel
+		// renders the picker; nothing to cache on the extension side anymore.
+		return;
+	}
+	if (msg.type === 'reveal' && isRecord(msg.detail)) {
+		// 🎯 Inspect click: open the part's JSX line + its defining CSS rule.
+		void revealPick(msg.detail);
+		return;
+	}
+	if (msg.type === 'isolate' && isRecord(msg.detail) && typeof msg.detail.file === 'string') {
+		// 🎯 Inspect drill-in: enter the child component. Route through the
+		// public command so the full flow (sidecar ensure, tab replacement,
+		// layout) runs. The harness already gates on a src/-relative stamp.
+		if (currentTargetDir) {
+			const abs = path.join(currentTargetDir, msg.detail.file);
+			if (resolveSrcRel(currentTargetDir, abs)) {
+				void vscode.commands.executeCommand('burrow.frontendDebugger.isolate', vscode.Uri.file(abs));
+			}
+		}
 		return;
 	}
 	if (msg.type === 'props' && msg.detail && typeof msg.detail === 'object' && !Array.isArray(msg.detail)) {
@@ -345,6 +344,87 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 		// Surface once — the preview already shows the stack inline; this makes a
 		// silently-broken component obvious without staring at the canvas.
 		vscode.window.setStatusBarMessage(`Isolation: ${currentLabel} render error`, 4000);
+	}
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+	return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * 🎯 Inspect reveal: the clicked part's stamped JSX location opens (selected)
+ * in the source column, and its defining CSS rule — resolved through the
+ * sidecar's POST /api/css/provenance from the element's classes — opens in the
+ * CSS column. Every reveal keeps focus in the preview (`preserveFocus`), and
+ * async work is fenced by `isolationGeneration` so a re-isolation mid-flight
+ * drops stale responses instead of revealing the wrong component's files.
+ */
+async function revealPick(detail: Record<string, unknown>): Promise<void> {
+	const generation = isolationGeneration;
+	const targetDir = currentTargetDir;
+	const file = typeof detail.file === 'string' ? detail.file : '';
+	if (!targetDir || !file) {
+		return;
+	}
+	const rel = resolveSrcRel(targetDir, path.join(targetDir, file));
+	if (!rel) {
+		return;
+	}
+	const abs = path.join(targetDir, rel);
+	const line = typeof detail.line === 'number' ? detail.line : 1;
+	const col = typeof detail.col === 'number' ? detail.col : 1;
+	try {
+		const doc = await vscode.workspace.openTextDocument(abs);
+		const pos = new vscode.Position(Math.max(0, line - 1), Math.max(0, col - 1));
+		if (generation !== isolationGeneration) {
+			return;
+		}
+		await vscode.window.showTextDocument(doc, {
+			viewColumn: vscode.ViewColumn.One,
+			// A part inside a CHILD component peeks its file; the isolated
+			// component's own file stays a pinned tab.
+			preview: abs !== currentFile,
+			preserveFocus: true,
+			selection: new vscode.Range(pos, pos),
+		});
+	} catch {
+		// the JSX side is best-effort; still try the CSS side
+	}
+
+	const classes = Array.isArray(detail.classes) ? detail.classes.filter((c): c is string => typeof c === 'string' && !!c) : [];
+	if (!classes.length || !currentUiPort) {
+		return;
+	}
+	try {
+		const res = await fetch(`http://127.0.0.1:${currentUiPort}/api/css/provenance`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ componentFile: rel, rules: classes.map((c) => ({ selector: `.${c}` })) }),
+			signal: AbortSignal.timeout(3000),
+		});
+		if (!res.ok || generation !== isolationGeneration) {
+			return;
+		}
+		const body = await res.json() as { results?: { found?: boolean; file?: string | null; line?: number | null; origin?: string }[] };
+		const results = (body.results ?? []).filter((r) => r.found && r.file);
+		const hit = results.find((r) => r.origin === 'component') ?? results[0];
+		if (!hit?.file || generation !== isolationGeneration) {
+			return;
+		}
+		const cssAbs = path.join(targetDir, hit.file);
+		const cssDoc = await vscode.workspace.openTextDocument(cssAbs);
+		const cssPos = new vscode.Position(Math.max(0, (hit.line ?? 1) - 1), 0);
+		if (generation !== isolationGeneration) {
+			return;
+		}
+		await vscode.window.showTextDocument(cssDoc, {
+			viewColumn: vscode.ViewColumn.Two,
+			preview: cssAbs !== currentCss,
+			preserveFocus: true,
+			selection: new vscode.Range(cssPos, cssPos),
+		});
+	} catch {
+		// no matching rule / sidecar unreachable — the JSX reveal already happened
 	}
 }
 
@@ -380,7 +460,7 @@ function sanitizeProps(raw: unknown): Record<string, unknown> {
 	return out;
 }
 
-function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>, specs?: PropSpec[]): string {
+function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>, specs?: PropSpec[], propsSource?: 'capture' | 'synth'): string {
 	const base = target.targetBase.endsWith('/') ? target.targetBase : `${target.targetBase}/`;
 	const q = new URLSearchParams();
 	q.set('module', rel);
@@ -392,6 +472,11 @@ function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string 
 	}
 	if (specs?.length) {
 		q.set('schema', JSON.stringify(specs));
+	}
+	// Provenance for the harness's chip. Only meaningful alongside `props` —
+	// without it the harness decides for itself (samples ▸ SAMPLE_PROPS ▸ empty).
+	if (propsSource && Object.keys(props).length) {
+		q.set('propsSource', propsSource);
 	}
 	return `${target.targetOrigin}${base}__isolate?${q.toString()}`;
 }
@@ -468,6 +553,13 @@ function buildPreviewHtml(origin: string, isoUrl: string): string {
  *  preview is open. Used by the `burrow.frontendDebugger.reloadPreview` command. */
 export function reloadPreview(): void {
 	void preview?.webview.postMessage({ __burrowIsoCmd: 1, type: 'reload' });
+}
+
+/** The absolute source path of the currently-isolated component, if a preview
+ *  is open — "Show in App" resolves its target from this when fired from the
+ *  isolation preview's title bar (a webview panel has no editor Uri). */
+export function currentIsolationFile(): string | undefined {
+	return preview ? currentFile : undefined;
 }
 
 function getNonce(): string {

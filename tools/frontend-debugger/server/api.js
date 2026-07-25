@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
 import postcss from 'postcss'
+import { applyJsxEdit } from './jsxEdit.js'
+import { locateProdCss, prodCssPath } from './prodCss.js'
 
 const normMedia = (m) => (m == null ? '' : String(m).replace(/\s+/g, ' ').trim())
 
@@ -261,6 +263,23 @@ export function makeApi({
     return found
   }
 
+  // The target's BUILT stylesheet — what production actually serves. The
+  // isolation harness offers it as a "prod-css" toggle so a component can be
+  // checked against the shipped CSS, not just the dev module graph; the mtime
+  // lets a caller say "built 3 days ago — rebuild?" instead of presenting a
+  // stale bundle as current. Path derives from the configured target.
+  router.get('/prod-css', (_req, res) => {
+    res.json(locateProdCss(frontendDir))
+  })
+
+  // Serve that stylesheet. Split from the probe so a caller can <link> it;
+  // prodCssPath is basename + .css only, so it cannot escape dist/assets.
+  router.get('/prod-css/file', (req, res) => {
+    const abs = prodCssPath(frontendDir, req.query.name)
+    if (!abs) return res.status(404).type('text/plain').send('not found')
+    res.type('text/css').send(fs.readFileSync(abs, 'utf8'))
+  })
+
   router.get('/css/locate', (req, res) => {
     try {
       const requested = req.query.file || 'src/index.css'
@@ -307,13 +326,312 @@ export function makeApi({
       } else if (decl) {
         decl.value = value
       } else {
+        const wasEmpty = !rule.nodes || rule.nodes.length === 0
         rule.append({ prop, value })
+        if (wasEmpty) {
+          // postcss's default raws on a childless rule render `sel {decl}` on
+          // one line with no closing newline — give it conventional formatting
+          // (one extra indent level inside @media).
+          const nested = rule.parent && rule.parent.type === 'atrule'
+          rule.last.raws.before = nested ? '\n    ' : '\n  '
+          rule.raws.after = nested ? '\n  ' : '\n'
+          rule.raws.semicolon = true
+        }
       }
       atomicWrite(abs, root.toString())
       res.json({
         ok: true,
         line: rule.source && rule.source.start ? rule.source.start.line : null,
       })
+    } catch (e) {
+      res.status(400).json({ error: String(e.message || e) })
+    }
+  })
+
+  // --- CSS provenance (batch) --------------------------------------------
+  // The Inspector calls this on every selection: for each matched rule, which
+  // file:line defines it and which origin stratum it belongs to. Parsed ASTs
+  // are cached by mtime — re-selection must stay cheap.
+  const cssAstCache = new Map() // abs -> { mtime, root }
+  const parsedCss = (abs) => {
+    const mtime = fs.statSync(abs).mtimeMs
+    const hit = cssAstCache.get(abs)
+    if (hit && hit.mtime === mtime) return hit.root
+    const root = postcss.parse(fs.readFileSync(abs, 'utf8'))
+    cssAstCache.set(abs, { mtime, root })
+    return root
+  }
+
+  // Origin strata for the editor panel: the component's own colocated css,
+  // theme/token files, or app-global stylesheets.
+  const classifyOrigin = (cssRel, componentFile) => {
+    const base = path.basename(cssRel)
+    if (/^theme-|^tokens\.css$/.test(base) || cssRel.includes('/styles/')) return 'theme'
+    if (componentFile) {
+      const stem = componentFile.replace(/\.[jt]sx?$/, '')
+      if (cssRel.replace(/\.css$/, '') === stem) return 'component'
+      if (path.dirname(cssRel) === path.dirname(componentFile) && !/^(index|app)\.css$/.test(base))
+        return 'component'
+    }
+    return 'global'
+  }
+
+  router.post('/css/provenance', (req, res) => {
+    try {
+      const componentFile = typeof req.body.componentFile === 'string' ? req.body.componentFile : null
+      const rules = Array.isArray(req.body.rules) ? req.body.rules : []
+      const files = cssFilesUnder(srcRoot)
+      const results = rules.map((r) => {
+        for (const abs of files) {
+          let rule = null
+          try {
+            rule = findRule(parsedCss(abs), r.selector, r.media)
+          } catch {
+            continue
+          }
+          if (rule) {
+            const rel = path.relative(frontendDir, abs)
+            return {
+              selector: r.selector,
+              media: r.media || null,
+              found: true,
+              file: rel,
+              line: rule.source && rule.source.start ? rule.source.start.line : null,
+              origin: classifyOrigin(rel, componentFile),
+            }
+          }
+        }
+        return { selector: r.selector, media: r.media || null, found: false, file: null, line: null, origin: 'unknown' }
+      })
+      res.json({ results })
+    } catch (e) {
+      res.status(400).json({ error: String(e.message || e) })
+    }
+  })
+
+  // --- Ensure a component-scoped rule exists ------------------------------
+  // Scaffolds <Component>.css beside the component source (adding the import)
+  // and appends an empty rule, so "override in component" / new properties on
+  // rule-less components have somewhere real to land. Returns the file+line
+  // the caller should then /css/edit into.
+  router.post('/css/ensure', (req, res) => {
+    try {
+      const { componentFile, selector, media } = req.body
+      if (!componentFile || !selector) throw new Error('componentFile and selector required')
+      const compAbs = safe(componentFile)
+      const stem = componentFile.replace(/\.[jt]sx?$/, '')
+      if (stem === componentFile) throw new Error('componentFile is not a source module: ' + componentFile)
+      const cssRel = stem + '.css'
+      const cssAbs = safe(cssRel)
+      const base = path.basename(cssRel)
+      let created = false
+      if (!fs.existsSync(cssAbs)) {
+        atomicWrite(cssAbs, '')
+        created = true
+      }
+      // Keep the import in the component module so the rule actually loads.
+      const compSrc = fs.readFileSync(compAbs, 'utf8')
+      const importLine = `import './${base}'`
+      if (!compSrc.includes(base)) {
+        const lines = compSrc.split('\n')
+        let lastImport = -1
+        for (let i = 0; i < lines.length; i++) if (/^import\b/.test(lines[i])) lastImport = i
+        lines.splice(lastImport + 1, 0, importLine)
+        atomicWrite(compAbs, lines.join('\n'))
+      }
+      const root = postcss.parse(fs.readFileSync(cssAbs, 'utf8'))
+      let rule = findRule(root, selector, media)
+      if (!rule) {
+        rule = postcss.rule({ selector, raws: { after: '\n' } })
+        if (media) {
+          const at = postcss.atRule({ name: 'media', params: media, raws: { after: '\n' } })
+          rule.raws.before = '\n  '
+          at.append(rule)
+          root.append(at)
+        } else {
+          root.append(rule)
+        }
+        atomicWrite(cssAbs, root.toString())
+        cssAstCache.delete(cssAbs)
+      }
+      res.json({
+        ok: true,
+        file: cssRel,
+        created,
+        line: rule.source && rule.source.start ? rule.source.start.line : null,
+      })
+    } catch (e) {
+      res.status(400).json({ error: String(e.message || e) })
+    }
+  })
+
+  // --- Theme catalog -------------------------------------------------------
+  // The target's themes are plain CSS keyed off `[data-theme="…"]` on <html>
+  // (theme-*.css files). Scan the stylesheets for the attribute values; the
+  // agent's setTheme command flips the attribute live.
+  router.get('/themes', (_req, res) => {
+    try {
+      const names = new Set()
+      for (const abs of cssFilesUnder(srcRoot)) {
+        let text
+        try {
+          text = fs.readFileSync(abs, 'utf8')
+        } catch {
+          continue
+        }
+        for (const m of text.matchAll(/\[data-theme=["']?([\w-]+)["']?\]/g)) names.add(m[1])
+      }
+      res.json({ mechanism: 'data-theme', themes: [...names].sort() })
+    } catch (e) {
+      res.status(400).json({ error: String(e.message || e) })
+    }
+  })
+
+  // --- Component usage discovery (Show in App) -----------------------------
+  // Where is this component rendered? Text-scans src/ (same parser-free
+  // pragmatism as /routes and the oracles): builds a reverse-import map, then
+  // returns (a) direct JSX usage sites of the module's components and (b) every
+  // transitive importer with its exported PascalCase components. The client
+  // intersects those names with the live route catalog (agent `routes` entries
+  // now carry the page component's `name`) to pick the route to navigate to.
+  const SRC_EXTS = ['.tsx', '.ts', '.jsx', '.js']
+  const SKIP_DIRS = new Set(['node_modules', 'test', 'tests', '__tests__', '__mocks__', '__snapshots__'])
+  // Tests/stories/samples import components without being app usage — a
+  // "where is this rendered" answer pointing at a .test file is noise.
+  const isAppSource = (name) =>
+    SRC_EXTS.includes(path.extname(name)) && !/\.(test|spec|stories|samples)\.[jt]sx?$/.test(name)
+  const srcFilesUnder = (dir, out = []) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
+      const abs = path.join(dir, entry.name)
+      if (entry.isDirectory()) srcFilesUnder(abs, out)
+      else if (isAppSource(entry.name)) out.push(abs)
+    }
+    return out
+  }
+
+  // Resolve an import specifier from `fromAbs` to a real file under src/, or
+  // null for bare/external specifiers. Mirrors the extension's typeResolver:
+  // relative + `@/` (→ src/) prefixes, probing extensions and /index files.
+  const resolveSpecifier = (fromAbs, spec) => {
+    let base = null
+    if (spec.startsWith('./') || spec.startsWith('../')) base = path.resolve(path.dirname(fromAbs), spec)
+    else if (spec.startsWith('@/')) base = path.join(srcRoot, spec.slice(2))
+    if (!base || (!base.startsWith(srcRoot + path.sep) && base !== srcRoot)) return null
+    for (const ext of ['', ...SRC_EXTS]) {
+      const cand = base + ext
+      if (fs.existsSync(cand) && fs.statSync(cand).isFile()) return cand
+    }
+    for (const ext of SRC_EXTS) {
+      const cand = path.join(base, 'index' + ext)
+      if (fs.existsSync(cand)) return cand
+    }
+    return null
+  }
+
+  // Per-file import/export facts, cached by mtime (cheap re-requests, same
+  // idiom as the postcss AST cache above).
+  const importCache = new Map() // abs -> { mtime, imports: [{spec, names}], exports: [names] }
+  const parsedImports = (abs) => {
+    const mtime = fs.statSync(abs).mtimeMs
+    const hit = importCache.get(abs)
+    if (hit && hit.mtime === mtime) return hit
+    const text = fs.readFileSync(abs, 'utf8')
+    const imports = []
+    // `import Default, { A, B as C } from 'spec'` — clause optional (side-effect
+    // imports carry no names) — plus `export … from 'spec'` re-exports.
+    for (const m of text.matchAll(/(?:^|\n)\s*(?:import|export)\s+([^'";]*?from\s+)?['"]([^'"]+)['"]/g)) {
+      const clause = m[1] || ''
+      const names = []
+      const def = clause.match(/^\s*(\*\s+as\s+)?([A-Za-z_$][\w$]*)/)
+      if (def && def[2] !== 'type') names.push(def[2])
+      const braces = clause.match(/\{([^}]*)\}/)
+      if (braces)
+        for (const part of braces[1].split(',')) {
+          const alias = part.trim().split(/\s+as\s+/)
+          const name = (alias[1] || alias[0]).trim()
+          if (/^[A-Za-z_$][\w$]*$/.test(name)) names.push(name)
+        }
+      imports.push({ spec: m[2], names })
+    }
+    const exports = new Set()
+    for (const m of text.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let|var)\s+([A-Z]\w*)/g))
+      exports.add(m[1])
+    for (const m of text.matchAll(/export\s+default\s+(?:memo\(|forwardRef\()?\s*([A-Z]\w*)/g)) exports.add(m[1])
+    for (const m of text.matchAll(/export\s*\{([^}]*)\}/g))
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/).pop().trim()
+        if (/^[A-Z]\w*$/.test(name)) exports.add(name)
+      }
+    const entry = { mtime, text, imports, exports: [...exports] }
+    importCache.set(abs, entry)
+    return entry
+  }
+
+  router.get('/usages', (req, res) => {
+    try {
+      const targetAbs = safe(req.query.file)
+      const files = srcFilesUnder(srcRoot)
+      // Reverse import map for the whole graph: resolvedAbs -> importers.
+      const importersOf = new Map()
+      for (const abs of files) {
+        for (const imp of parsedImports(abs).imports) {
+          const resolved = resolveSpecifier(abs, imp.spec)
+          if (!resolved) continue
+          if (!importersOf.has(resolved)) importersOf.set(resolved, [])
+          importersOf.get(resolved).push({ abs, names: imp.names })
+        }
+      }
+      // Direct JSX usage sites: importers of the module that render one of the
+      // names they import from it (`<Name` on some line).
+      const usages = []
+      for (const imp of importersOf.get(targetAbs) || []) {
+        const lines = parsedImports(imp.abs).text.split('\n')
+        for (const name of imp.names.filter((n) => /^[A-Z]/.test(n))) {
+          const tag = new RegExp('<' + name + '(?![\\w$])')
+          for (let i = 0; i < lines.length; i++)
+            if (tag.test(lines[i])) usages.push({ file: path.relative(frontendDir, imp.abs), line: i + 1, name })
+        }
+      }
+      // Transitive importers (BFS, depth-capped): each with its exported
+      // PascalCase components — candidate page components for route matching.
+      const reachable = []
+      const seen = new Set([targetAbs])
+      let frontier = [targetAbs]
+      for (let depth = 1; depth <= 8 && frontier.length; depth++) {
+        const next = []
+        for (const abs of frontier) {
+          for (const imp of importersOf.get(abs) || []) {
+            if (seen.has(imp.abs)) continue
+            seen.add(imp.abs)
+            next.push(imp.abs)
+            reachable.push({
+              file: path.relative(frontendDir, imp.abs),
+              names: parsedImports(imp.abs).exports,
+              depth,
+            })
+          }
+        }
+        frontier = next
+      }
+      res.json({ file: req.query.file, usages, reachable })
+    } catch (e) {
+      res.status(400).json({ error: String(e.message || e) })
+    }
+  })
+
+  // --- JSX write-back ------------------------------------------------------
+  // Surgical attribute/text edits at a stamped call site (see jsxEdit.js).
+  // Structured refusals ({ ok:false, reason }) are 200s — the UI degrades to
+  // "open in source" instead of treating them as transport errors.
+  router.post('/jsx/edit', (req, res) => {
+    try {
+      const abs = safe(req.body.file)
+      const code = fs.readFileSync(abs, 'utf8')
+      const result = applyJsxEdit(code, abs, req.body)
+      if (!result.ok) return res.json(result)
+      atomicWrite(abs, result.code)
+      res.json({ ok: true })
     } catch (e) {
       res.status(400).json({ error: String(e.message || e) })
     }

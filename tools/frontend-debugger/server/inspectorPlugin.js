@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import babel from '@babel/core'
 import { buildIsolateHtml } from './isolateHarness.js'
+import { locateProdCss } from './prodCss.js'
 
 // ---------------------------------------------------------------------------
 // Babel plugin: stamp every host JSX element with its source coordinates.
@@ -83,9 +84,11 @@ function enclosingComponentName(p) {
 // for app-specific context. The target's global stylesheet is imported if found.
 // Editing the component's source → Vite Fast Refresh → live re-render.
 // The page itself lives in ./isolateHarness.js (buildIsolateHtml) — envelopes
-// up: ready | renderError | samples | props | saveSample; commands down:
-// props | sample | reload | schema. String values matching `ƒ` / `ƒ <name>`
-// are function markers, rendered as no-op stubs at render time.
+// up: ready | renderError | samples | props | saveSample | reveal | isolate;
+// commands down: props | sample | reload | schema. String values matching
+// `ƒ` / `ƒ <name>` are function markers, rendered as no-op stubs at render
+// time. `reveal`/`isolate` come from the harness's 🎯 Inspect mode (hover a
+// stamped part → click reveals its JSX+CSS; Alt-click enters a child).
 // ---------------------------------------------------------------------------
 
 const ISOLATE_SUFFIX = '__isolate'
@@ -210,6 +213,11 @@ export function inspectorPlugin({
           export: q.get('export') || '',
           props,
           schema,
+          // Where `props` came from, for the harness's provenance chip:
+          // 'capture' (lifted off the running app) or 'synth' (the extension
+          // synthesized them from the types). Absent → the harness works it
+          // out from its own rungs (samples ▸ SAMPLE_PROPS ▸ empty).
+          propsSource: ['capture', 'synth'].includes(q.get('propsSource')) ? q.get('propsSource') : null,
           providers,
           // Emit the harness's own MemoryRouter only for a router app with no
           // providers shell — a shell owns its Router (avoid nesting two).
@@ -218,6 +226,11 @@ export function inspectorPlugin({
           // the native picker applies, and — with no seeded props — the first
           // one is the default render.
           samples: firstExisting(frontendDir, sampleCandidates(moduleRel)),
+          // The BUILT stylesheet, for the harness's prod-css toggle. Probed
+          // here (server-side) and served by the target's own Vite from the
+          // project root, so the harness needs no cross-origin call to the
+          // sidecar API. Absent when the target has never been built.
+          prodCss: locateProdCss(frontendDir),
           css: firstExisting(frontendDir, [
             'src/index.css',
             'src/main.css',

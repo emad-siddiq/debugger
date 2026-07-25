@@ -92,7 +92,47 @@ try {
 }
 const target = new URL(cfg.targetUrl)
 const base = target.pathname.endsWith('/') ? target.pathname : target.pathname + '/'
-const isoUrl = (mod) => `${target.origin}${base}__isolate?module=${encodeURIComponent(mod)}`
+// The IDE does not open a bare isolate URL — it parses the component's props
+// type and seeds the URL with a synthesized skeleton + the typed schema
+// (isolation.ts). Sweeping without that measures a surface no user ever sees,
+// and would report every prop-driven component as broken. Load the extension's
+// OWN compiled parser so the sweep exercises the same code path; if the
+// extension has not been compiled, fall back to bare URLs and say so.
+let parsePropsSchema, makeTypeResolver
+try {
+  const ext = new URL('../../../extensions/burrow-frontend-debugger/out/', import.meta.url)
+  ;({ parsePropsSchema } = await import(new URL('propsSkeleton.js', ext).href))
+  ;({ makeTypeResolver } = await import(new URL('typeResolver.js', ext).href))
+} catch {
+  console.log('  note: burrow-frontend-debugger is not compiled — sweeping WITHOUT prop synthesis')
+}
+
+const SAMPLE_EXTS = ['ts', 'tsx', 'js', 'jsx']
+const hasSamples = (abs) => {
+  const stem = abs.replace(/\.[jt]sx?$/, '')
+  return SAMPLE_EXTS.some((e) => fs.existsSync(`${stem}.samples.${e}`))
+}
+
+/** The isolate URL the IDE would open for this module. */
+function isoUrl(mod) {
+  const q = new URLSearchParams({ module: mod })
+  if (parsePropsSchema) {
+    const abs = path.join(FRONTEND_DIR, mod)
+    let source = null
+    try { source = fs.readFileSync(abs, 'utf8') } catch { /* unreadable → bare URL */ }
+    const stem = path.basename(mod).replace(/\.[jt]sx?$/, '')
+    const schema = source ? parsePropsSchema(source, stem, makeTypeResolver(abs, FRONTEND_DIR)) : undefined
+    if (schema) {
+      if (schema.specs.length) q.set('schema', JSON.stringify(schema.specs))
+      // Samples outrank synthesis, exactly as the extension decides it.
+      if (schema.required.length && !hasSamples(abs)) {
+        q.set('props', JSON.stringify(schema.skeleton))
+        q.set('propsSource', 'synth')
+      }
+    }
+  }
+  return `${target.origin}${base}__isolate?${q.toString()}`
+}
 
 let browser
 try {

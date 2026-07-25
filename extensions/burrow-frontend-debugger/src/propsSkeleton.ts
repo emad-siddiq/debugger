@@ -187,7 +187,7 @@ function schemaFromBody(body: string, clean: string, defaults: Map<string, unkno
 		}
 		const name = m[1].replace(/^['"]|['"]$/g, '');
 		const isRequired = !m[2];
-		const t = typeOf(m[3].trim(), clean, resolve, depth);
+		const t = typeOf(m[3].trim(), ctxFor(clean, resolve, depth, name));
 		const spec: PropSpec = {
 			name,
 			required: isRequired,
@@ -206,17 +206,23 @@ function schemaFromBody(body: string, clean: string, defaults: Map<string, unkno
 	return specs.length ? { specs, skeleton, required } : undefined;
 }
 
-/** Split interface members at brace/paren/angle depth 0 on `;` and newlines. */
+/** Split interface members at brace/paren/angle depth 0 on `;` and newlines.
+ *  The `>` of an arrow (`onSelect: (r: Row) => void`) is NOT a closer — counting
+ *  it drove depth negative, and every member declared after the first function
+ *  member was then silently swallowed into it. Depth also clamps at 0 so one
+ *  stray bracket can't hide the rest of the interface. */
 function splitMembers(body: string): string[] {
 	const members: string[] = [];
 	let depth = 0;
 	let current = '';
+	let prev = '';
 	for (const ch of body) {
 		if ('{(<['.includes(ch)) {
 			depth++;
-		} else if ('})>]'.includes(ch)) {
-			depth--;
+		} else if ('})>]'.includes(ch) && !(ch === '>' && prev === '=')) {
+			depth = Math.max(0, depth - 1);
 		}
+		prev = ch;
 		if (depth === 0 && (ch === ';' || ch === '\n')) {
 			if (current.trim()) {
 				members.push(current);
@@ -233,12 +239,141 @@ function splitMembers(body: string): string[] {
 }
 
 const MAX_DEPTH = 2;
+/** Arrays synthesize their items, so the element type gets one extra hop —
+ *  `rows: Row[]` is only useful once each Row is filled in. */
+const SYNTH_MAX_DEPTH = 3;
+/** How many synthesized values one prop may produce, so a deeply nested array
+ *  of objects can't turn one gallery click into a thousand-node payload. */
+const SYNTH_NODE_CAP = 50;
+/** Items synthesized per array — enough for a list or table to look like a
+ *  list or table, few enough to stay readable in the props panel. */
+const SYNTH_ARRAY_ITEMS = 3;
 
-/** Kind + JSON-safe placeholder (+ enum options) for a type expression.
- *  `clean` is the component source, for local alias resolution; `resolve`
- *  reaches one hop into imported declarations. */
-function typeOf(type: string, clean: string, resolve: TypeResolver | undefined, depth: number): { kind: PropKind; placeholder: unknown; options?: string[] } {
-	const t = type.trim();
+/** Recursion state for a single prop's placeholder synthesis. */
+interface SynthCtx {
+	/** The component source, for local alias resolution. */
+	readonly clean: string;
+	/** Reaches one hop into imported declarations. */
+	readonly resolve: TypeResolver | undefined;
+	readonly depth: number;
+	/** Depth ceiling for this path (raised on the array path). */
+	readonly limit: number;
+	/** Shared, mutable — decremented by every synthesized value. */
+	readonly budget: { left: number };
+	/** The member name this type belongs to; drives name-aware synthesis. */
+	readonly name?: string;
+	/** Position within a synthesized array, so items differ from each other. */
+	readonly index?: number;
+}
+
+function ctxFor(clean: string, resolve: TypeResolver | undefined, depth: number, name?: string): SynthCtx {
+	return { clean, resolve, depth, limit: MAX_DEPTH, budget: { left: SYNTH_NODE_CAP }, name };
+}
+
+/** `nodeName` / `node_name` → `Node Name`. */
+function humanize(name: string): string {
+	return name
+		.replace(/[_-]+/g, ' ')
+		.replace(/([a-z\d])([A-Z])/g, '$1 $2')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * A placeholder that looks like the value the prop actually holds, from its
+ * NAME. `''`/`0`/`false` render as an empty component — "Example Title" and
+ * `0.42` render as the thing the author designed.
+ *
+ * Order matters where names overlap: `nodeId` is an id, not a name, so the
+ * id/url/date shapes are checked before the generic title|label|name one.
+ */
+export function synthesizePlaceholder(name: string | undefined, kind: 'string' | 'number' | 'boolean', index = 0): unknown {
+	const n = (name ?? '').toLowerCase();
+	const nth = index + 1;
+	if (kind === 'boolean') {
+		// Affirmative props read as "the interesting state is on".
+		return /^(is|has|show|can)?_?(open|visible|enabled|active|selected|checked|expanded)$/.test(n);
+	}
+	if (kind === 'number') {
+		// Vary with the index: synthesized list items are often keyed on a
+		// number, and three identical ones make React warn about duplicate keys
+		// — which reads as a broken component in the render sweep.
+		if (/(count|total|length|size|index)$/.test(n)) {
+			return SYNTH_ARRAY_ITEMS + index;
+		}
+		if (/(percent|pct|ratio|progress|opacity|rate)$/.test(n)) {
+			return 0.42;
+		}
+		if (/(width|height|radius|offset)$/.test(n)) {
+			return 320;
+		}
+		return 1 + index;
+	}
+	if (/(^|_)(id|key|uuid|slug)$/.test(n) || /[a-z](Id|Key|Uuid)$/.test(name ?? '')) {
+		return `node-${nth}`;
+	}
+	if (/(href|url|src|link|image|avatar|logo)$/.test(n)) {
+		return '#';
+	}
+	// `updatedAt` is camelCase, `updated_at` is snake — match both spellings
+	// rather than a bare `at$`, which would also catch `format` and `chat`.
+	if (/(_at|date|time|timestamp|since|until|ts)$/.test(n) || /(At|Date|Time)$/.test(name ?? '')) {
+		return '2026-01-01T00:00:00Z';
+	}
+	if (/(title|label|name|heading|caption|text|message|description|placeholder)$/.test(n)) {
+		return `Example ${humanize(name ?? 'value')}${index ? ` ${nth}` : ''}`;
+	}
+	return index ? `text ${nth}` : 'text';
+}
+
+/** Split a union at depth 0: `A[] | null` → ['A[]', 'null']. A type with no
+ *  top-level `|` comes back as a single element. */
+function topLevelUnion(t: string): string[] {
+	const parts: string[] = [];
+	let depth = 0;
+	let current = '';
+	let prev = '';
+	for (const ch of t) {
+		if ('{(<['.includes(ch)) {
+			depth++;
+		} else if ('})>]'.includes(ch) && !(ch === '>' && prev === '=')) {
+			depth = Math.max(0, depth - 1);
+		}
+		prev = ch;
+		if (ch === '|' && depth === 0) {
+			parts.push(current.trim());
+			current = '';
+		} else {
+			current += ch;
+		}
+	}
+	parts.push(current.trim());
+	return parts.filter(Boolean);
+}
+
+/** The `T` of `T[]` / `Array<T>` / `ReadonlyArray<T>`. */
+function elementType(t: string): string | undefined {
+	const suffix = /^([\s\S]+)\[\]\s*$/.exec(t);
+	if (suffix) {
+		return suffix[1].trim();
+	}
+	const generic = /^(?:Readonly)?Array\s*<([\s\S]+)>\s*$/.exec(t);
+	return generic ? generic[1].trim() : undefined;
+}
+
+/** Kind + JSON-safe placeholder (+ enum options) for a type expression. */
+function typeOf(type: string, ctx: SynthCtx): { kind: PropKind; placeholder: unknown; options?: string[] } {
+	const { clean, resolve, depth } = ctx;
+	let t = type.trim();
+	// `NodeOverview[] | null` is an ARRAY prop, but the array test only fires on
+	// a type that ENDS in `[]`, so a nullable one used to fall through to `{}` —
+	// and the component died on `.map is not a function`. Drop the null/undefined
+	// branches; if one branch is left, that is the real type.
+	const nonNull = topLevelUnion(t).filter(part => part !== 'null' && part !== 'undefined');
+	if (nonNull.length === 1 && nonNull[0] !== t) {
+		t = nonNull[0];
+	}
 	if (t.includes('=>')) {
 		return { kind: 'function', placeholder: 'ƒ' };
 	}
@@ -257,7 +392,7 @@ function typeOf(type: string, clean: string, resolve: TypeResolver | undefined, 
 	}
 	// Arrays before scalars — `number[]` must not match the `number` check.
 	if (/\[\]\s*$/.test(t) || /^(Array|ReadonlyArray)\s*</.test(t)) {
-		return { kind: 'array', placeholder: [] };
+		return { kind: 'array', placeholder: synthesizeArray(t, ctx) };
 	}
 	if (/^(Set|ReadonlySet)\s*</.test(t)) {
 		return { kind: 'set', placeholder: [] };
@@ -266,51 +401,80 @@ function typeOf(type: string, clean: string, resolve: TypeResolver | undefined, 
 		return { kind: 'json', placeholder: {} };
 	}
 	if (/^(string)\b/.test(t)) {
-		return { kind: 'string', placeholder: '' };
+		return { kind: 'string', placeholder: spend(ctx, () => synthesizePlaceholder(ctx.name, 'string', ctx.index), '') };
 	}
 	if (/^(number)\b/.test(t)) {
-		return { kind: 'number', placeholder: 0 };
+		return { kind: 'number', placeholder: spend(ctx, () => synthesizePlaceholder(ctx.name, 'number', ctx.index), 0) };
 	}
 	if (/^(boolean|true|false)\b/.test(t)) {
-		return { kind: 'boolean', placeholder: false };
+		return { kind: 'boolean', placeholder: spend(ctx, () => synthesizePlaceholder(ctx.name, 'boolean', ctx.index), false) };
 	}
 	if (/^\{/.test(t)) {
 		const body = braceBlock(t, t.indexOf('{'));
-		return { kind: 'object', placeholder: body !== undefined && depth < MAX_DEPTH ? nestedSkeleton(body, clean, resolve, depth + 1) : {} };
+		return { kind: 'object', placeholder: body !== undefined && depth < ctx.limit ? nestedSkeleton(body, { ...ctx, depth: depth + 1 }) : {} };
 	}
 	// A bare identifier: a local alias, or an imported type (one resolver hop).
 	const ident = /^([A-Z]\w*)\s*$/.exec(t);
 	if (ident) {
 		const local = new RegExp(`type\\s+${ident[1]}\\s*=\\s*([^\\n;]+)`).exec(clean);
 		if (local && local[1].trim() !== t) {
-			return typeOf(local[1], clean, resolve, depth);
+			return typeOf(local[1], ctx);
 		}
 		const localBody = typeBody(clean, ident[1]);
-		if (localBody !== undefined && depth < MAX_DEPTH) {
-			return { kind: 'object', placeholder: nestedSkeleton(localBody, clean, resolve, depth + 1) };
+		if (localBody !== undefined && depth < ctx.limit) {
+			return { kind: 'object', placeholder: nestedSkeleton(localBody, { ...ctx, depth: depth + 1 }) };
 		}
-		if (resolve && depth < MAX_DEPTH) {
+		if (resolve && depth < ctx.limit) {
 			const found = resolve(ident[1]);
 			if (found?.alias) {
-				return typeOf(found.alias, clean, resolve, depth + 1);
+				return typeOf(found.alias, { ...ctx, depth: depth + 1 });
 			}
 			if (found?.body !== undefined) {
-				return { kind: 'object', placeholder: nestedSkeleton(found.body, clean, resolve, depth + 1) };
+				return { kind: 'object', placeholder: nestedSkeleton(found.body, { ...ctx, depth: depth + 1 }) };
 			}
 		}
 	}
 	return { kind: 'json', placeholder: {} };
 }
 
+/** Charge one node against the synthesis budget; past it, fall back to the
+ *  zero-ish placeholder so a pathological type can't blow up the payload. */
+function spend<T>(ctx: SynthCtx, synth: () => T, zero: T): T {
+	if (ctx.budget.left <= 0) {
+		return zero;
+	}
+	ctx.budget.left--;
+	return synth();
+}
+
+/**
+ * Three items of the element type, so a list/table/chart prop renders as one.
+ * The element gets an extra depth hop (its own members are the point) and each
+ * item carries its index, so synthesized strings and ids differ per row.
+ */
+function synthesizeArray(t: string, ctx: SynthCtx): unknown[] {
+	const element = elementType(t);
+	if (!element || ctx.depth >= SYNTH_MAX_DEPTH || ctx.budget.left <= 0) {
+		return [];
+	}
+	const limit = Math.max(ctx.limit, SYNTH_MAX_DEPTH);
+	const out: unknown[] = [];
+	for (let i = 0; i < SYNTH_ARRAY_ITEMS && ctx.budget.left > 0; i++) {
+		out.push(typeOf(element, { ...ctx, depth: ctx.depth + 1, limit, index: i }).placeholder);
+	}
+	return out;
+}
+
 /** Required members of a nested object type, as placeholder values. */
-function nestedSkeleton(body: string, clean: string, resolve: TypeResolver | undefined, depth: number): Record<string, unknown> {
+function nestedSkeleton(body: string, ctx: SynthCtx): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const member of splitMembers(body)) {
 		const m = /^(?:readonly\s+)?([A-Za-z_$][\w$]*|'[^']*'|"[^"]*")\s*(\?)?\s*:\s*([\s\S]+)$/.exec(member.trim());
 		if (!m || m[2]) {
 			continue;
 		}
-		out[m[1].replace(/^['"]|['"]$/g, '')] = typeOf(m[3].trim(), clean, resolve, depth).placeholder;
+		const name = m[1].replace(/^['"]|['"]$/g, '');
+		out[name] = typeOf(m[3].trim(), { ...ctx, name }).placeholder;
 	}
 	return out;
 }
