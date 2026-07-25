@@ -13,7 +13,7 @@ import { ExtensionContext, ProgressLocation, commands, window, workspace } from 
 import { DockerClient } from './docker';
 import {
 	ContainerNode, DockerNode, ContainersProvider,
-	imagesProvider, networksProvider, nodeTarget, volumesProvider,
+	ResourcesProvider, nodeTarget, resourceGroups,
 } from './trees';
 
 const DAEMON_CONTEXT = 'burrow.docker.daemonRunning';
@@ -22,9 +22,9 @@ const CONFIG_SECTION = 'burrow.docker';
 export function activate(context: ExtensionContext): void {
 	const docker = new DockerClient();
 	const containers = new ContainersProvider(docker);
-	const images = imagesProvider(docker);
-	const volumes = volumesProvider(docker);
-	const networks = networksProvider(docker);
+	// Images, volumes and networks are one collapsed section now, not three
+	// sibling views (docs/plans/02 §3.6).
+	const resources = new ResourcesProvider(resourceGroups(docker));
 
 	// One refresh reloads every view and re-evaluates daemon reachability (which
 	// toggles the daemon-down welcome). Errors here are swallowed — a down daemon
@@ -32,9 +32,7 @@ export function activate(context: ExtensionContext): void {
 	const refreshAll = async (): Promise<void> => {
 		await commands.executeCommand('setContext', DAEMON_CONTEXT, await docker.daemonOk());
 		containers.refresh();
-		images.refresh();
-		volumes.refresh();
-		networks.refresh();
+		resources.refresh();
 	};
 
 	const containersView = window.createTreeView('burrowDockerContainers', { treeDataProvider: containers });
@@ -65,9 +63,7 @@ export function activate(context: ExtensionContext): void {
 
 	context.subscriptions.push(
 		containersView,
-		window.registerTreeDataProvider('burrowDockerImages', images),
-		window.registerTreeDataProvider('burrowDockerVolumes', volumes),
-		window.registerTreeDataProvider('burrowDockerNetworks', networks),
+		window.registerTreeDataProvider('burrowDockerResources', resources),
 
 		containersView.onDidChangeVisibility(e => (e.visible ? startPoll() : stopPoll())),
 

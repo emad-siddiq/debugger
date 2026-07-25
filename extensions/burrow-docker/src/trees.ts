@@ -87,7 +87,77 @@ function containerItem(container: DockerContainer): TreeItem {
 	return item;
 }
 
-// ---- Flat views: Images / Volumes / Networks -------------------------------
+// ---- Docker Resources: images, volumes and networks in ONE section ---------
+//
+// They used to be three sibling views in the Data container, which put five
+// sections in a container the contract allows two visible ones in (docs/plans/02
+// §3.6). They are the same KIND of thing — inventory you look at occasionally —
+// so they fold into one collapsed section whose first level names the kind and
+// carries its count, and whose second level is the items.
+
+/** The folded Resources tree: kind → items, two levels and no deeper. */
+export class ResourcesProvider implements TreeDataProvider<ResourceNode> {
+
+	private readonly changed = new EventEmitter<void>();
+	readonly onDidChangeTreeData: Event<void> = this.changed.event;
+
+	constructor(private readonly groups: readonly ResourceGroup[]) { }
+
+	refresh(): void { this.changed.fire(); }
+
+	getTreeItem(node: ResourceNode): TreeItem {
+		if (node.kind === 'group') {
+			const item = new TreeItem(node.group.label, TreeItemCollapsibleState.Collapsed);
+			item.iconPath = new ThemeIcon(node.group.icon);
+			// Counted, so collapsed never means hidden.
+			item.description = node.count === undefined ? undefined : String(node.count);
+			item.contextValue = `dockerGroup.${node.group.id}`;
+			return item;
+		}
+		return node.group.toItem(node.node);
+	}
+
+	async getChildren(node?: ResourceNode): Promise<ResourceNode[]> {
+		if (!node) {
+			return Promise.all(this.groups.map(async (group) => ({
+				kind: 'group' as const,
+				group,
+				count: await group.load().then((items) => items.length, () => undefined),
+			})));
+		}
+		if (node.kind !== 'group') {
+			return [];
+		}
+		const items = await node.group.load().catch(() => []);
+		return items.map((item) => ({ kind: 'item' as const, group: node.group, node: item }));
+	}
+}
+
+/** One kind of resource: how to load it and how to draw a row. */
+export interface ResourceGroup {
+	readonly id: string;
+	readonly label: string;
+	readonly icon: string;
+	readonly load: () => Promise<DockerNode[]>;
+	readonly toItem: (node: DockerNode) => TreeItem;
+}
+
+type ResourceNode =
+	| { readonly kind: 'group'; readonly group: ResourceGroup; readonly count: number | undefined }
+	| { readonly kind: 'item'; readonly group: ResourceGroup; readonly node: DockerNode };
+
+/** The three groups, built from the existing per-kind providers so the row
+ *  rendering stays in exactly one place. */
+export function resourceGroups(docker: DockerClient): ResourceGroup[] {
+	const images = imagesProvider(docker);
+	const volumes = volumesProvider(docker);
+	const networks = networksProvider(docker);
+	return [
+		{ id: 'images', label: 'Images', icon: 'file-zip', load: () => images.getChildren() as Promise<DockerNode[]>, toItem: (n) => images.getTreeItem(n as never) },
+		{ id: 'volumes', label: 'Volumes', icon: 'database', load: () => volumes.getChildren() as Promise<DockerNode[]>, toItem: (n) => volumes.getTreeItem(n as never) },
+		{ id: 'networks', label: 'Networks', icon: 'globe', load: () => networks.getChildren() as Promise<DockerNode[]>, toItem: (n) => networks.getTreeItem(n as never) },
+	];
+}
 
 /** A one-level provider: load tagged nodes, render each. Refreshable. */
 export class FlatProvider<T extends DockerNode> implements TreeDataProvider<T> {

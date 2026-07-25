@@ -96,7 +96,16 @@ export function activate(context: ExtensionContext): void {
 	// The grid panel's runner: resolve the client, run the SELECT, cap the rows.
 	const runner = async (sql: string) => runSelect(await getClient(), sql);
 
-	const explorer = new DbExplorerProvider(async () => loadSchemaTree(await getClient()));
+	// The connection row reports what the tree is actually pointed at and
+	// whether this session may write (docs/plans/02 §3.6) — both read live, so
+	// the row cannot drift from the client.
+	const explorer = new DbExplorerProvider(
+		async () => loadSchemaTree(await getClient()),
+		() => {
+			const conn = connectionString();
+			return { label: conn ? describeDsn(parsePostgresUrl(conn)) : undefined, writes: allowWrites };
+		},
+	);
 
 	// The pgAdmin surface: a Burrow-managed pgAdmin container, provisioned from the
 	// same connection the native explorer uses (setting → DATABASE_URL → prompt)
@@ -267,6 +276,8 @@ export function activate(context: ExtensionContext): void {
 			}
 			allowWrites = !allowWrites;
 			await closeClient();
+			// The connection row carries the lock, so it has to repaint with it.
+			explorer.refresh();
 			if (allowWrites) {
 				writesPill.show();
 			} else {

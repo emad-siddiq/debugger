@@ -135,7 +135,7 @@
 			],
 			"view/title": [
 				{
-					"command": "burrow.db.runQuery",
+					"command": "burrow.db.starterQuery",
 					"when": "view == burrowDbExplorer",
 					"group": "navigation@1"
 				},
@@ -147,12 +147,17 @@
 				{
 					"command": "burrow.db.openPgAdmin",
 					"when": "view == burrowDbExplorer",
-					"group": "navigation@3"
+					"group": "1_more@1"
+				},
+				{
+					"command": "burrow.db.toggleWrites",
+					"when": "view == burrowDbExplorer",
+					"group": "1_more@2"
 				},
 				{
 					"command": "burrow.db.seedWorld",
 					"when": "view == burrowDbExplorer",
-					"group": "navigation@4"
+					"group": "1_more@3"
 				}
 			]
 		},
@@ -194,7 +199,13 @@
 					]
 				}
 			}
-		}
+		},
+		"viewsWelcome": [
+			{
+				"view": "burrowDbExplorer",
+				"contents": "No Postgres connection. Burrow discovers one from `burrow.db.connectionString`, `DATABASE_URL`, or the workspace's own `.vscode/launch.json`.\n[Set the connection string](command:workbench.action.openSettings?%22burrow.db.connectionString%22)"
+			}
+		]
 	},
 	"dependencies": {
 		"pg": "^8.22.0"
