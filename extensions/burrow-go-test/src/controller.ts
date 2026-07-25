@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	CancellationToken,
+	CancellationTokenSource,
 	Disposable,
 	Range,
 	TestController,
@@ -30,7 +31,8 @@ import {
 } from 'vscode';
 import { buildRunArgs } from './command';
 import { GoTestKind, parseTestFunctions } from './discovery';
-import { GoTestEvent, summarizeEvents } from './events';
+import { GoTestEvent, TestResult, summarizeEvents } from './events';
+import { LabRun, buildRun, buildSuite } from './labModel';
 import { runGoTest } from './runner';
 
 /** How to run a discovered function: its kind, name and package location. */
@@ -97,12 +99,58 @@ export class GoTestController implements Disposable {
 	 * @param goExecutableProvider Resolves the `go` binary and race flag at run
 	 * time so config changes are honored without re-registering.
 	 */
-	constructor(private readonly settings: () => { goExecutable: string; race: boolean }) {
+	constructor(
+		private readonly settings: () => { goExecutable: string; race: boolean },
+		/** Publishes every finished run to the Test Lab and the Tests section
+		 *  (docs/plans/02 §3.4) — the controller stays the single place that
+		 *  knows what `go test` said. */
+		private readonly onRun: (run: LabRun) => void = () => undefined,
+	) {
 		this.controller = tests.createTestController('burrowGoTest', 'Go Tests (Burrow)');
 		this.disposables.push(this.controller);
 		this.controller.refreshHandler = () => this.discover();
 		this.controller.createRunProfile('Go Test', TestRunProfileKind.Run, (request, token) => this.run(request, token), true);
 		void this.discover();
+	}
+
+	/** The packages discovery found, for the Tests section's list before the
+	 *  first run — a tree that shows verdicts it has not earned is a lie. */
+	packages(): { packagePath: string; label: string }[] {
+		const out: { packagePath: string; label: string }[] = [];
+		this.controller.items.forEach((item) => {
+			// A package item's id is `<cwd><SEP><packagePath>`; the meta map only
+			// carries runnable leaves, so read the path off the id.
+			const packagePath = item.id.split(ID_SEP)[1] ?? item.id;
+			out.push({ packagePath, label: item.label });
+		});
+		return out;
+	}
+
+	/**
+	 * Run everything, or only the named tests (the lab's Run / Re-run failed).
+	 * Goes through the same profile handler the Test Explorer uses, so there is
+	 * exactly one execution path and one set of results.
+	 */
+	async runByName(only?: readonly string[]): Promise<void> {
+		const wanted = only?.length ? new Set(only) : undefined;
+		let include: TestItem[] | undefined;
+		if (wanted) {
+			include = [];
+			for (const leaf of this.gather(new TestRunRequest())) {
+				if (wanted.has(leaf.meta.name)) {
+					include.push(leaf.item);
+				}
+			}
+			if (!include.length) {
+				return;
+			}
+		}
+		const source = new CancellationTokenSource();
+		try {
+			await this.run(new TestRunRequest(include), source.token);
+		} finally {
+			source.dispose();
+		}
 	}
 
 	/** Tears down the controller and its listeners. */
@@ -180,6 +228,10 @@ export class GoTestController implements Disposable {
 		const run = this.controller.createTestRun(request);
 		const leaves = this.gather(request);
 		const { goExecutable, race } = this.settings();
+		// Results roll up per PACKAGE, not per group: a package whose tests and
+		// benchmarks run as two groups is still one suite in the lab.
+		const byPackage = new Map<string, { label: string; results: TestResult[] }>();
+		let buildError = '';
 
 		// Group by working directory + package + whether it is a benchmark bucket.
 		const groups = new Map<string, Leaf[]>();
@@ -212,6 +264,12 @@ export class GoTestController implements Disposable {
 			const outcome = await runGoTest(goExecutable, args, cwd, token, event => this.onEvent(run, byName, event));
 
 			const summary = summarizeEvents(outcome.events);
+			const bucket = byPackage.get(packagePath)
+				?? byPackage.set(packagePath, { label: group[0].item.parent?.parent?.label ?? packagePath, results: [] }).get(packagePath)!;
+			bucket.results.push(...summary.values());
+			if (!summary.size && outcome.stderr.trim()) {
+				buildError = outcome.stderr;
+			}
 			for (const leaf of group) {
 				const result = summary.get(leaf.meta.name);
 				if (result) {
@@ -223,6 +281,11 @@ export class GoTestController implements Disposable {
 			}
 		}
 		run.end();
+		this.onRun(buildRun(
+			[...byPackage.entries()].map(([packagePath, { label, results }]) => buildSuite(packagePath, label, results)),
+			race,
+			buildError || undefined,
+		));
 	}
 
 	/**
