@@ -655,6 +655,14 @@ export function currentIsolationFile(): string | undefined {
 	return preview ? currentFile : undefined;
 }
 
+/** What is on the isolation canvas right now, for other extensions to READ.
+ *  The agent panel (burrow-agent, docs/plans/03 §3) puts it in its context
+ *  envelope so "why is this misaligned?" needs no file names typed. Read-only
+ *  by construction: a copy of module state, no handles, no setters. */
+export function currentIsolation(): { file: string; label: string; props?: Record<string, unknown> } | undefined {
+	return preview && currentFile ? { file: currentFile, label: currentLabel, props: currentProps } : undefined;
+}
+
 function getNonce(): string {
 	let text = '';
 	const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

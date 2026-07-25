@@ -4,7 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { collect } from './context';
+import { Layer, render, withQuestion } from './contextModel';
+import { ProposalStore } from './diff';
+import { InsightCard, Insights } from './insights';
 import { PanelSizer } from './layout';
+import { contractReminders } from './memoryModel';
 import { Session, SessionStore, Turn } from './sessions';
 import { Transport, TransportEvent } from './transport';
 
@@ -14,15 +19,30 @@ import { Transport, TransportEvent } from './transport';
 // into rendered turns.
 //
 // The webview is deliberately dumb: it renders the state it is given and posts
-// back intent (send / switch / new / close / stop / size / escape). Every
-// decision, including which session an arriving delta belongs to, is made here,
-// because a user who switches tabs mid-answer must not see the answer land in
-// the wrong transcript.
+// back intent (send / switch / new / close / stop / size / escape / chip /
+// preview / apply). Every decision, including which session an arriving delta
+// belongs to, is made here, because a user who switches tabs mid-answer must
+// not see the answer land in the wrong transcript.
+//
+// Each question carries a context envelope built at the moment it is asked
+// (context.ts): what is open, the page bundle, the selection and its symbol,
+// the live isolation surface, and the rows of the repo's memory that apply.
+// Every layer is a chip the developer can take off before sending, and
+// `Burrow: Show Agent Context` prints the envelope verbatim — what you preview
+// is exactly what was sent.
 
 interface Inbound {
 	readonly type: string;
 	readonly text?: string;
 	readonly id?: string;
+	readonly layer?: string;
+}
+
+/** A context layer as the chip row shows it. */
+interface Chip {
+	readonly id: string;
+	readonly label: string;
+	readonly on: boolean;
 }
 
 /** What the webview renders. Posted whole on every change except deltas, which
@@ -34,6 +54,9 @@ interface ViewState {
 	readonly streaming: boolean;
 	readonly footer: string;
 	readonly notice?: { readonly text: string; readonly action?: string };
+	readonly chips: readonly Chip[];
+	readonly insight?: InsightCard & { readonly notice?: string };
+	readonly insightsOn: boolean;
 }
 
 export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -45,18 +68,49 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 	/** The turn currently being written into, and whose session it belongs to. */
 	private streaming: { readonly sessionId: string; readonly turn: Turn; text: string } | undefined;
 	private notice: { text: string; action?: string } | undefined;
+	/** The layers offered on the chip row, refreshed whenever a question is
+	 *  asked; before the first one it is what a question WOULD carry. */
+	private chips: Chip[] = [];
+	/** The last envelope actually sent, for `Burrow: Show Agent Context`. */
+	private lastEnvelope = '';
+	private insight: (InsightCard & { notice?: string }) | undefined;
+	private insights: Insights | undefined;
+	private readonly proposals = new ProposalStore();
+	/** A private conversation for insight cards, so they never interleave with
+	 *  the developer's own. */
+	private insightTransport: Transport | undefined;
+	private proposalCounter = 0;
 
 	constructor(
 		private readonly context: vscode.ExtensionContext,
 		private readonly sessions: SessionStore,
 		private readonly sizer: PanelSizer,
-	) { }
+	) {
+		this.insights = new Insights(
+			context,
+			(prompt) => this.runInsight(prompt),
+			(card, notice) => { this.insight = card ? { ...card, notice } : (notice ? { file: '', text: '', cached: false, notice } : undefined); this.render(); },
+			() => !!this.streaming,
+		);
+		// The chip row is a picture of the CURRENT screen, so it follows the
+		// screen: opening another file changes what a question would carry, and
+		// a row that still names the last file would be a lie about what is
+		// about to be sent.
+		context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => void this.refreshAndRender()));
+		void this.refreshAndRender();
+	}
+
+	private async refreshAndRender(): Promise<void> {
+		await this.refreshChips();
+		this.render();
+	}
 
 	resolveWebviewView(view: vscode.WebviewView): void {
 		this.view = view;
 		view.webview.options = { enableScripts: true };
 		view.webview.html = html(nonce());
 		view.webview.onDidReceiveMessage((msg: Inbound) => void this.onMessage(msg), undefined, this.context.subscriptions);
+		view.onDidChangeVisibility(() => { if (view.visible) { void this.refreshAndRender(); } }, undefined, this.context.subscriptions);
 		view.onDidDispose(() => { this.view = undefined; }, undefined, this.context.subscriptions);
 	}
 
@@ -65,6 +119,9 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 			transport.dispose();
 		}
 		this.transports.clear();
+		this.insightTransport?.dispose();
+		this.insights?.dispose();
+		this.proposals.dispose();
 	}
 
 	/** Reveal the panel, or put it away if it is already the thing on screen —
@@ -82,6 +139,23 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 			this.notice = { text: `That is ${this.sessions.all.length} conversations already — close one to start another.` };
 		}
 		await vscode.commands.executeCommand(`${AgentPanel.viewId}.focus`);
+		this.render();
+	}
+
+	/** `Burrow: Show Agent Context` from the palette. */
+	async showContextCommand(): Promise<void> {
+		await this.showContext();
+	}
+
+	/** ⌘⌥I — ask about what is selected, without typing the question. The
+	 *  selection is already a context layer, so the question can be this short. */
+	async explainSelection(): Promise<void> {
+		await vscode.commands.executeCommand(`${AgentPanel.viewId}.focus`);
+		await this.send('Explain the selected code: what it does, what it touches, one risk.');
+	}
+
+	async toggleInsights(): Promise<void> {
+		await this.insights?.toggle();
 		this.render();
 	}
 
@@ -120,6 +194,22 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 					await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
 				}
 				return this.render();
+			case 'chip':
+				this.sessions.toggleLayer(this.sessions.activeId, String(msg.layer));
+				await this.refreshChips();
+				return this.render();
+			case 'showContext':
+				return this.showContext();
+			case 'preview':
+				return void this.proposals.preview(String(msg.id));
+			case 'apply': {
+				const outcome = await this.proposals.apply(String(msg.id));
+				this.notice = { text: `Agent: ${outcome}` };
+				return this.render();
+			}
+			case 'insights':
+				await this.insights?.toggle();
+				return this.render();
 			case 'openSetting':
 				return void vscode.commands.executeCommand('workbench.action.openSettings', 'burrow.agent.cliPath');
 			default:
@@ -137,13 +227,23 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 		this.render();
 	}
 
-	private send(text: string): void {
+	private async send(text: string): Promise<void> {
 		const question = text.trim();
 		if (!question || this.streaming) {
 			return;
 		}
 		const session = this.sessions.current;
 		this.notice = undefined;
+		// The envelope is built HERE, at the moment of asking — not cached from
+		// when the panel was opened — because "this file" means the one on
+		// screen now.
+		const layers = await collect(new Set(session.dropped ?? []));
+		const envelope = render(layers, budgetTokens());
+		this.lastEnvelope = envelope.text;
+		this.chips = chipsFor(layers, envelope.included, session.dropped ?? []);
+		if (envelope.dropped.length) {
+			this.notice = { text: `Context budget reached — ${envelope.dropped.join(', ')} left out of this question.` };
+		}
 		this.sessions.append(session.id, { role: 'you', text: question });
 		// The answer's turn exists before a byte arrives: the panel shows an
 		// empty agent bubble immediately so a slow first token reads as thinking
@@ -152,7 +252,68 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 		this.sessions.append(session.id, turn);
 		this.streaming = { sessionId: session.id, turn, text: '' };
 		this.render();
-		this.transportFor(session).send(question);
+		this.transportFor(session).send(withQuestion(envelope.text, question));
+	}
+
+	/** The chip row before anything has been asked: what a question would carry
+	 *  right now. Cheap enough to recompute on demand, and honest — the row is
+	 *  never a stale picture of an older screen. */
+	private async refreshChips(): Promise<void> {
+		const session = this.sessions.current;
+		const dropped = session?.dropped ?? [];
+		const layers = await collect(new Set());
+		this.chips = chipsFor(layers, layers.map((l) => l.id).filter((id) => !dropped.includes(id)), dropped);
+	}
+
+	/** `Burrow: Show Agent Context` — the envelope, verbatim, in an editor. What
+	 *  the developer reads here is exactly the text the model was given. */
+	private async showContext(): Promise<void> {
+		const session = this.sessions.current;
+		const text = this.lastEnvelope
+			|| render(await collect(new Set(session.dropped ?? [])), budgetTokens()).text
+			|| '(nothing — no workspace, or every layer switched off)';
+		const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
+		await vscode.window.showTextDocument(doc, { preview: true });
+	}
+
+	/** One insight turn on the private conversation. Returns undefined when the
+	 *  CLI is unavailable — a card that cannot be produced is simply absent. */
+	private async runInsight(prompt: string): Promise<{ text: string; costUsd?: number } | undefined> {
+		const layers = await collect(new Set(['pages', 'memory']));
+		const envelope = render(layers, Math.min(budgetTokens(), 6000));
+		if (!envelope.text) {
+			return undefined;
+		}
+		const config = vscode.workspace.getConfiguration('burrow.agent');
+		this.insightTransport?.dispose();
+		return new Promise((resolve) => {
+			// Resolve on `result`, NOT on `ended`: the child is kept alive between
+			// turns by design, so waiting for it to exit waits forever. One card
+			// is one turn, so the transport is disposed as soon as it lands.
+			let settled = false;
+			const finish = (answer: { text: string; costUsd?: number } | undefined) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				this.insightTransport?.dispose();
+				this.insightTransport = undefined;
+				resolve(answer);
+			};
+			const transport = new Transport({
+				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
+				cliPath: config.get<string>('cliPath', '').trim(),
+				model: config.get<string>('model', '').trim(),
+			}, (event) => {
+				if (event.kind === 'result') {
+					finish(event.text ? { text: event.text, costUsd: event.costUsd } : undefined);
+				} else if (event.kind === 'ended' || event.kind === 'failed') {
+					finish(undefined);
+				}
+			});
+			this.insightTransport = transport;
+			transport.send(withQuestion(envelope.text, prompt));
+		});
 	}
 
 	private transportFor(session: Session): Transport {
@@ -207,6 +368,7 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 					this.streaming = undefined;
 					this.sessions.flush();
 					this.render();
+					void this.attachProposal(live.turn);
 				}
 				return;
 			case 'rateLimit':
@@ -230,6 +392,27 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 				}
 				return;
 		}
+	}
+
+	/**
+	 * An answer that carries a unified diff becomes a proposal: parsed, patched
+	 * in memory, and offered as Preview / Apply. Nothing is written — that is
+	 * still one explicit press away (diff.ts) — and the memory contract gets its
+	 * say here too, because a change that adds a route also owes `api.yaml` a row.
+	 */
+	private async attachProposal(turn: Turn): Promise<void> {
+		const id = `p${++this.proposalCounter}`;
+		const proposal = await this.proposals.prepare(id, turn.text);
+		if (!proposal) {
+			return;
+		}
+		turn.proposal = { id, files: proposal.files.map((f) => f.path), refusals: proposal.refusals };
+		const reminders = contractReminders(turn.text);
+		if (reminders.length) {
+			turn.reminders = reminders;
+		}
+		this.sessions.flush();
+		this.render();
 	}
 
 	private fail(sessionId: string, text: string, missingCli?: boolean): void {
@@ -258,6 +441,9 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 			streaming: this.streaming?.sessionId === current.id,
 			footer: footer(current, this.sizer.size),
 			notice: this.notice,
+			chips: this.chips,
+			insight: this.insight,
+			insightsOn: !!this.insights?.enabled,
 		};
 		void this.view.webview.postMessage(state);
 	}
@@ -277,6 +463,22 @@ function footer(session: Session, size: string): string {
 	parts.push('plan mode');
 	parts.push(size);
 	return parts.join(' · ');
+}
+
+/** One chip per layer that exists, on unless this conversation dropped it. */
+function chipsFor(layers: readonly Layer[], included: readonly string[], dropped: readonly string[]): Chip[] {
+	const chips = layers.map((layer) => ({ id: layer.id, label: layer.label, on: included.includes(layer.id) }));
+	// A dropped layer is still offered — otherwise it could never be put back.
+	for (const id of dropped) {
+		if (!chips.some((chip) => chip.id === id)) {
+			chips.push({ id, label: id, on: false });
+		}
+	}
+	return chips;
+}
+
+function budgetTokens(): number {
+	return vscode.workspace.getConfiguration('burrow.agent').get<number>('contextBudgetTokens', 12000);
 }
 
 function nonce(): string {
@@ -322,6 +524,31 @@ function html(cspNonce: string): string {
 	}
 	@keyframes blink { to { visibility: hidden; } }
 	#empty { margin: auto; text-align: center; opacity: .55; padding: 16px; line-height: 1.6; }
+	#chips { flex: none; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px 0; }
+	.chip {
+		font-size: 10px; padding: 1px 6px; border-radius: 9px; cursor: pointer; white-space: nowrap;
+		border: 1px solid var(--vscode-panel-border); color: var(--vscode-foreground);
+		background: var(--vscode-badge-background); opacity: .55;
+	}
+	.chip.on { opacity: 1; }
+	.chip.on::after { content: ' ×'; opacity: .6; }
+	.chip:not(.on)::after { content: ' +'; opacity: .6; }
+	#chipbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px 0; }
+	#chipbar .lead { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; opacity: .55; }
+	#chipbar a { font-size: 10px; opacity: .7; cursor: pointer; text-decoration: underline; }
+	#chipbar a:hover { opacity: 1; }
+	#insight {
+		margin: 6px 8px 0; padding: 6px 8px; border-radius: 5px; font-size: 11px; line-height: 1.5;
+		background: var(--vscode-textBlockQuote-background, rgba(127,127,127,.08));
+		border-left: 2px solid var(--vscode-textLink-foreground, #4daafc);
+	}
+	#insight .head { display: flex; gap: 6px; align-items: baseline; font-size: 10px; opacity: .7; margin-bottom: 2px; }
+	#insight .head .spacer { flex: 1; }
+	#insight .head span.act { cursor: pointer; text-decoration: underline; }
+	.proposal { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+	.proposal .files { font-size: 10px; opacity: .7; }
+	.reminder { font-size: 10px; margin-top: 3px; opacity: .85; }
+	.refusal { font-size: 10px; margin-top: 3px; color: var(--vscode-errorForeground); }
 	#notice {
 		margin: 6px 8px 0; padding: 6px 8px; border-radius: 5px; font-size: 11px; line-height: 1.45;
 		background: var(--vscode-inputValidation-warningBackground, rgba(255,200,0,.12));
@@ -363,6 +590,13 @@ function html(cspNonce: string): string {
 </head>
 <body>
 	<div id="main">
+		<div id="chipbar">
+			<span class="lead">Context</span>
+			<a id="showctx" title="Print the exact text the agent is sent">preview</a>
+			<a id="toggleins" title="Automatic insight cards for the file you open">insights: off</a>
+		</div>
+		<div id="chips"></div>
+		<div id="insight" hidden></div>
 		<div id="notice" hidden></div>
 		<div id="log"></div>
 		<div id="composer">
@@ -411,7 +645,71 @@ function html(cspNonce: string): string {
 		if (turn.role === 'agent') { body.innerHTML = md(turn.text); }
 		else { body.textContent = turn.text; }
 		el.append(who, body);
+		if (turn.proposal) {
+			const row = document.createElement('div');
+			row.className = 'proposal';
+			const preview = document.createElement('button');
+			preview.textContent = 'Preview diff';
+			preview.addEventListener('click', () => post('preview', { id: turn.proposal.id }));
+			const apply = document.createElement('button');
+			apply.className = 'go';
+			apply.textContent = 'Apply';
+			apply.addEventListener('click', () => post('apply', { id: turn.proposal.id }));
+			const files = document.createElement('span');
+			files.className = 'files';
+			files.textContent = turn.proposal.files.join(', ');
+			if (turn.proposal.files.length) { row.append(preview, apply, files); }
+			el.append(row);
+			for (const refusal of turn.proposal.refusals || []) {
+				const r = document.createElement('div');
+				r.className = 'refusal';
+				r.innerHTML = 'refused: ' + md(refusal);
+				el.append(r);
+			}
+		}
+		for (const reminder of turn.reminders || []) {
+			const r = document.createElement('div');
+			r.className = 'reminder';
+			r.innerHTML = '📓 the memory contract wants ' + md(reminder);
+			el.append(r);
+		}
 		return el;
+	}
+
+	function renderChips(state) {
+		const box = $('chips');
+		box.innerHTML = '';
+		for (const chip of state.chips) {
+			const el = document.createElement('span');
+			el.className = 'chip' + (chip.on ? ' on' : '');
+			el.textContent = chip.label;
+			el.title = chip.on ? 'Sent with your next question — click to leave it out' : 'Left out — click to put it back';
+			el.addEventListener('click', () => post('chip', { layer: chip.id }));
+			box.append(el);
+		}
+		$('toggleins').textContent = 'insights: ' + (state.insightsOn ? 'on' : 'off');
+		const card = $('insight');
+		card.hidden = !state.insight;
+		if (state.insight) {
+			card.innerHTML = '';
+			const head = document.createElement('div');
+			head.className = 'head';
+			const what = document.createElement('span');
+			what.textContent = state.insight.notice ? 'Insight' : (state.insight.file || '').split('/').pop() || 'Insight';
+			const spacer = document.createElement('span');
+			spacer.className = 'spacer';
+			const tag = document.createElement('span');
+			tag.textContent = state.insight.cached ? 'cached' : state.insight.text ? '' : 'thinking…';
+			const off = document.createElement('span');
+			off.className = 'act';
+			off.textContent = 'off';
+			off.title = 'Stop producing insight cards';
+			off.addEventListener('click', () => post('insights'));
+			head.append(what, spacer, tag, off);
+			const body = document.createElement('div');
+			body.innerHTML = md(state.insight.notice || state.insight.text);
+			card.append(head, body);
+		}
 	}
 
 	function render(state) {
@@ -426,6 +724,7 @@ function html(cspNonce: string): string {
 			for (const turn of state.turns) { log.append(renderTurn(turn)); }
 			if (streaming) { log.lastElementChild.querySelector('.body').classList.add('caret'); }
 		}
+		renderChips(state);
 		$('foot').textContent = state.footer;
 		$('stop').hidden = !streaming;
 		$('send').disabled = streaming;
@@ -478,6 +777,8 @@ function html(cspNonce: string): string {
 		ask.value = '';
 		post('send', { text: text });
 	}
+	$('showctx').addEventListener('click', () => post('showContext'));
+	$('toggleins').addEventListener('click', () => post('insights'));
 	$('send').addEventListener('click', send);
 	$('stop').addEventListener('click', () => post('stop'));
 	$('size').addEventListener('click', () => post('size'));

@@ -8,8 +8,10 @@ import { PanelSizer } from './layout';
 import { AgentPanel } from './panel';
 import { SessionStore } from './sessions';
 
-// burrow-agent — the right-hand agent panel (docs/plans/03, phase A: panel,
-// CLI transport, sessions, size states, cost line).
+// burrow-agent — the right-hand agent panel (docs/plans/03). Phase A was the
+// panel, the CLI transport, sessions and the size states; phases B–E added the
+// context envelope with its chips, the repo-memory rows, automatic insight
+// cards, and proposals that arrive as diffs and only reach disk on Apply.
 //
 // It talks to the developer's own Claude Code CLI, spawned in the workspace, so
 // their account is the only credential and the workspace's CLAUDE.md and skills
@@ -34,6 +36,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.agent.newSession', () => panel.newSession()),
 		vscode.commands.registerCommand('burrow.agent.cycleSize', () => sizer.cycle()),
 		vscode.commands.registerCommand('burrow.agent.stop', () => panel.stop()),
+		vscode.commands.registerCommand('burrow.agent.showContext', () => panel.showContextCommand()),
+		vscode.commands.registerCommand('burrow.agent.explainSelection', () => panel.explainSelection()),
+		vscode.commands.registerCommand('burrow.agent.toggleInsights', () => panel.toggleInsights()),
 	);
 }
 

@@ -22,6 +22,10 @@ export interface Turn {
 	costUsd?: number;
 	tokens?: number;
 	durationMs?: number;
+	/** Set when the answer carried a unified diff: what Preview and Apply act
+	 *  on, and what the memory contract says the change also obliges. */
+	proposal?: { readonly id: string; readonly files: readonly string[]; readonly refusals: readonly string[] };
+	reminders?: readonly string[];
 }
 
 export interface Session {
@@ -30,6 +34,8 @@ export interface Session {
 	/** The CLI's session id, once it has announced one; `--resume` uses it. */
 	resume?: string;
 	turns: Turn[];
+	/** Context layers the user has taken off THIS conversation's chip row. */
+	dropped?: string[];
 }
 
 /** The `workspaceState` shape (vscode.Memento, structurally). */
@@ -128,6 +134,22 @@ export class SessionStore {
 		}
 		void this.persist();
 		return turn;
+	}
+
+	/** Add or restore a context layer for this conversation only. */
+	toggleLayer(id: string, layer: string): void {
+		const session = this.sessions.find((s) => s.id === id);
+		if (!session) {
+			return;
+		}
+		const dropped = new Set(session.dropped ?? []);
+		if (dropped.has(layer)) {
+			dropped.delete(layer);
+		} else {
+			dropped.add(layer);
+		}
+		session.dropped = [...dropped];
+		void this.persist();
 	}
 
 	setResume(id: string, resume: string): void {

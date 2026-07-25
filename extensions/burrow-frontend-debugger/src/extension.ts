@@ -6,8 +6,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
-import { openPanel, refreshPanel, setIsolationHandler } from './panel';
-import { openIsolation, IsolateArgs, reloadPreview, pickSample, editProps, saveSample } from './isolation';
+import { openPanel, refreshPanel, postToApp, setIsolationHandler, setRouteChoicesHandler } from './panel';
+import { openIsolation, IsolateArgs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
 import { ComponentsProvider } from './gallery';
 import { Sidecar } from './sidecar';
 import { ModeStatus } from './status';
@@ -20,7 +20,15 @@ import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
 
 let sidecar: Sidecar | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
+/** What this extension lets OTHER extensions read (burrow-agent's context
+ *  envelope, docs/plans/03 §3). Read-only and additive: a caller that is not
+ *  running, or a Burrow build without the agent, notices nothing. */
+export interface FrontendDebuggerApi {
+	/** The component on the isolation canvas right now, if any. */
+	readonly isolation: () => { file: string; label: string; props?: Record<string, unknown> } | undefined;
+}
+
+export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi {
 	sidecar = new Sidecar();
 	const status = new ModeStatus();
 	context.subscriptions.push(sidecar, status);
@@ -32,7 +40,28 @@ export function activate(context: vscode.ExtensionContext): void {
 		const cfg = resolveConfig(context);
 		return cfg.targetDir ? path.join(cfg.targetDir, 'src') : undefined;
 	});
-	context.subscriptions.push(vscode.window.createTreeView('burrowComponents', { treeDataProvider: components }));
+	const componentsView = vscode.window.createTreeView('burrowComponents', { treeDataProvider: components });
+	context.subscriptions.push(componentsView);
+
+	// Revealing the Components view warm-starts the sidecar in the background so
+	// the first isolate/open click lands on a running dev server. Best-effort:
+	// failures log to the output channel (a modal would punish a passive sidebar
+	// click), and one attempt per window — the explicit commands are the retry.
+	let warmTried = false;
+	componentsView.onDidChangeVisibility((e) => {
+		if (!e.visible || warmTried || sidecar!.running) {
+			return;
+		}
+		if (!vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('autoStartOnComponentsView', true)) {
+			return;
+		}
+		warmTried = true;
+		const cfg = resolveConfig(context);
+		sidecar!.start(cfg).then(
+			(uiPort) => status.show(uiPort),
+			(err) => sidecar!.out.appendLine(`[fedbg] warm start failed: ${err instanceof Error ? err.message : String(err)}`),
+		);
+	}, undefined, context.subscriptions);
 
 	const open = async (): Promise<void> => {
 		const cfg = resolveConfig(context);
@@ -122,6 +151,64 @@ export function activate(context: vscode.ExtensionContext): void {
 	};
 	setIsolationHandler((a) => void isolate(a));
 
+	// "Show in App": reveal a component in the LIVE app — from the Components
+	// tree (inline eye, passes the tree node), the isolation preview's title bar
+	// (no argument → the currently-isolated file), or the palette (active
+	// editor). Ensures the panel is open, then hands the frontendDir-relative
+	// path to the SPA, which locates the instance (navigating first when the
+	// component's route isn't the current one — see ui/src/showInApp.ts).
+	const lastRouteKey = (rel: string) => `fedbg.lastRoute:${rel}`;
+	const showInApp = async (source?: vscode.Uri | { kind?: string; abs?: string }): Promise<void> => {
+		const cfg = resolveConfig(context);
+		let abs: string | undefined;
+		if (source instanceof vscode.Uri) {
+			abs = source.fsPath;
+		} else if (source && typeof source.abs === 'string') {
+			abs = source.abs; // a Components-tree node
+		} else {
+			abs = currentIsolationFile() || vscode.window.activeTextEditor?.document.uri.fsPath;
+		}
+		if (!abs) {
+			void vscode.window.showWarningMessage('Frontend Debugger: open or isolate a component to show it in the app.');
+			return;
+		}
+		const rel = path.relative(cfg.targetDir, abs).split(path.sep).join('/');
+		if (rel.startsWith('..') || path.isAbsolute(rel)) {
+			void vscode.window.showWarningMessage('Frontend Debugger: the component must live under the target frontend.');
+			return;
+		}
+		const stem = path.basename(abs).replace(/\.[^.]+$/, '');
+		try {
+			const uiPort = await sidecar!.start(cfg);
+			openPanel(context, uiPort, cfg.targetDir);
+			status.show(uiPort);
+		} catch (err) {
+			sidecar!.out.show(true);
+			void vscode.window.showErrorMessage(`Frontend Debugger: ${err instanceof Error ? err.message : String(err)}`);
+			return;
+		}
+		postToApp({
+			type: 'showInApp',
+			file: rel,
+			name: /^[A-Z]/.test(stem) ? stem : null,
+			route: context.workspaceState.get<string>(lastRouteKey(rel)) ?? null,
+		});
+	};
+
+	// The SPA found several routes rendering the component: QuickPick natively,
+	// remember the choice per component, and answer with a routed showInApp.
+	setRouteChoicesHandler(async ({ file, name, choices }) => {
+		const pick = await vscode.window.showQuickPick(
+			choices.map((c) => ({ label: c.label || c.path, description: c.path, detail: c.name ? `renders ${c.name}` : undefined, path: c.path })),
+			{ placeHolder: `Which route should show ${name || file}?` },
+		);
+		if (!pick) {
+			return;
+		}
+		await context.workspaceState.update(lastRouteKey(file), pick.path);
+		postToApp({ type: 'showInApp', file, name, route: pick.path });
+	});
+
 	const restart = async (): Promise<void> => {
 		const cfg = resolveConfig(context);
 		await sidecar!.stop();
@@ -143,9 +230,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.frontendDebugger.open', open),
 		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
+		vscode.commands.registerCommand('burrow.frontendDebugger.showInApp', (source?: vscode.Uri | { kind?: string; abs?: string }) => showInApp(source)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
-		vscode.commands.registerCommand('burrow.frontendDebugger.pickSample', () => pickSample()),
-		vscode.commands.registerCommand('burrow.frontendDebugger.editProps', () => editProps()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.saveSample', () => saveSample()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.refreshComponents', () => components.refresh()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.restart', restart),
@@ -156,6 +242,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 		vscode.commands.registerCommand('burrow.frontendDebugger.showLogs', () => sidecar!.out.show(true)),
 	);
+
+	return { isolation: () => currentIsolation() };
 }
 
 export function deactivate(): void {

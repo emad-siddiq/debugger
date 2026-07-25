@@ -24,7 +24,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-agent",
 		"watch": "gulp watch-extension:burrow-agent",
-		"test": "node test/transport.test.js && node test/sessions.test.js"
+		"test": "node test/transport.test.js && node test/sessions.test.js && node test/model.test.js"
 	},
 	"contributes": {
 		"viewsContainers": {
@@ -68,6 +68,21 @@
 				"title": "Stop the Agent Turn",
 				"category": "Burrow",
 				"icon": "$(stop-circle)"
+			},
+			{
+				"command": "burrow.agent.showContext",
+				"title": "Show Agent Context",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.agent.explainSelection",
+				"title": "Explain Selection with the Agent",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.agent.toggleInsights",
+				"title": "Toggle Agent Insights",
+				"category": "Burrow"
 			}
 		],
 		"menus": {
@@ -90,7 +105,7 @@
 				"burrow.agent.cliPath": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "The Claude Code CLI to spawn. Empty = look for `claude` on PATH, then `~/.local/bin/claude`. Your Claude Code **account** is the only credential — `ANTHROPIC_*` variables are stripped from the child environment, and no API key is stored, requested, or supported.",
+					"markdownDescription": "The Claude Code CLI to spawn. Empty = look for `claude` on PATH, then `~/.local/bin/claude`. Your Claude Code **account** is the only credential \u2014 `ANTHROPIC_*` variables are stripped from the child environment, and no API key is stored, requested, or supported.",
 					"tags": [
 						"burrow"
 					]
@@ -98,12 +113,87 @@
 				"burrow.agent.model": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "Model alias passed to the CLI (`opus`, `sonnet`, …). Empty = whatever your CLI defaults to.",
+					"markdownDescription": "Model alias passed to the CLI (`opus`, `sonnet`, \u2026). Empty = whatever your CLI defaults to.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.contextBudgetTokens": {
+					"type": "number",
+					"default": 12000,
+					"markdownDescription": "How much context to send with a question, in rough tokens. Layers are added cheapest-first (workspace, open pages, page bundle, live surface, selection, debug, data, memory) and the ones that do not fit are named in the panel rather than dropped silently.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.memory.enabled": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Read the repo's own `.claude/memory/*.yaml` rows into the context envelope when they apply to the file you have open. Deterministic \u2014 no model call decides what to load.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.memory.root": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Where that memory lives. Empty = `<workspace>/.claude/memory`.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.insights.enabled": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "Produce an automatic three-bullet card about the file you open.\n\n**Off by default, deliberately:** every card is a real turn against your Claude Code account, and on a large repo a turn can cost around $0.30 \u2014 a background feature should not spend that until you ask it to. Cards are cached per file+content, so re-opening something you have already looked at is free.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.insights.languages": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"typescriptreact",
+						"typescript",
+						"go",
+						"css"
+					],
+					"markdownDescription": "Languages that get insight cards. Everything else is left alone.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.insights.maxPerHour": {
+					"type": "number",
+					"default": 60,
+					"markdownDescription": "Ceiling on insight cards per rolling hour. When it is reached the panel says so and pauses rather than failing quietly.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.agent.denyGlobs": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"markdownDescription": "Extra paths the agent may never read, send, or patch, on top of the built-in list (`**/.env*`, `**/infra/secrets/**`, `**/*.pem`, `**/*.key`, `**/secret*`, `**/.claude/settings.local.json`, `**/node_modules/**`, `**/.git/**`). The built-ins always apply \u2014 this list can only add to them.",
 					"tags": [
 						"burrow"
 					]
 				}
 			}
-		}
+		},
+		"keybindings": [
+			{
+				"command": "burrow.agent.explainSelection",
+				"key": "ctrl+alt+i",
+				"mac": "cmd+alt+i",
+				"when": "editorHasSelection"
+			}
+		]
 	}
 }
