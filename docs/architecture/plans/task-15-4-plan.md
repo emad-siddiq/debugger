@@ -23,7 +23,7 @@ config (layer 1): none strictly required if the bundle mirrors the repo layout (
 
 ## First slice
 
-De-risk the pruned runtime before touching any build core. Add build/burrow/stage-frontend-tool.js that stages tools/frontend-debugger into .build/frontend-debugger-tool/ — copy server/, agent/, ui/dist/, package.json (NOT src/, test/, .claude/, ui/src, package-lock.json), then run `npm ci --omit=dev` in the staged dir (or copy node_modules + `npm prune --omit=dev`). Then prove the staged tree runs as a sidecar exactly as the extension does: `ELECTRON_RUN_AS_NODE=1 NODE_ENV=production MERKLE_REPO_ROOT=~/Projects/merkle MERKLE_FRONTEND_DIR=~/Projects/merkle/nodewatch/frontend UI_PORT=6099 <electron-execPath> .build/frontend-debugger-tool/server/index.js`, and confirm GET 127.0.0.1:6099/healthz returns ok and / serves the built SPA from ui/dist. This proves the production dep set (express/@babel/core/postcss; vite is loaded from the TARGET repo, not the tool — see targetServer.js:53) is sufficient, with zero core-source risk. Nothing ships yet.
+De-risk the pruned runtime before touching any build core. Add build/burrow/stage-frontend-tool.js that stages tools/frontend-debugger into .build/frontend-debugger-tool/ — copy server/, agent/, ui/dist/, package.json (NOT src/, test/, .claude/, ui/src, package-lock.json), then run `npm ci --omit=dev` in the staged dir (or copy node_modules + `npm prune --omit=dev`). Then prove the staged tree runs as a sidecar exactly as the extension does: `ELECTRON_RUN_AS_NODE=1 NODE_ENV=production MERKLE_REPO_ROOT=~/Projects/merkle UI_PORT=6099 <electron-execPath> .build/frontend-debugger-tool/server/index.js`, and confirm GET 127.0.0.1:6099/healthz returns ok and / serves the built SPA from ui/dist. (`MERKLE_FRONTEND_DIR` is deliberately *not* set: `server/config.js:32` probes `['frontend', 'nodewatch/frontend']` newest-first, so letting it detect proves the shipped detection works. An earlier draft of this line pinned `~/Projects/merkle/nodewatch/frontend`, which no longer exists — merkle flattened that nesting away.) This proves the production dep set (express/@babel/core/postcss; vite is loaded from the TARGET repo, not the tool — see targetServer.js:53) is sufficient, with zero core-source risk. Nothing ships yet.
 
 ## Files to touch
 
@@ -67,7 +67,11 @@ A self-contained Node script (matches check-ledger.js style: node core only, Com
 - Post-clean for notarization: remove node_modules/.bin (symlinks), any **/{test,tests}/** and **/*.md inside node_modules, and any stray *.node (there should be none). Assert no symlinks remain (walk + lstat).
 - Print a size summary; assert node_modules/express, node_modules/@babel/core, node_modules/postcss exist and node_modules/vite does NOT.
 
-### Step 2 — Wire into the packaging build (CORE PATCH → ledger 0010)
+### Step 2 — Wire into the packaging build (CORE PATCH → ledger **0014**)
+> Numbering note: this plan was written when 0010 was the next free slot. The ledger has since
+> reached 0013 (`rail-order-and-testing-location`), so this patch is **0014** — and that leaves
+> exactly one slot under the <15 budget. Read `patches/README.md` before assuming a number.
+
 Edit build/gulpfile.vscode.ts:
 1. Define a staging gulp task (thin wrapper that shells `node build/burrow/stage-frontend-tool.js`) OR import a small exported fn from build/burrow. Add it to the vscode task series so it runs before packageTask — insert into both esbuild and non-esbuild branches of the BUILD_TARGETS loop (~lines 669-688), e.g. as an early series step alongside cleanExtensionsBuildTask. Guard it to run once per build.
 2. In packageTask (~lines 369-377), add a `frontendTool` stream to mergeStreams:
@@ -79,7 +83,7 @@ Edit build/gulpfile.vscode.ts:
 Edit extensions/burrow-frontend-debugger/src/config.ts:39-40. Keep the explicit `toolPath` setting first; then resolve the first existing of [repo-relative `../../tools/frontend-debugger`, bundled `../../tools/frontend-debugger` (same path in .app), and a belt-and-suspenders `path.join(context.extensionPath,'tool')`], falling back to the repo-relative path. Because the bundle mirrors the layout, the existing expression already hits it; the existence check just makes intent explicit and future-proofs an alternate bundle location. Recompile via `gulp compile-extension:burrow-frontend-debugger`. Update the toolPath description in package.json to note the shipped default.
 
 ### Step 4 — Ledger + README (required by check-ledger.js)
-Add patches/0010-bundle-frontend-tool-into-app.md following the 0008 format: Layer 3, Task 13/15, Upstream files touched = build/gulpfile.vscode.ts, Size ~10 lines, Why (the .app packageTask is the only place to inject a bundled tool; can't be an extension-only or config change because it merges into the darwin/linux package stream), What (frontendTool stream + staging task wiring), Rebase notes (if upstream restructures packageTask/mergeStreams, re-add the single stream + task-series entry; the staging script under build/burrow is rebase-inert). Add the 0010 row to the patches/README.md ledger table.
+Add patches/0014-bundle-frontend-tool-into-app.md following the 0008 format: Layer 3, Task 13/15, Upstream files touched = build/gulpfile.vscode.ts, Size ~10 lines, Why (the .app packageTask is the only place to inject a bundled tool; can't be an extension-only or config change because it merges into the darwin/linux package stream), What (frontendTool stream + staging task wiring), Rebase notes (if upstream restructures packageTask/mergeStreams, re-add the single stream + task-series entry; the staging script under build/burrow is rebase-inert). Add the 0014 row to the patches/README.md ledger table.
 
 ### Step 5 — Docs
 docs/architecture/15-frontend-debugger.md: flip task 4 ☐→✅; remove 'Packaging the tool into the .app (task 13)' from Out of scope; add an acceptance line: 'Packaged .app: Open Frontend Debugger runs the bundled tools/frontend-debugger sidecar (repo tools/ absent).' In docs/architecture/13 task 6 (or RELEASING.md when it exists), add a smoke step: fresh-install .app → Open Frontend Debugger renders the SPA.
