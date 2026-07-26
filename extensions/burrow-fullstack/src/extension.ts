@@ -371,15 +371,64 @@ async function sidecarTargetUrl(): Promise<string | undefined> {
 }
 
 /** Boot the frontend-debugger in live mode (proxy to the dlv-debugged backend). */
+/**
+ * The frontend tier, in LIVE mode — meaning it really is live, not merely asked
+ * to be.
+ *
+ * The setting alone is not enough. The sidecar reads its data mode at boot, and
+ * `Sidecar.start()` ATTACHES to one that is already running (a warm start from
+ * the Components view, or one left over from another window) instead of
+ * spawning. An attached sidecar keeps whatever mode it booted with — so the
+ * compound used to announce "frontend (live)" while the app was still serving
+ * mock data and never touching the backend. Every breakpoint on the request
+ * path then sits there doing nothing, which is a maddening thing to debug.
+ *
+ * So: set the setting, open the panel, then ASK the sidecar what mode it is
+ * actually in and flip it if the answer is wrong.
+ */
 async function openFrontendLive(): Promise<void> {
-	// The sidecar reads its data mode at boot, so persist 'live' before opening.
-	// Best-effort: with no workspace the FD command falls back to its own default.
 	try {
 		await vscode.workspace.getConfiguration('burrow.frontendDebugger').update('mode', 'live', vscode.ConfigurationTarget.Workspace);
 	} catch {
 		// no workspace folder to write a setting into — proceed with the default
 	}
 	await vscode.commands.executeCommand('burrow.frontendDebugger.open');
+
+	const port = await sidecarUiPort();
+	if (!port) {
+		return; // no sidecar to interrogate; the tier reported for itself already
+	}
+	try {
+		const current = await fetch(`http://127.0.0.1:${port}/api/mode`, { signal: AbortSignal.timeout(3000) })
+			.then((r) => r.json() as Promise<{ mode?: string }>);
+		if (current?.mode === 'live') {
+			return;
+		}
+		// Flipping restarts the target Vite in-process, hence the long timeout.
+		await fetch(`http://127.0.0.1:${port}/api/mode`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ mode: 'live' }),
+			signal: AbortSignal.timeout(60000),
+		});
+	} catch (err) {
+		throw new Error(`the frontend is up but could not be put in live mode — it may still be serving mock data (${errText(err)})`);
+	}
+}
+
+/** The running sidecar's UI port, via the frontend-debugger's read-only API. */
+async function sidecarUiPort(): Promise<number> {
+	try {
+		const ext = vscode.extensions.getExtension('burrow.burrow-frontend-debugger');
+		if (!ext) {
+			return 0;
+		}
+		const api = (ext.isActive ? ext.exports : await ext.activate()) as
+			{ sidecar?: () => { uiPort: number } } | undefined;
+		return api?.sidecar?.().uiPort ?? 0;
+	} catch {
+		return 0;
+	}
 }
 
 async function stopFullStack(out: vscode.OutputChannel, seeds: SeedRunner): Promise<void> {
