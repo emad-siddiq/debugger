@@ -543,7 +543,15 @@ export function shouldShowCustomTitleBar(configurationService: IConfigurationSer
 
 	if (!isWeb) {
 		const showCustomTitleBar = configurationService.getValue<CustomTitleBarVisibility>(TitleBarSetting.CUSTOM_TITLE_BAR_VISIBILITY);
-		if (showCustomTitleBar === CustomTitleBarVisibility.NEVER && nativeTitleBarEnabled || showCustomTitleBar === CustomTitleBarVisibility.WINDOWED && inFullscreen) {
+		// BURROW patch 0011 — upstream honours `never` only when a NATIVE title bar
+		// is there to take over (`&& nativeTitleBarEnabled`), so with the custom
+		// style it falls through to the macOS branch below and draws the bar
+		// anyway. Burrow wants neither bar: `isMacintosh` makes `never` mean never,
+		// because macOS still draws the window buttons itself and the activity bar
+		// reserves a strip for them. Windows and Linux keep upstream's rule — there
+		// the custom bar hosts the only window controls the app has.
+		const neverMeansNever = nativeTitleBarEnabled || isMacintosh;
+		if (showCustomTitleBar === CustomTitleBarVisibility.NEVER && neverMeansNever || showCustomTitleBar === CustomTitleBarVisibility.WINDOWED && inFullscreen) {
 			return false;
 		}
 	}

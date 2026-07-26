@@ -72,3 +72,32 @@
 	width: 100%;
 	height: 35px;
 }
+
+/** BURROW patch 0011 — the traffic-light strip.
+
+	Burrow ships no title bar (WO-01), so macOS paints the window buttons
+	straight onto content at (0,0) — the activity bar's first icon. Reserve a
+	strip at the top of the bar for them instead of buying back a whole title
+	row that would cost 28px of height to show nothing.
+
+	38px must match WindowControlsInset.STRIP_HEIGHT in
+	src/vs/platform/window/common/window.ts, which is also where the main
+	process reads the buttons' position from.
+
+	The strip is the window's ONLY drag region: a frameless window with no
+	title bar has none at all, so without this the window cannot be moved.
+	Fullscreen hides the buttons, so `.fullscreen` turns the strip back off. */
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.activitybar > .content {
+	height: calc(100% - 38px);
+	margin-top: 38px;
+}
+
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.activitybar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 38px;
+	-webkit-app-region: drag;
+}

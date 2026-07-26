@@ -102,7 +102,8 @@ enum LayoutClasses {
 	MAXIMIZED = 'maximized',
 	WINDOW_BORDER = 'border',
 	NO_SHADOWS = 'no-shadows',
-	FLOATING_PANELS = 'floating-panels'
+	FLOATING_PANELS = 'floating-panels',
+	WINDOW_CONTROLS_INSET = 'window-controls-inset' // BURROW patch 0011
 }
 
 interface IPathToOpen extends IPath {
@@ -1893,8 +1894,27 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		}
 	}
 
+	/**
+	 * BURROW patch 0011 — Burrow ships no title strip (WO-01), so on macOS the
+	 * window has zero chrome and the traffic lights land on content at (0,0):
+	 * the activity bar's first icon. This marks the workbench so the activity
+	 * bar can reserve a strip for them. Buying back a whole title row would cost
+	 * 28px of height to display nothing. Fullscreen hides the buttons, and the
+	 * `fullscreen` class already on the workbench turns the strip back off.
+	 */
+	private hasWindowControlsInset(): boolean {
+		return isMacintosh && !isWeb &&
+			hasCustomTitlebar(this.configurationService) &&
+			!shouldShowCustomTitleBar(this.configurationService, mainWindow, this.state.runtime.menuBar.toggled);
+	}
+
+	private updateWindowControlsInset(): void {
+		this.mainContainer.classList.toggle(LayoutClasses.WINDOW_CONTROLS_INSET, this.hasWindowControlsInset());
+	}
+
 	getLayoutClasses(): string[] {
 		return coalesce([
+			this.hasWindowControlsInset() ? LayoutClasses.WINDOW_CONTROLS_INSET : undefined,
 			!this.isVisible(Parts.SIDEBAR_PART) ? LayoutClasses.SIDEBAR_HIDDEN : undefined,
 			!this.isVisible(Parts.EDITOR_PART, mainWindow) ? LayoutClasses.MAIN_EDITOR_AREA_HIDDEN : undefined,
 			!this.isVisible(Parts.PANEL_PART) ? LayoutClasses.PANEL_HIDDEN : undefined,
@@ -2337,6 +2357,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		if (shouldShowTitleBar !== titlebarVisible) {
 			this.workbenchGrid.setViewVisible(this.titleBarPartView, shouldShowTitleBar);
 		}
+		this.updateWindowControlsInset(); // BURROW patch 0011
 	}
 
 	toggleMenuBar(): void {

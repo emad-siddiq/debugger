@@ -260,6 +260,24 @@ export function hasNativeTitlebar(configurationService: IConfigurationService, t
 	return titleBarStyle === TitlebarStyle.NATIVE;
 }
 
+/**
+ * BURROW patch 0011 — where macOS draws the traffic lights when Burrow runs
+ * with no title strip at all (`titleBarStyle: custom` +
+ * `customTitleBarVisibility: never`), and how much room the workbench reserves
+ * for them at the top of the activity bar.
+ *
+ * Both processes need to agree: the main process positions the buttons, the
+ * renderer reserves the space. Keep `.window-controls-inset` in
+ * `parts/activitybar/media/activitybar.css` in step with STRIP_HEIGHT.
+ */
+export const WindowControlsInset = {
+	/** Left/top of the leftmost button, in content coordinates. */
+	x: 7,
+	y: 13,
+	/** Reserved strip at the top of the activity bar, also the drag handle. */
+	STRIP_HEIGHT: 38
+} as const;
+
 export function getTitleBarStyle(configurationService: IConfigurationService): TitlebarStyle {
 	if (isWeb) {
 		return TitlebarStyle.CUSTOM;
@@ -283,15 +301,7 @@ export function getTitleBarStyle(configurationService: IConfigurationService): T
 		}
 	}
 
-	// BURROW patch 0011 — was CUSTOM. The schema default was already flipped to
-	// 'native' in desktop.contribution.ts, but that is a WORKBENCH contribution:
-	// only the renderer registers it. The MAIN process decides the window frame at
-	// creation time and calls this with a configuration that has no such default,
-	// so it fell through to CUSTOM and built a frameless (hidden-inset) window —
-	// while the renderer, which does see 'native', drew no custom title bar. The
-	// result was a window with NO title strip at all and macOS painting the
-	// traffic lights straight onto the activity bar's first icon.
-	return TitlebarStyle.NATIVE;
+	return TitlebarStyle.CUSTOM;
 }
 
 export function getWindowControlsStyle(configurationService: IConfigurationService): WindowControlsStyle {

@@ -17,7 +17,7 @@ import { ServicesAccessor, createDecorator } from '../../instantiation/common/in
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
-import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowMinimumSize, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
+import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowControlsInset, WindowMinimumSize, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
 import { ICodeWindow, IWindowState, WindowMode, defaultWindowState } from '../../window/electron-main/window.js';
 
 export const IWindowsMainService = createDecorator<IWindowsMainService>('windowsMainService');
@@ -212,6 +212,14 @@ export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowSt
 		options.titleBarStyle = 'hidden';
 		if (!isMacintosh) {
 			options.frame = false;
+		}
+
+		// BURROW patch 0011 — Burrow ships no title strip (WO-01), so macOS would
+		// otherwise paint the traffic lights straight onto the activity bar's first
+		// icon. Park them in the strip the workbench reserves at the top of that
+		// bar instead of buying back a whole empty row.
+		if (isMacintosh) {
+			options.trafficLightPosition = { x: WindowControlsInset.x, y: WindowControlsInset.y };
 		}
 
 		if (useWindowControlsOverlay(configurationService)) {

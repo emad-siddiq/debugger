@@ -243,7 +243,7 @@ import product from '../../platform/product/common/product.js';
 			'window.titleBarStyle': {
 				'type': 'string',
 				'enum': ['native', 'custom'],
-				'default': 'native', // BURROW patch 0011 — native title strip (WO-01), was 'custom'
+				'default': 'custom',
 				'scope': ConfigurationScope.APPLICATION,
 				'description': localize('titleBarStyle', "Adjust the appearance of the window title bar to be native by the OS or custom. Changes require a full restart to apply."),
 			},
@@ -263,7 +263,12 @@ import product from '../../platform/product/common/product.js';
 					localize(`window.customTitleBarVisibility.windowed`, "Hide custom titlebar in full screen. When not in full screen, automatically change custom title bar visibility."),
 					localize(`window.customTitleBarVisibility.never`, "Hide custom titlebar when {0} is set to `native`.", '`#window.titleBarStyle#`'),
 				],
-				'default': 'auto',
+				// BURROW patch 0011 — was 'auto'. Burrow ships no title bar (WO-01).
+				// This CANNOT be set from burrow-core's `configurationDefaults`: the
+				// setting is APPLICATION-scoped, and extension-contributed defaults
+				// for that scope are silently rejected at registration — the entry
+				// looks right in the manifest and never takes effect.
+				'default': 'never',
 				'scope': ConfigurationScope.APPLICATION,
 				'markdownDescription': localize('window.customTitleBarVisibility', "Adjust when the custom title bar should be shown. The custom title bar can be hidden when in full screen mode with `windowed`. The custom title bar can only be hidden in non full screen mode with `never` when {0} is set to `native`.", '`#window.titleBarStyle#`'),
 			},
