@@ -33,6 +33,9 @@ const DEBUG_TYPE = 'go';
 // `dlv dap --listen` prints this once its DAP listener is bound; we parse the
 // bound host:port from it (ephemeral port -> collision-free, per task 04).
 const LISTEN_RE = /DAP server listening at:\s*(?<host>[^:\s]+):(?<port>\d+)/;
+// How long to wait for that banner. dlv binds its listener before it does any
+// build work, so this is a "did it start at all" bound, not a build budget.
+const LISTEN_TIMEOUT_MS = 30_000;
 
 /**
  * Resolves the Delve binary. WO-2 uses the host-installed `dlv`; bundling a
@@ -171,28 +174,50 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 
 		return new Promise<DebugAdapterDescriptor>((resolve, reject) => {
 			let settled = false;
+			// The banner is one short line, but it still arrives as a stream: an
+			// unlucky flush splits it across two chunks ("…listening at: 127.0.0" +
+			// ".1:54321"). Matching the chunk in hand loses the port for good, and
+			// because nothing below times out the session then sits in "starting"
+			// forever with dlv idle and no error anywhere. Match what we have seen
+			// so far instead.
+			let seen = '';
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const settle = () => {
+				settled = true;
+				if (timer) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
+			};
 			const fail = (err: Error) => {
 				if (!settled) {
-					settled = true;
+					settle();
 					child.kill();
 					reject(err);
 				}
 			};
 			const scan = (chunk: Buffer) => {
-				const match = LISTEN_RE.exec(chunk.toString());
-				if (match?.groups && !settled) {
-					settled = true;
-					this.servers.set(session.id, child);
-					resolve(new DebugAdapterServer(Number(match.groups.port), match.groups.host));
+				const text = chunk.toString();
+				if (!settled) {
+					seen += text;
+					const match = LISTEN_RE.exec(seen);
+					if (match?.groups) {
+						settle();
+						this.servers.set(session.id, child);
+						resolve(new DebugAdapterServer(Number(match.groups.port), match.groups.host));
+					}
 					return;
 				}
 				// `dlv dap` in server mode prints the DEBUGGEE's stdout/stderr on its
 				// own streams (not as DAP output events) — surface it instead of
 				// silently dropping it.
-				if (settled) {
-					this.out.append(chunk.toString());
-				}
+				this.out.append(text);
 			};
+			// dlv binds before it builds anything, so the banner is prompt or never.
+			// Failing loudly beats a session that never starts and never says why.
+			timer = setTimeout(
+				() => fail(new Error(`Delve started but never announced its DAP port within ${LISTEN_TIMEOUT_MS / 1000}s. Output so far: ${seen.trim() || '(none)'}`)),
+				LISTEN_TIMEOUT_MS);
 			child.stdout.on('data', scan);
 			child.stderr.on('data', scan);
 			child.on('error', err => fail(new Error(`Could not start Delve at '${dlv}': ${err.message}. Install Delve or set BURROW_DLV_PATH.`)));
