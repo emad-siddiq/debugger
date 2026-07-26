@@ -46,12 +46,25 @@ export function activate(context: ExtensionContext): void {
 	});
 
 	const view = window.createTreeView(TestsProvider.viewId, { treeDataProvider: treeView });
-	// The controller's first discovery pass is fire-and-forget, so this read is
-	// always empty — the section has to be told again when the pass lands, or it
-	// paints "No Go tests found" over a workspace full of tests and only a manual
-	// Rescan corrects it. That was WO-57, reproduced on every fresh window.
+	// WO-57, in two parts. The controller's first discovery pass is
+	// fire-and-forget, so this read is always empty and the section has to be
+	// told again when the pass lands — otherwise it paints "No Go tests found"
+	// over a workspace full of tests, and only a manual Rescan corrects it.
 	treeView.setPackages(controller.packages());
 	controller.onDidDiscover(() => treeView.setPackages(controller.packages()));
+	// And the pass itself can legitimately come back empty: this extension
+	// activates on `workspaceContains:**/*_test.go`, which fires while the
+	// workspace is still being indexed, and `findFiles` at that moment answers
+	// for an index that does not have the files yet. So re-scan the first time
+	// the section is actually looked at, and keep doing so while it is empty —
+	// the only wasted work is one findFiles in a workspace with no Go tests,
+	// and the alternative is an empty Test Lab on every new window.
+	const rescanIfEmpty = async (): Promise<void> => {
+		if (view.visible && controller.packages().length === 0) {
+			await controller.discover();
+		}
+	};
+	void rescanIfEmpty();
 
 	/** Run everything, or just the names given, through the same profile the
 	 *  Test Explorer uses — one execution path, one set of results. */
@@ -74,6 +87,7 @@ export function activate(context: ExtensionContext): void {
 		lab,
 		view,
 		announceOnVisible('run', view),
+		view.onDidChangeVisibility(() => void rescanIfEmpty()),
 		claimSurface('run', { viewType: TestLab.viewType }),
 		// A palette/keybinding entry point for a full re-scan; the controller's
 		// refresh button in the Test Explorer routes to the same discovery pass.
