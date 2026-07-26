@@ -18,6 +18,7 @@ import {
 	CancellationToken,
 	CancellationTokenSource,
 	Disposable,
+	EventEmitter,
 	Range,
 	TestController,
 	TestItem,
@@ -94,6 +95,16 @@ export class GoTestController implements Disposable {
 	private readonly controller: TestController;
 	private readonly meta = new Map<string, TestMeta>();
 	private readonly disposables: Disposable[] = [];
+	private readonly discovered = new EventEmitter<void>();
+
+	/**
+	 * Fires when a discovery pass finishes. The constructor's pass is
+	 * fire-and-forget, so anything that renders `packages()` has to be told when
+	 * the list stops being empty — without this the Tests section paints its
+	 * "No Go tests found" empty state over a workspace full of tests and only a
+	 * manual Rescan ever corrects it.
+	 */
+	readonly onDidDiscover = this.discovered.event;
 
 	/**
 	 * @param goExecutableProvider Resolves the `go` binary and race flag at run
@@ -107,7 +118,7 @@ export class GoTestController implements Disposable {
 		private readonly onRun: (run: LabRun) => void = () => undefined,
 	) {
 		this.controller = tests.createTestController('burrowGoTest', 'Go Tests (Burrow)');
-		this.disposables.push(this.controller);
+		this.disposables.push(this.controller, this.discovered);
 		this.controller.refreshHandler = () => this.discover();
 		this.controller.createRunProfile('Go Test', TestRunProfileKind.Run, (request, token) => this.run(request, token), true);
 		void this.discover();
@@ -217,6 +228,7 @@ export class GoTestController implements Disposable {
 			}
 		}
 		this.controller.items.replace(packageItems);
+		this.discovered.fire();
 	}
 
 	/**

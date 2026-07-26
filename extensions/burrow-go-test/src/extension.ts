@@ -46,7 +46,12 @@ export function activate(context: ExtensionContext): void {
 	});
 
 	const view = window.createTreeView(TestsProvider.viewId, { treeDataProvider: treeView });
+	// The controller's first discovery pass is fire-and-forget, so this read is
+	// always empty — the section has to be told again when the pass lands, or it
+	// paints "No Go tests found" over a workspace full of tests and only a manual
+	// Rescan corrects it. That was WO-57, reproduced on every fresh window.
 	treeView.setPackages(controller.packages());
+	controller.onDidDiscover(() => treeView.setPackages(controller.packages()));
 
 	/** Run everything, or just the names given, through the same profile the
 	 *  Test Explorer uses — one execution path, one set of results. */
