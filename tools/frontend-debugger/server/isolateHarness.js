@@ -66,17 +66,45 @@ export function buildIsolateHtml(cfg) {
   #iso-top {
     flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
     background: #15181e; color: #c9d1d9; border-bottom: 1px solid #2b3138;
-    font-size: 11px; user-select: none;
+    font-size: 11px; user-select: none; overflow: hidden;
   }
-  #iso-top .name { font-weight: 700; font-size: 12px; color: #e6edf3; margin-right: 6px; }
+  /* Two clusters, so overflow always eats the least important end. The right
+     one is fixed: Inspect and the panel toggle must never be what clips —
+     the toggle is the only way to get the panel back once it is hidden. */
+  #iso-top .lgroup { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; }
+  #iso-top .rgroup { display: flex; align-items: center; gap: 6px; flex: none; }
+  #iso-top .tbtn { flex: none; white-space: nowrap; }
+  #iso-top .name {
+    font-weight: 700; font-size: 12px; color: #e6edf3; margin-right: 6px;
+    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none;
+  }
   #iso-top .prov {
     font-size: 10px; color: #fff; background: #30363d; border-radius: 3px;
     padding: 1px 6px; letter-spacing: .02em; white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
   }
   #iso-top .prov:empty { display: none; }
   #iso-top .tbtn.stale { border-color: #7d4e00; }
-  #iso-top .sep { width: 1px; height: 14px; background: #2b3138; margin: 0 2px; }
-  #iso-top .tlabel { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin: 0 2px; }
+  #iso-top .sep { width: 1px; height: 14px; background: #2b3138; margin: 0 2px; flex: none; }
+  #iso-top .tlabel { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin: 0 2px; flex: none; }
+  /* Progressive collapse (watchTopBar): captions go first, then the preset rows
+     swap for their compact alternates. Class toggles only — no rebuild, so no
+     button state is lost. */
+  #iso-top.compact { gap: 4px; }
+  #iso-top.compact .tlabel { display: none; }
+  #iso-top.compact .sep { margin: 0; }
+  /* The preset rows are wrappers only — display:contents keeps their buttons in
+     the bar's own flex flow, and belongs in CSS (not inline) so the tight rule
+     below can override it. */
+  #iso-top .wset, #iso-top .bgset { display: contents; }
+  #iso-top .wsel, #iso-top .bgcycle { display: none; }
+  #iso-top.tight .wset, #iso-top.tight .bgset { display: none; }
+  #iso-top.tight .wsel, #iso-top.tight .bgcycle { display: inline-block; }
+  #iso-top.tight .name { max-width: 96px; }
+  #iso-top .wsel {
+    background: #1c2128; color: #c9d1d9; border: 1px solid #2b3138;
+    border-radius: 4px; padding: 1px 4px; font: inherit; flex: none;
+  }
   .tbtn {
     border: 1px solid #2b3138; background: #1c2128; color: #c9d1d9; border-radius: 4px;
     padding: 1px 7px; font: inherit; cursor: pointer;
@@ -274,15 +302,49 @@ const canvas = document.getElementById('iso-canvas')
 const stage = document.getElementById('iso-stage')
 const panel = document.getElementById('iso-panel')
 
+// The panel and its resize grip show and hide together. One function owns it
+// because CSS cannot select a previous sibling, so the grip cannot follow the
+// panel on its own.
+function setPanelVisible(on) {
+  panel.classList.toggle('hidden', !on)
+  const grip = document.getElementById('iso-grip')
+  if (grip) grip.classList.toggle('hidden', !on)
+}
+
 // Stage width has two callers — the top bar's presets and the breakpoints
 // tab's jump buttons — so one function owns it and keeps the preset row's
 // highlight honest (a jump to 480px lights no preset; a jump to 768 lights the
 // tablet one). 0 = Fit: the stage hugs the component instead of framing it.
 let widthButtons = []
+let widthSelect = null
 function setStageWidth(w) {
   if (w === 0) { stage.classList.remove('frame'); stage.style.width = '' }
   else { stage.classList.add('frame'); stage.style.width = w + 'px' }
   for (const b of widthButtons) b.classList.toggle('on', Number(b.getAttribute('data-w')) === w)
+  // The tight-layout <select> is the same control in another shape, so it has
+  // to follow every caller — including the breakpoints tab's jump buttons.
+  if (widthSelect) widthSelect.value = String(w)
+}
+
+// Backgrounds have two shapes too (a row of buttons, and one cycling button
+// when there is no room for the row), so one function owns the state.
+const BGS = [
+  ['App', '', "The app's own background"],
+  ['Dark', 'bg-dark', 'Dark canvas — check light-on-dark rendering'],
+  ['▦ Checker', 'bg-checker', 'Transparency checkerboard — see through transparent areas'],
+]
+let bgButtons = []
+let bgCycle = null
+let bgIndex = 0
+function setBackground(i) {
+  bgIndex = ((i % BGS.length) + BGS.length) % BGS.length
+  canvas.className = BGS[bgIndex][1]
+  for (let n = 0; n < bgButtons.length; n++) bgButtons[n].classList.toggle('on', n === bgIndex)
+  if (bgCycle) {
+    bgCycle.textContent = BGS[bgIndex][0]
+    bgCycle.title = BGS[bgIndex][2] + ' — click to cycle'
+    bgCycle.classList.toggle('on', bgIndex !== 0)
+  }
 }
 
 function buildTopBar(label) {
@@ -298,35 +360,74 @@ function buildTopBar(label) {
     class: 'tbtn' + (w === 0 ? ' on' : ''), title: tip, 'data-w': w,
     onclick: () => setStageWidth(w),
   }, txt))
-  const pbtns = widthButtons
-  const bgs = [
-    ['App', '', "The app's own background"],
-    ['Dark', 'bg-dark', 'Dark canvas — check light-on-dark rendering'],
-    ['▦ Checker', 'bg-checker', 'Transparency checkerboard — see through transparent areas'],
-  ]
-  const bbtns = bgs.map(([txt, cls, tip]) => el('button', {
-    class: 'tbtn' + (cls === '' ? ' on' : ''), title: tip,
-    onclick: (e) => {
-      bbtns.forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on')
-      canvas.className = cls
-    },
+  // Both shapes of each control live in the DOM at once and CSS shows one, so
+  // collapsing is a class toggle and never a rebuild.
+  const wset = el('span', { class: 'wset' }, ...widthButtons)
+  widthSelect = el('select', {
+    class: 'wsel', title: 'Stage width',
+    onchange: (e) => setStageWidth(Number(e.target.value)),
+  }, ...presets.map(([txt, w]) => el('option', { value: w }, txt)))
+  bgButtons = BGS.map(([txt, cls, tip], i) => el('button', {
+    class: 'tbtn' + (i === 0 ? ' on' : ''), title: tip,
+    onclick: () => setBackground(i),
   }, txt))
+  const bgset = el('span', { class: 'bgset' }, ...bgButtons)
+  bgCycle = el('button', { class: 'bgcycle tbtn', onclick: () => setBackground(bgIndex + 1) }, BGS[0][0])
+  bgCycle.title = BGS[0][2] + ' — click to cycle'
+
   top.append(
-    el('span', { class: 'name', title: CFG.module }, label),
-    el('span', { class: 'prov', id: 'iso-prov' }),
-    el('span', { class: 'sep' }),
-    el('span', { class: 'tlabel' }, 'width'), ...pbtns,
-    el('span', { class: 'sep' }),
-    el('span', { class: 'tlabel' }, 'bg'), ...bbtns,
-    ...cssButtons(),
-    el('span', { style: 'flex:1' }),
-    el('button', {
-      class: 'tbtn', id: 'iso-inspect-btn',
-      title: 'Inspect — hover a part to see which component renders it; click to open its code and CSS in the editor; Alt-click (or double-click) a child component to enter it. Esc exits.',
-      onclick: () => setInspect(!inspectOn),
-    }, '🎯 Inspect'),
-    el('button', { class: 'tbtn', title: 'Show/hide the props panel', onclick: () => panel.classList.toggle('hidden') }, '⚙ props'),
+    el('span', { class: 'lgroup' },
+      el('span', { class: 'name', title: CFG.module }, label),
+      el('span', { class: 'prov', id: 'iso-prov' }),
+      el('span', { class: 'sep' }),
+      el('span', { class: 'tlabel' }, 'width'), wset, widthSelect,
+      el('span', { class: 'sep' }),
+      el('span', { class: 'tlabel' }, 'bg'), bgset, bgCycle,
+      ...cssButtons()),
+    el('span', { class: 'rgroup' },
+      el('button', {
+        class: 'tbtn', id: 'iso-inspect-btn',
+        title: 'Inspect — hover a part to see which component renders it; click to open its code and CSS in the editor; Alt-click (or double-click) a child component to enter it. Esc exits.',
+        onclick: () => setInspect(!inspectOn),
+      }, '🎯 Inspect'),
+      el('button', { class: 'tbtn', title: 'Show/hide the props panel', onclick: () => setPanelVisible(panel.classList.contains('hidden')) }, '⚙ props')),
   )
+  watchTopBar(top)
+}
+
+// Shrink the bar in two steps as the canvas column narrows: drop the uppercase
+// captions, then swap the preset rows for their compact alternates. At a 50%
+// editor split the column is ~440px against ~710px of content, so without this
+// the right-hand controls simply clip off the end.
+let topFitPending = false
+function fitTopBar(top) {
+  topFitPending = false
+  // Measure from the roomiest state, otherwise "does it fit?" is answered about
+  // the collapsed layout and the bar can never expand again.
+  const was = top.className
+  top.className = ''
+  let next = ''
+  if (top.scrollWidth > top.clientWidth + 1) {
+    next = 'compact'
+    top.className = next
+    if (top.scrollWidth > top.clientWidth + 1) next = 'compact tight'
+  }
+  // Only write when it differs — a no-op write still churns the observer.
+  if (next !== was) top.className = next
+  else top.className = was
+}
+function watchTopBar(top) {
+  const fit = () => {
+    if (topFitPending) return
+    topFitPending = true
+    requestAnimationFrame(() => fitTopBar(top))
+  }
+  fit()
+  try {
+    new ResizeObserver(fit).observe(top)
+  } catch (e) {
+    window.addEventListener('resize', fit)
+  }
 }
 
 // dev | prod-css — the third lever (plan 07 WI-7). The dev graph is not what
@@ -820,7 +921,7 @@ function buildPropsTab(body) {
     buildTopBar(label)
     setProvenance()
     buildPanel()
-    panel.classList.remove('hidden')
+    setPanelVisible(true)
 
     const root = createRoot(document.getElementById('burrow-iso-root'))
     renderFn = () => {
