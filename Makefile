@@ -7,9 +7,16 @@ ARCH  := $(shell uname -m)
 .PHONY: help node-check deps dev dist install ledger-check clean
 
 # Where `gulp vscode-darwin-<arch>` leaves the packaged app, and where macOS
-# needs it for Launchpad to pick it up.
-APP     := .build/electron/Burrow — Go IDE.app
-INSTALL := /Applications/Burrow.app
+# needs it for Launchpad to pick it up. Note the output is a SIBLING of the
+# repo, not inside it — and `.build/electron` holds only the unpackaged Electron
+# shell, which looks like the app but has no `Resources/app` payload at all.
+NAME    := $(shell node -p "require('./product.json').nameLong" 2>/dev/null || echo "Burrow — Go IDE")
+APP     := ../VSCode-darwin-$(ARCH)/$(NAME).app
+# Launchpad indexes ~/Applications as well as /Applications, and ~/Applications
+# needs no privileges — /Applications is root:admin, so installing there fails
+# outright for a non-admin account. Override if you want it system-wide:
+#   sudo make install INSTALL=/Applications/Burrow.app
+INSTALL ?= $(HOME)/Applications/Burrow.app
 
 help:
 	@echo "Burrow build targets:"
@@ -42,8 +49,9 @@ dist: node-check
 # accepts for a local build (full notarization is task 13).
 install:
 	@test -d "$(APP)" || { echo "No packaged app at '$(APP)' — run 'make dist' first."; exit 1; }
+	mkdir -p "$(dir $(INSTALL))"
 	rm -rf "$(INSTALL)"
-	cp -R "$(APP)" "$(INSTALL)"
+	ditto "$(APP)" "$(INSTALL)"
 	codesign --force --deep --sign - "$(INSTALL)"
 	@echo "Installed $(INSTALL) — open Launchpad, or: open -a Burrow"
 	@echo "First launch may need right-click -> Open (un-notarized local build)."
