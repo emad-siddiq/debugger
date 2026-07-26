@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 ARCH  := $(shell uname -m)
 
-.PHONY: help node-check deps dev dist install ledger-check clean
+.PHONY: help node-check deps dev dist stage-tools install ledger-check clean
 
 # Where `gulp vscode-darwin-<arch>` leaves the packaged app, and where macOS
 # needs it for Launchpad to pick it up. Note the output is a SIBLING of the
@@ -23,7 +23,8 @@ help:
 	@echo "  make node-check   verify Node matches .nvmrc"
 	@echo "  make deps         npm ci (Electron + native modules)"
 	@echo "  make dev          run branded app from source (scripts/code.sh)"
-	@echo "  make dist         packaged .app (gulp vscode-darwin-$(ARCH))"
+	@echo "  make dist         packaged .app (gulp vscode-darwin-$(ARCH)) + tools/"
+	@echo "  make stage-tools  put tools/ inside an already-packaged .app"
 	@echo "  make install      copy the packaged .app to $(INSTALL) for Launchpad"
 	@echo "  make ledger-check  fail if core-source diffs lack a patch ledger entry"
 
@@ -41,6 +42,17 @@ dev: node-check
 
 dist: node-check
 	npm run gulp vscode-darwin-$(ARCH)
+	$(MAKE) stage-tools
+
+# gulp packages out/, extensions and node_modules — not tools/. Two extensions
+# resolve a host tool at <extensionPath>/../../tools/<name>, which in a bundle is
+# Contents/Resources/app/tools/<name>, so without this the Components rail has no
+# sidecar and API Flows has no tracer the moment you launch from Launchpad
+# instead of from the repo. Separate target so it can be re-run against an
+# already-packaged app without a full rebuild.
+stage-tools:
+	@test -d "$(APP)" || { echo "No packaged app at '$(APP)' — run 'make dist' first."; exit 1; }
+	node build/burrow/stage-tools.js --app "$(APP)"
 
 # Launchpad indexes /Applications, so installing IS copying there. The ad-hoc
 # signature is what lets a locally-built, un-notarized app launch at all: the
@@ -49,6 +61,7 @@ dist: node-check
 # accepts for a local build (full notarization is task 13).
 install:
 	@test -d "$(APP)" || { echo "No packaged app at '$(APP)' — run 'make dist' first."; exit 1; }
+	@test -d "$(APP)/Contents/Resources/app/tools" || { echo "'$(APP)' has no tools/ — run 'make stage-tools' (Components and API Flows would be dead)."; exit 1; }
 	mkdir -p "$(dir $(INSTALL))"
 	rm -rf "$(INSTALL)"
 	ditto "$(APP)" "$(INSTALL)"

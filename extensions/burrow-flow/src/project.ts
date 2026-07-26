@@ -54,14 +54,33 @@ function oracleDirUnder(root: string): string | undefined {
 	return fs.existsSync(path.join(dir, 'cmd', 'oracle')) ? dir : undefined;
 }
 
-/** The flowscan module dir: setting override, else the copy in this Burrow repo. */
+/** The flowscan module dir: setting override, else the copy shipped beside us. */
 export function flowscanDir(context: vscode.ExtensionContext): string | undefined {
 	const configured = vscode.workspace.getConfiguration('burrow.flow').get<string>('flowscanDir', '');
 	if (configured && fs.existsSync(path.join(configured, 'go.mod'))) {
 		return configured;
 	}
-	const inRepo = path.resolve(context.extensionPath, '..', '..', 'tools', 'flowscan');
-	return fs.existsSync(path.join(inRepo, 'go.mod')) ? inRepo : undefined;
+	// <extensionPath>/../../tools/flowscan — the repo checkout under `make dev`,
+	// Contents/Resources/app/tools/flowscan in a packaged app (build/burrow/stage-tools.js).
+	const shipped = path.resolve(context.extensionPath, '..', '..', 'tools', 'flowscan');
+	return fs.existsSync(path.join(shipped, 'go.mod')) ? shipped : undefined;
+}
+
+/**
+ * How to invoke flowscan. A packaged app ships a prebuilt binary next to the
+ * sources, and that is what we run: `go run .` needs a Go toolchain, a warm
+ * module cache and (first time, on any machine) the network — none of which a
+ * user who just opened the app from Launchpad has agreed to. The source tree is
+ * the fallback, which is what a repo checkout uses.
+ */
+export function flowscanCommand(dir: string): { cmd: string; args: string[] } {
+	const binary = path.join(dir, process.platform === 'win32' ? 'flowscan.exe' : 'flowscan');
+	try {
+		fs.accessSync(binary, fs.constants.X_OK);
+		return { cmd: binary, args: [] };
+	} catch {
+		return { cmd: goBin(), args: ['run', '.'] };
+	}
 }
 
 function goBin(): string {
@@ -119,7 +138,8 @@ export async function refreshFlows(
 		void vscode.window.showErrorMessage('flowscan not found — set burrow.flow.flowscanDir to its module directory.');
 		return undefined;
 	}
-	const scan = await run(goBin(), ['run', '.', '--backend', paths.backendDir, ...digestArg, '--out', flowsFile], scanDir, log);
+	const { cmd, args } = flowscanCommand(scanDir);
+	const scan = await run(cmd, [...args, '--backend', paths.backendDir, ...digestArg, '--out', flowsFile], scanDir, log);
 	if (scan.code !== 0) {
 		void vscode.window.showErrorMessage(`flowscan failed (exit ${scan.code}) — see the "Burrow Flow" output channel.`);
 		return undefined;

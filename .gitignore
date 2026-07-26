@@ -48,3 +48,7 @@ dist
 .github/prompts/*.local.prompt.md
 .agents/skills/.local/
 .github/skills/.local/
+
+# The flowscan binary is built by build/burrow/stage-tools.js (and by `go build`
+# for local runs) — the sources are what we track.
+/tools/flowscan/flowscan

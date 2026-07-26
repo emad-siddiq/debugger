@@ -60,6 +60,7 @@ const compilations = [
 	'extensions/burrow-core/tsconfig.json',
 	'extensions/burrow-db/tsconfig.json',
 	'extensions/burrow-docker/tsconfig.json',
+	'extensions/burrow-flow/tsconfig.json',
 	'extensions/burrow-frontend-debugger/tsconfig.json',
 	'extensions/burrow-fullstack/tsconfig.json',
 	'extensions/burrow-go-base/tsconfig.json',

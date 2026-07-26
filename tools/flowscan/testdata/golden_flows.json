@@ -1,0 +1,452 @@
+{
+ "schema": 1,
+ "backend": "",
+ "rev": "",
+ "generatedAt": "",
+ "coverage": {
+  "routes": 8,
+  "traced": 6,
+  "partial": 2,
+  "unknown": 0
+ },
+ "flows": [
+  {
+   "method": "DELETE",
+   "path": "/api/widgets/{id}",
+   "file": "app.go",
+   "line": 45,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.DeleteWidget",
+     "file": "widgets/widgets.go",
+     "line": 23,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "DELETE",
+     "file": "widgets/widgets.go",
+     "line": 25,
+     "col": 7,
+     "sql": "DELETE FROM widgets WHERE id = $1",
+     "sqlKind": "write",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/gadgets/{id}",
+   "file": "app.go",
+   "line": 50,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "gadgets.GetGadget",
+     "file": "gadgets/gadgets.go",
+     "line": 35,
+     "col": 6
+    },
+    {
+     "kind": "store",
+     "label": "PgxGadgetStore.Fetch",
+     "file": "gadgets/gadgets.go",
+     "line": 21,
+     "col": 26
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "gadgets/gadgets.go",
+     "line": 23,
+     "col": 9,
+     "sql": "SELECT g.name FROM gadgets g JOIN gizmos z ON z.gadget_id = g.id WHERE g.id = $1",
+     "sqlKind": "read",
+     "tables": [
+      "gadgets",
+      "gizmos"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "gadgets"
+    },
+    {
+     "kind": "table",
+     "label": "gizmos"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     3
+    ],
+    [
+     2,
+     4
+    ]
+   ],
+   "tables": [
+    "gadgets",
+    "gizmos"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/v1/sub/things",
+   "file": "app.go",
+   "line": 57,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.ListWidgets",
+     "file": "widgets/widgets.go",
+     "line": 13,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16,
+     "sql": "SELECT id, name, created_at FROM widgets WHERE org_id = $1 ORDER BY created_at",
+     "sqlKind": "read",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/widgets",
+   "file": "app.go",
+   "line": 44,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.ListWidgets",
+     "file": "widgets/widgets.go",
+     "line": 13,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16,
+     "sql": "SELECT id, name, created_at FROM widgets WHERE org_id = $1 ORDER BY created_at",
+     "sqlKind": "read",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/widgets/search",
+   "file": "app.go",
+   "line": 46,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.SearchWidgets",
+     "file": "widgets/widgets.go",
+     "line": 30,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "widgets/widgets.go",
+     "line": 33,
+     "col": 10,
+     "sql": "SELECT id FROM ⟨dyn⟩",
+     "sqlKind": "read",
+     "partial": true
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ]
+   ],
+   "status": "partial"
+  },
+  {
+   "method": "GET",
+   "path": "/healthz",
+   "file": "app.go",
+   "line": 32,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "fixtureapp.Health",
+     "file": "app.go",
+     "line": 22,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "app.go",
+     "line": 24,
+     "col": 7,
+     "sql": "SELECT 1",
+     "sqlKind": "read"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ]
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/api/gadgets",
+   "file": "app.go",
+   "line": 51,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "gadgets.CreateGadget",
+     "file": "gadgets/gadgets.go",
+     "line": 41,
+     "col": 6
+    },
+    {
+     "kind": "store",
+     "label": "PgxGadgetStore.Insert",
+     "file": "gadgets/gadgets.go",
+     "line": 31,
+     "col": 26
+    },
+    {
+     "kind": "query",
+     "label": "INSERT",
+     "file": "gadgets/gadgets.go",
+     "line": 32,
+     "col": 9,
+     "sql": "INSERT INTO gadgets (name) VALUES ($1)",
+     "sqlKind": "write",
+     "tables": [
+      "gadgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "gadgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     3
+    ]
+   ],
+   "tables": [
+    "gadgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/api/gadgets/{id}/notify",
+   "file": "app.go",
+   "line": 52,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 30
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 35
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "gadgets.NotifyGadget",
+     "file": "gadgets/gadgets.go",
+     "line": 67,
+     "col": 6
+    },
+    {
+     "kind": "unknown",
+     "label": "n.Notify",
+     "reason": "interface fixtureapp/gadgets.Notifier: implementation not statically resolvable"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ]
+   ],
+   "status": "partial"
+  }
+ ]
+}
