@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
 import { openPanel, refreshPanel, postToApp, setIsolationHandler, setRouteChoicesHandler } from './panel';
-import { openIsolation, IsolateArgs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
+import { openIsolation, IsolateArgs, registerIsolationTabs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
 import { ComponentsProvider } from './gallery';
 import { Sidecar, sidecarPhase } from './sidecar';
 import { announceOnVisible, claimSurface } from './toolSurface';
@@ -48,10 +48,16 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 	context.subscriptions.push(
 		componentsView,
 		// Tool-surface isolation (docs/plans/02 §6): the Components tool owns the
-		// app panel and the isolation preview, and neither should outlive it.
+		// app panel, and it should not outlive it.
+		//
+		// The isolation preview is deliberately NOT claimed. It is one member of a
+		// trio (source | stylesheet | canvas) that now closes as a unit, so a core
+		// sweep of the preview would take the user's two editors with it — losing
+		// a whole component workbench to a glance at the Data rail. The trio is
+		// closed by closing it, which isolation.ts handles.
 		announceOnVisible('components', componentsView),
 		claimSurface('components', { viewType: 'burrow.frontendDebugger' }),
-		claimSurface('components', { viewType: 'burrow.frontendIsolation' }),
+		registerIsolationTabs(),
 	);
 
 	// Revealing the Components view warm-starts the sidecar in the background so

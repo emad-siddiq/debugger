@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { hasSamples } from './gallery';
 import { parsePropsSchema, preferredExport, PropSpec } from './propsSkeleton';
+import { decideTrio, TrioState } from './trioLogic';
 import { makeTypeResolver } from './typeResolver';
 
 // Component-isolation workbench (the Framer-like view). Opens the component's
@@ -24,7 +25,9 @@ import { makeTypeResolver } from './typeResolver';
 // Breakpoints tab sends `revealCss` (open an `@media` block where it was
 // authored). Isolating
 // component B replaces component A's source/CSS tabs (dirty editors are kept),
-// so the editor area always shows exactly one component.
+// so the editor area always shows exactly one component. The three surfaces are
+// ONE workbench in both directions: they open together, and closing any one of
+// them closes the other two (see "the trio's lifecycle" below).
 
 /** Where the running sidecar's target dev server lives + the fs allowlist anchor. */
 export interface IsolateTarget {
@@ -65,13 +68,58 @@ let currentUiPort = 0;
 let currentLabel = '';
 let isolationGeneration = 0;
 
+// The trio's lifecycle (see registerIsolationTabs). `trioSeen` is the baseline
+// the tab diff runs against; `isolating` is a COUNTER, not a flag, because the
+// 🎯 drill-in re-enters openIsolation through the command while one is already
+// in flight; `tearingDown` is the cascade's own re-entrance guard; and
+// `layoutIsOurs` records that WE set the editor layout, so teardown only ever
+// resets a layout this file created.
+const TRIO_SETTLE_MS = 150;
+let trioSeen: TrioState = { tsx: false, css: false, preview: false };
+let trioTimer: ReturnType<typeof setTimeout> | undefined;
+let closedColumns: (number | undefined)[] = [];
+let openedColumns = new Set<number | undefined>();
+let isolating = 0;
+let tearingDown = false;
+let layoutIsOurs = false;
+
+/** "One component = its tabs only" is opt-out; a user who set `tidyTabs: false`
+ *  said leave my tabs alone, and that governs the trio cascade too. */
+function tidyEnabled(): boolean {
+	return vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('tidyTabs', true);
+}
+
 /**
  * Reveal the component's source on the left and an isolated preview on the
  * right. Reuses the single preview panel across calls (re-pointing it at the
  * new component). No-ops with a warning if the file is not under the target's
  * `src/` (the isolation harness only serves modules from there).
+ *
+ * The body is wrapped so the trio's tab listener can tell OUR churn (opening
+ * three surfaces, closing the previous pair, re-laying out the columns) from a
+ * user closing a tab. The guard has to span the whole function — the new source
+ * is opened BEFORE the stale pair is closed, and setEditorLayout fires more tab
+ * events after that — and no early return may escape it, hence the wrapper
+ * rather than a flag set inline.
  */
 export async function openIsolation(context: vscode.ExtensionContext, target: IsolateTarget, args: IsolateArgs): Promise<void> {
+	isolating++;
+	try {
+		await openIsolationInner(context, target, args);
+	} finally {
+		// Re-baseline only once the workbench has settled: every tab event our own
+		// opening caused is the NEW normal, never a vanish. Releasing `isolating`
+		// in the same tick would let a late $acceptTabOperation land unguarded.
+		setTimeout(() => {
+			trioSeen = snapshotTrio();
+			closedColumns = [];
+			openedColumns.clear();
+			isolating--;
+		}, TRIO_SETTLE_MS);
+	}
+}
+
+async function openIsolationInner(context: vscode.ExtensionContext, target: IsolateTarget, args: IsolateArgs): Promise<void> {
 	const rel = resolveSrcRel(target.targetDir, args.file);
 	if (!rel) {
 		void vscode.window.showWarningMessage('Frontend Debugger: can only isolate components under the target\'s src/ folder.');
@@ -86,7 +134,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 	// Opening as preview tabs makes the workbench itself do most of the work
 	// (one preview tab per group, self-replacing, and your first keystroke pins
 	// it), so the explicit close below only has to catch what that misses.
-	const tidy = vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('tidyTabs', true);
+	const tidy = tidyEnabled();
 
 	// Left: the real editor. Keeps focus so you can start editing immediately.
 	try {
@@ -115,15 +163,19 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 		await closeStaleComponentTabs([previousFile, previousCss], new Set([abs, cssAbs].filter((p): p is string => !!p)));
 	}
 
-	// Framer-mode "design" layout: source slim on the left, the live canvas wider
-	// on the right. When the component has a colocated stylesheet, the left
-	// column splits into source (top) | CSS (bottom) so markup, styles, and the
-	// live component are all on one screen. Best-effort — a project that can't
-	// set the layout still gets the plain columns.
+	// Framer-mode "design" layout: an even split — the developer's half on the
+	// left, the designer's half on the right. When the component has a colocated
+	// stylesheet the left column splits evenly again into source (top) | CSS
+	// (bottom), so the four quadrants are equal and markup, styles and the live
+	// component are all on one screen. Best-effort — a project that can't set the
+	// layout still gets the plain columns.
 	try {
 		await vscode.commands.executeCommand('vscode.setEditorLayout', cssAbs
-			? { orientation: 0, groups: [{ groups: [{ size: 0.62 }, { size: 0.38 }], size: 0.42 }, { size: 0.58 }] }
-			: { orientation: 0, groups: [{ size: 0.42 }, { size: 0.58 }] });
+			? { orientation: 0, groups: [{ groups: [{ size: 0.5 }, { size: 0.5 }], size: 0.5 }, { size: 0.5 }] }
+			: { orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] });
+		// Only a layout WE set may be reset on teardown — a user who arranged
+		// their own columns and then isolated into them is never re-flattened.
+		layoutIsOurs = true;
 	} catch {
 		// layout is a nicety, not a requirement
 	}
@@ -194,7 +246,11 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
 			{ viewColumn: previewColumn, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
-		preview.onDidDispose(() => { preview = undefined; currentProps = undefined; currentFile = undefined; currentCss = undefined; }, undefined, context.subscriptions);
+		// The webview closing is one of the three ways into the SAME teardown: it
+		// takes the source and CSS with it. onDidDispose is the only route that
+		// fires for every way a webview can die (the X, Close All, a core tool
+		// sweep), so it stays the trigger and teardownIsolation does the work.
+		preview.onDidDispose(() => { void teardownIsolation(); }, undefined, context.subscriptions);
 		// ONE listener for the panel's life. It reads module state (currentLabel),
 		// so re-isolations must NOT register another — that used to multiply every
 		// envelope by the number of isolations.
@@ -218,7 +274,7 @@ export async function openIsolation(context: vscode.ExtensionContext, target: Is
  * component also uses, e.g. a shared stylesheet. The preview webview is never
  * a text input, so it is untouched.
  */
-async function closeStaleComponentTabs(stale: readonly (string | undefined)[], keep: ReadonlySet<string>): Promise<void> {
+async function closeStaleComponentTabs(stale: readonly (string | undefined)[], keep: ReadonlySet<string>, why: 'stale' | 'teardown' = 'stale'): Promise<void> {
 	const staleSet = new Set(stale.filter((p): p is string => !!p && !keep.has(p)));
 	if (!staleSet.size) {
 		return;
@@ -229,7 +285,11 @@ async function closeStaleComponentTabs(stale: readonly (string | undefined)[], k
 	const kept = mine.filter((tab) => tab.isDirty);
 	if (kept.length) {
 		const names = kept.map((tab) => path.basename((tab.input as vscode.TabInputText).uri.fsPath)).join(', ');
-		vscode.window.setStatusBarMessage(`Isolation: kept ${names} — unsaved changes`, 4000);
+		// On teardown the asymmetry needs saying out loud: the rest of the
+		// workbench went away and this one file did not.
+		vscode.window.setStatusBarMessage(why === 'teardown'
+			? `Isolation: closed the preview — kept ${names} (unsaved changes)`
+			: `Isolation: kept ${names} — unsaved changes`, 4000);
 	}
 	const tabs = mine.filter((tab) => !tab.isDirty && !tab.isPinned);
 	if (!tabs.length) {
@@ -240,6 +300,176 @@ async function closeStaleComponentTabs(stale: readonly (string | undefined)[], k
 	} catch {
 		// leftover tabs are clutter, not a failure — never block the isolation
 	}
+}
+
+// ---- the trio's lifecycle --------------------------------------------------
+// Source, stylesheet and preview are ONE workbench: closing any of the three
+// closes the other two. Without this, closing the preview left two orphan
+// editors and closing the source left a canvas rendering a file you were no
+// longer looking at.
+//
+// The detection cannot trust the event payload. `onDidChangeTabs` reports no
+// close REASON, and opens and closes arrive as separate events, so a group
+// merge (isolating a component with no stylesheet drops 3 groups to 2), our own
+// re-isolation, and a genuine close are indistinguishable as they land. So the
+// event only SCHEDULES; after a settle window we re-read the workbench and diff
+// against the last baseline, which makes the first two cases self-cancelling —
+// the editors are back by the time we look. Only a preview tab being swapped
+// for another file still shows a true vanish, and `openedColumns` catches that.
+
+/** The preview panel's tab. The workbench prefixes panel viewTypes; strip it
+ *  rather than matching the prefixed literal (same normalization as
+ *  burrow-core's tabFacts) so this survives that being an implementation
+ *  detail. */
+function isIsolationTab(tab: vscode.Tab): boolean {
+	return tab.input instanceof vscode.TabInputWebview
+		&& tab.input.viewType.replace(/^mainThreadWebview-/, '') === 'burrow.frontendIsolation';
+}
+
+function isTrioTab(tab: vscode.Tab): boolean {
+	if (isIsolationTab(tab)) {
+		return true;
+	}
+	return tab.input instanceof vscode.TabInputText
+		&& (tab.input.uri.fsPath === currentFile || tab.input.uri.fsPath === currentCss);
+}
+
+/** Is this path open in ANY group? A file split across two groups is still
+ *  open when one of them closes. */
+function isPathOpen(p: string | undefined): boolean {
+	return !!p && vscode.window.tabGroups.all.some((group) => group.tabs.some(
+		(tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === p));
+}
+
+function snapshotTrio(): TrioState {
+	return { tsx: isPathOpen(currentFile), css: isPathOpen(currentCss), preview: !!preview };
+}
+
+function onTabsChanged(e: vscode.TabChangeEvent): void {
+	if (!preview || isolating || tearingDown || !tidyEnabled()) {
+		return;
+	}
+	for (const tab of e.opened) {
+		openedColumns.add(tab.group.viewColumn);
+	}
+	const closed = e.closed.filter(isTrioTab);
+	if (!closed.length) {
+		return;
+	}
+	// `tab.group` on a closed tab is still a live ext-host object, but the group
+	// itself may be gone — compare view COLUMNS, never identity.
+	for (const tab of closed) {
+		closedColumns.push(tab.group.viewColumn);
+	}
+	if (trioTimer) {
+		clearTimeout(trioTimer);
+	}
+	trioTimer = setTimeout(() => void reconcileTrio(), TRIO_SETTLE_MS);
+}
+
+async function reconcileTrio(): Promise<void> {
+	trioTimer = undefined;
+	if (!preview || isolating || tearingDown) {
+		return;
+	}
+	const verdict = decideTrio(trioSeen, snapshotTrio(), closedColumns, openedColumns);
+	closedColumns = [];
+	openedColumns.clear();
+	trioSeen = snapshotTrio();
+	if (verdict === 'teardown') {
+		await teardownIsolation();
+	}
+	// idle / replaced / gone: the re-baseline above is the whole response. A
+	// replaced member simply drops out of the trio, so closing either survivor
+	// still cascades.
+}
+
+/**
+ * The ONE close path. Every route in — the webview disposing, a source or CSS
+ * tab closing — lands here, and this is the only place trio state is torn down.
+ *
+ * State is cleared BEFORE any closing happens, so the tab events our own closes
+ * raise (and the onDidDispose that `panel.dispose()` fires re-entrantly) find
+ * `preview === undefined` and return at the first line of onTabsChanged.
+ *
+ * Dirty and pinned editors survive, as everywhere else in this file — but the
+ * preview closes regardless. A WebviewPanel cannot be un-disposed, so letting a
+ * dirty file veto the cascade would restore the exact orphan bug on the most
+ * common path of all: you edited the file, so of course it is dirty.
+ */
+async function teardownIsolation(): Promise<void> {
+	if (tearingDown) {
+		return;
+	}
+	tearingDown = true;
+	const panel = preview;
+	const tsx = currentFile;
+	const css = currentCss;
+	preview = undefined;
+	currentProps = undefined;
+	currentFile = undefined;
+	currentCss = undefined;
+	currentLabel = '';
+	trioSeen = { tsx: false, css: false, preview: false };
+	closedColumns = [];
+	openedColumns.clear();
+	// Drop in-flight reveal work: a provenance response landing now would open a
+	// file into a workbench that no longer exists.
+	isolationGeneration++;
+	if (trioTimer) {
+		clearTimeout(trioTimer);
+		trioTimer = undefined;
+	}
+	try {
+		panel?.dispose();
+		await closeStaleComponentTabs([tsx, css], new Set(), 'teardown');
+		await resetLayoutIfEmpty();
+	} finally {
+		tearingDown = false;
+	}
+}
+
+/** Collapse the isolation grid — but ONLY if we set it and nothing else is
+ *  open. Deliberately not `editorLayoutSingle`/`joinAllGroups`: those merge the
+ *  user's own editors, which is the disturbance this is avoiding. */
+async function resetLayoutIfEmpty(): Promise<void> {
+	if (!layoutIsOurs) {
+		return;
+	}
+	layoutIsOurs = false;
+	if (vscode.window.tabGroups.all.some((group) => group.tabs.length > 0)) {
+		return;
+	}
+	try {
+		await vscode.commands.executeCommand('vscode.setEditorLayout', { orientation: 0, groups: [{}] });
+	} catch {
+		// layout is a nicety, not a requirement
+	}
+}
+
+/** A preview tab left over from the previous window. No WebviewPanelSerializer
+ *  is registered, so the workbench's revive attempt leaves dead "could not be
+ *  restored" chrome that no handle owns — sweep it at activation. */
+function sweepOrphanPreviewTabs(): void {
+	const orphans = vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter(isIsolationTab);
+	if (orphans.length) {
+		void vscode.window.tabGroups.close(orphans, false);
+	}
+}
+
+/** Wire the trio cascade up. Call once from activate; push the result into
+ *  `context.subscriptions`. */
+export function registerIsolationTabs(): vscode.Disposable {
+	sweepOrphanPreviewTabs();
+	return vscode.Disposable.from(
+		vscode.window.tabGroups.onDidChangeTabs(onTabsChanged),
+		new vscode.Disposable(() => {
+			if (trioTimer) {
+				clearTimeout(trioTimer);
+				trioTimer = undefined;
+			}
+		}),
+	);
 }
 
 /**

@@ -259,7 +259,7 @@
 				"burrow.frontendDebugger.tidyTabs": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
+					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. The source, stylesheet and live canvas are one workbench — closing any of the three closes the other two. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
 					"tags": [
 						"burrow"
 					]
