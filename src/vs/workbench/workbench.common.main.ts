@@ -255,6 +255,9 @@ import './contrib/files/browser/explorerViewlet.js';
 import './contrib/files/browser/fileActions.contribution.js';
 import './contrib/files/browser/files.contribution.js';
 
+// BURROW patch 0014 — per-rail editor sets
+import './contrib/burrowRailSets/browser/railEditorSets.contribution.js';
+
 // Bulk Edit
 import './contrib/bulkEdit/browser/bulkEditService.js';
 import './contrib/bulkEdit/browser/preview/bulkEdit.contribution.js';
