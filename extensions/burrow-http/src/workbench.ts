@@ -150,14 +150,43 @@ export class HttpWorkbench implements Disposable {
 		td.hk { opacity: .8; white-space: nowrap; }
 		pre.body { margin: 0; padding: 8px; background: var(--vscode-textCodeBlock-background); border-radius: 3px; white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto; font-family: var(--vscode-editor-font-family, monospace); }
 		.note { opacity: .7; font-size: 12px; margin: 4px 0; }
+		/* The help sheet — anchored, not modal, so you read it while clicking the
+		   thing it describes. Duplicated per surface on purpose (the lab-shell
+		   decision): three extensions cannot share a stylesheet without a bundler. */
+		#helpbtn { flex: 0 0 auto; background: transparent; color: var(--vscode-foreground); border-color: var(--vscode-panel-border); }
+		#help {
+			position: fixed; top: 8px; right: 8px; z-index: 10; width: 400px; max-width: calc(100vw - 16px);
+			max-height: calc(100vh - 24px); overflow: auto; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+			background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground);
+			border: 1px solid var(--vscode-panel-border); border-radius: 6px; box-shadow: 0 8px 26px rgba(0,0,0,.35);
+		}
+		#help .hh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+		#help .hh b { font-size: 13px; }
+		#help .hh button { margin-left: auto; padding: 0 6px; background: transparent; color: inherit; border: 0; cursor: pointer; }
+		#help .lede { opacity: .8; margin-bottom: 6px; }
+		#help .hrow { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid var(--vscode-panel-border); }
+		#help .hk { flex: 0 0 108px; font-weight: 600; }
+		#help .hv { flex: 1; opacity: .85; }
 	</style>
 </head>
 <body>
 	<div class="toolbar">
 		<select id="picker">${options || '<option>(no requests in this .http file)</option>'}</select>
 		<button id="send">Send</button>
+		<button id="helpbtn" title="What is this? — every part of this editor, in one sentence each">?</button>
 	</div>
 	<div id="result"><div class="note">Pick a request and press Send.</div></div>
+	<div id="help" hidden>
+		<div class="hh"><b>API workbench</b><button id="helpclose" title="Close (Esc)">✕</button></div>
+		<div class="lede">The requests in the <code>.http</code> file beside this pane, sent for real against
+			whatever the file's variables point at. Nothing is mocked here.</div>
+		<div class="hrow"><span class="hk">The picker</span><span class="hv">Every request in the bound file, in file order. Add one by writing it in the file — this list follows the file, never the other way round.</span></div>
+		<div class="hrow"><span class="hk">Send</span><span class="hv">Sends the picked request. The same send runs from the CodeLens above each request in the file itself.</span></div>
+		<div class="hrow"><span class="hk">Variables</span><span class="hv">@name = value lines in the file, and the environment this window was launched with. Both resolve at send time, so a variable you just edited takes effect on the next send.</span></div>
+		<div class="hrow"><span class="hk">The chips</span><span class="hv">Status and duration. Green is 2xx, yellow a redirect, red 4xx/5xx or a transport failure — a request that never reached the server says so rather than showing a status it never got.</span></div>
+		<div class="hrow"><span class="hk">Afterwards</span><span class="hv">The API view's Recent group keeps the last ten sends with their status and duration, so you can compare a run against the one before it.</span></div>
+		<div class="hrow"><span class="hk">Esc</span><span class="hv">Closes this sheet, then exits Focus Mode.</span></div>
+	</div>
 	<script nonce="${n}">
 		const vscode = acquireVsCodeApi();
 		const picker = document.getElementById('picker');
@@ -169,11 +198,18 @@ export class HttpWorkbench implements Disposable {
 				vscode.postMessage({ type: 'send', index });
 			}
 		});
+		const help = document.getElementById('help');
+		const setHelp = on => { help.hidden = !on; };
+		document.getElementById('helpbtn').addEventListener('click', () => setHelp(help.hidden));
+		document.getElementById('helpclose').addEventListener('click', () => setHelp(false));
 		// Esc bridge (docs/plans/01 §4): this webview has focus, so the workbench
 		// never sees the keystroke — hand it back so Focus Mode exits from here
-		// exactly as it does from an editor.
+		// exactly as it does from an editor. The help sheet is the shallowest
+		// thing Escape can close, so it goes first.
 		window.addEventListener('keydown', e => {
-			if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); }
+			if (e.key !== 'Escape') { return; }
+			if (!help.hidden) { setHelp(false); return; }
+			vscode.postMessage({ type: 'exitFocus' });
 		});
 		window.addEventListener('message', event => {
 			const msg = event.data;

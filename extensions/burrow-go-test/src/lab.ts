@@ -160,6 +160,23 @@ function html(run: LabRun | undefined): string {
 	}
 	#top button.go { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: transparent; }
 	#stage { flex: 1; overflow: auto; padding: 20px; }
+	/* The help sheet — anchored, not modal, so you read it while clicking the
+	   thing it describes. Duplicated per surface on purpose (the lab-shell
+	   decision): three extensions cannot share a stylesheet without a bundler. */
+	#help {
+		position: fixed; top: 38px; right: 8px; z-index: 10; width: 400px; max-width: calc(100vw - 16px);
+		max-height: calc(100vh - 54px); overflow: auto; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+		background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground);
+		border: 1px solid var(--vscode-panel-border); border-radius: 6px; box-shadow: 0 8px 26px rgba(0,0,0,.35);
+	}
+	#help .hh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+	#help .hh b { font-size: 13px; }
+	#help .hh button { margin-left: auto; padding: 0 6px; background: transparent; border: 0; cursor: pointer; }
+	#help .lede { opacity: .8; margin-bottom: 6px; }
+	#help .hrow { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid var(--vscode-panel-border); }
+	#help .hk { flex: 0 0 108px; font-weight: 600; }
+	#help .hv { flex: 1; opacity: .85; }
+	[hidden] { display: none !important; }
 	/* --- results -------------------------------------------------------- */
 	section { margin-bottom: 22px; }
 	h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
@@ -198,14 +215,36 @@ function html(run: LabRun | undefined): string {
 		<button id="rerun" ${run && run.failed ? '' : 'disabled'}>Re-run failed</button>
 		<button id="race">Race</button>
 		<button id="run" class="go">Run</button>
+		<button id="helpbtn" title="What is this? — every part of this lab, in one sentence each">?</button>
 	</div>
 	<div id="stage">${body}</div>
+	<div id="help" hidden>
+		<div class="hh"><b>Test Lab</b><button id="helpclose" title="Close (Esc)">✕</button></div>
+		<div class="lede">One <code>go test</code> run, read the way you actually read one: what broke, then why,
+			then how long it all took.</div>
+		<div class="hrow"><span class="hk">The order</span><span class="hv">Failures first, always. A green run is a list you scroll past; a red one is the only thing you came here for.</span></div>
+		<div class="hrow"><span class="hk">want / got</span><span class="hv">Go has no assertion library, so the lab recognises the five shapes the standard conventions converge on and lines them up. A failure it cannot parse is shown verbatim rather than reformatted into something it might not mean.</span></div>
+		<div class="hrow"><span class="hk">The bars</span><span class="hv">Each test's duration relative to the slowest in the run — the shape of a slow suite, not a number to optimise.</span></div>
+		<div class="hrow"><span class="hk">Run</span><span class="hv">The packages the Tests section last targeted. <b>Re-run failed</b> narrows to the ones that broke, so a two-minute suite answers a one-line question in seconds.</span></div>
+		<div class="hrow"><span class="hk">Race</span><span class="hv">The same run under <code>-race</code>. It is several times slower and it is the only way a data race announces itself before production does.</span></div>
+		<div class="hrow"><span class="hk">Elsewhere</span><span class="hv">The verdict rolls up per package in the Run view's Tests section, and the same execution path backs the stock Test Explorer — three surfaces, one run.</span></div>
+		<div class="hrow"><span class="hk">Esc</span><span class="hv">Closes this sheet, then exits Focus Mode.</span></div>
+	</div>
 <script nonce="${n}">
 	const vscode = acquireVsCodeApi();
 	for (const [id, type] of [['run', 'run'], ['rerun', 'rerunFailed'], ['race', 'race']]) {
 		document.getElementById(id).addEventListener('click', () => vscode.postMessage({ type }));
 	}
-	window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); } });
+	const help = document.getElementById('help');
+	const setHelp = (on) => { help.hidden = !on; };
+	document.getElementById('helpbtn').addEventListener('click', () => setHelp(help.hidden));
+	document.getElementById('helpclose').addEventListener('click', () => setHelp(false));
+	// The help sheet is the shallowest thing Escape can close, so it goes first.
+	window.addEventListener('keydown', (e) => {
+		if (e.key !== 'Escape') { return; }
+		if (!help.hidden) { setHelp(false); return; }
+		vscode.postMessage({ type: 'exitFocus' });
+	});
 </script>
 </body>
 </html>`;

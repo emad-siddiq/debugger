@@ -12,7 +12,7 @@
 // SQL in place. Colours come from workbench CSS variables so it themes for free.
 
 import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
-import { GridModel } from './grid';
+import { GridModel, MAX_GRID_ROWS } from './grid';
 import { nonce } from './webview';
 
 /** Runs a SQL string and resolves its grid model. Rejects with a message on failure. */
@@ -139,6 +139,23 @@ export class GridPanel {
 		td.date { color: var(--vscode-charts-green); }
 		#banner { padding: 4px 8px; font-size: 11px; opacity: .8; background: var(--vscode-inputValidation-warningBackground, transparent); border-bottom: 1px solid var(--vscode-panel-border); }
 		[hidden] { display: none !important; }
+		/* The help sheet — anchored, not modal, so you read it while clicking the
+		   thing it describes. Duplicated per surface on purpose (the lab-shell
+		   decision): three extensions cannot share a stylesheet without a bundler. */
+		#helpbtn { flex: 0 0 auto; background: transparent; color: var(--vscode-foreground); border-color: var(--vscode-panel-border); }
+		#help {
+			position: fixed; top: 8px; right: 8px; z-index: 10; width: 400px; max-width: calc(100vw - 16px);
+			max-height: calc(100vh - 24px); overflow: auto; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+			background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground);
+			border: 1px solid var(--vscode-panel-border); border-radius: 6px; box-shadow: 0 8px 26px rgba(0,0,0,.35);
+		}
+		#help .hh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+		#help .hh b { font-size: 13px; }
+		#help .hh button { margin-left: auto; padding: 0 6px; background: transparent; color: inherit; border: 0; cursor: pointer; }
+		#help .lede { opacity: .8; margin-bottom: 6px; }
+		#help .hrow { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid var(--vscode-panel-border); }
+		#help .hk { flex: 0 0 108px; font-weight: 600; }
+		#help .hv { flex: 1; opacity: .85; }
 	</style>
 </head>
 <body>
@@ -147,10 +164,22 @@ export class GridPanel {
 		<div id="bar">
 			<button id="run" title="Run (Ctrl/Cmd+Enter)">Run</button>
 			<span id="status"></span>
+			<button id="helpbtn" title="What is this? — every part of this editor, in one sentence each">?</button>
 		</div>
 	</div>
 	<div id="banner" hidden></div>
 	<div id="gridwrap"></div>
+	<div id="help" hidden>
+		<div class="hh"><b>Database explorer</b><button id="helpclose" title="Close (Esc)">✕</button></div>
+		<div class="lede">A SQL scratchpad over the connection the Data view discovered. Every run is a
+			round trip to the real database — there is no cache between you and it.</div>
+		<div class="hrow"><span class="hk">The box</span><span class="hv">Any SQL the connection allows. Clicking a table in the Data view fills this in with a SELECT for you.</span></div>
+		<div class="hrow"><span class="hk">Run</span><span class="hv">⌘↵ / Ctrl+↵ from inside the box. The status line to the right reports rows and elapsed time, or the database's own error.</span></div>
+		<div class="hrow"><span class="hk">Row cap</span><span class="hv">At most ${MAX_GRID_ROWS.toLocaleString()} rows cross to this view, so a forgotten LIMIT cannot hang the window. The banner says when you are seeing a prefix, and the count above it is the honest total.</span></div>
+		<div class="hrow"><span class="hk">Cell colours</span><span class="hv">The column's type, not its value: NULL is greyed italic (never an empty string), numbers right-align, booleans blue, json/jsonb purple, timestamps green as ISO, bytea as \\x hex.</span></div>
+		<div class="hrow"><span class="hk">Writes</span><span class="hv">The Data view's connection row carries the writes guard — locked, this connection is read-only. Unlock it there, deliberately, not here.</span></div>
+		<div class="hrow"><span class="hk">Esc</span><span class="hv">Closes this sheet, then exits Focus Mode.</span></div>
+	</div>
 	<script nonce="${n}">
 		const vscode = acquireVsCodeApi();
 		const $sql = document.getElementById('sql');
@@ -167,11 +196,19 @@ export class GridPanel {
 			if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { run(); e.preventDefault(); }
 		});
 
+		const $help = document.getElementById('help');
+		const setHelp = on => { $help.hidden = !on; };
+		document.getElementById('helpbtn').onclick = () => setHelp($help.hidden);
+		document.getElementById('helpclose').onclick = () => setHelp(false);
+
 		// Esc bridge (docs/plans/01 §4): this webview has focus, so the workbench
 		// never sees the keystroke — hand it back so Focus Mode exits from here
-		// exactly as it does from an editor.
+		// exactly as it does from an editor. The help sheet is the shallowest
+		// thing Escape can close, so it goes first.
 		window.addEventListener('keydown', e => {
-			if (e.key === 'Escape') { post({ type: 'exitFocus' }); }
+			if (e.key !== 'Escape') { return; }
+			if (!$help.hidden) { setHelp(false); return; }
+			post({ type: 'exitFocus' });
 		});
 
 		function setStatus(text, isError) {
