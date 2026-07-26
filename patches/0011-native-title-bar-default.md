@@ -2,8 +2,9 @@
 
 - **Layer:** 3 (one default-value change in the config schema the main process reads)
 - **Task:** — (WO-01, `debugger/docs/plans/01` — chrome removal)
-- **Upstream files touched:** `src/vs/workbench/electron-browser/desktop.contribution.ts`
-- **Size:** 1 line (one setting default)
+- **Upstream files touched:** `src/vs/workbench/electron-browser/desktop.contribution.ts`,
+  `src/vs/platform/window/common/window.ts`
+- **Size:** 2 lines (two defaults — see "The second half", below)
 - **Last verified against:** upstream 1.128.0
 
 ## Why
@@ -30,9 +31,39 @@ opt back with an explicit `"window.titleBarStyle": "custom"`. The belt-and-brace
 `window.customTitleBarVisibility: "never"` + `window.commandCenter: false` in
 `burrow-core`'s `configurationDefaults` remain (they apply in the renderer).
 
+## The second half — `getTitleBarStyle()` (added 2026-07-26)
+
+The schema default above is **not enough**, and the reason is the mirror image of
+the trap in "Why". `desktop.contribution.ts` is a **workbench** contribution:
+only the renderer registers it. The **main process** decides the window frame at
+creation time, and calls `getTitleBarStyle()`
+(`src/vs/platform/window/common/window.ts`) with a configuration that carries no
+such default — so it fell through to its hardcoded `return TitlebarStyle.CUSTOM`
+and built a frameless *hidden-inset* window. The renderer, which **does** see
+`'native'`, then drew no custom title bar, and `customTitleBarVisibility: never`
+guaranteed it.
+
+The result was a window with **no title strip at all**, and macOS painting the
+traffic lights straight onto the activity bar's first icon (Explorer, at content
+`(0,0)`–`(48,48)`). Measured from the main process: `getBounds().height ===
+getContentBounds().height`, i.e. **zero window chrome**.
+
+So the fallback in `getTitleBarStyle()` is flipped to `NATIVE` too. That file is
+loaded by both processes, which is exactly why it is the right place for the
+default to live. An explicit `"window.titleBarStyle": "custom"` still wins, and
+`isWeb` still forces `CUSTOM` before this line is reached.
+
+**Reported by the user, 2026-07-26** ("the mac traffic light buttons overlap with
+the explorer"). Worth stating plainly: the original patch was verified by checking
+that the *custom title bar was gone*, which it was — the half that was never
+checked is that something native replaced it.
+
 ## Rebase notes
 
 - Single-token default change. If upstream restructures this property, re-apply:
   `window.titleBarStyle` default → `native`. Grep `BURROW patch 0011`.
+- **Two sites**, one per process boundary: the schema default in
+  `desktop.contribution.ts` *and* the fallback `return` in `getTitleBarStyle()`.
+  Changing only the first reproduces the traffic-light overlap.
 - If upstream flips the default themselves, or exposes a `product.json` hook for
   the default title-bar style, this patch retires.

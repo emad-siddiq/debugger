@@ -283,7 +283,15 @@ export function getTitleBarStyle(configurationService: IConfigurationService): T
 		}
 	}
 
-	return TitlebarStyle.CUSTOM; // default to custom on all OS
+	// BURROW patch 0011 — was CUSTOM. The schema default was already flipped to
+	// 'native' in desktop.contribution.ts, but that is a WORKBENCH contribution:
+	// only the renderer registers it. The MAIN process decides the window frame at
+	// creation time and calls this with a configuration that has no such default,
+	// so it fell through to CUSTOM and built a frameless (hidden-inset) window —
+	// while the renderer, which does see 'native', drew no custom title bar. The
+	// result was a window with NO title strip at all and macOS painting the
+	// traffic lights straight onto the activity bar's first icon.
+	return TitlebarStyle.NATIVE;
 }
 
 export function getWindowControlsStyle(configurationService: IConfigurationService): WindowControlsStyle {
