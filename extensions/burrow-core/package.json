@@ -163,7 +163,6 @@
 			"zenMode.silentNotifications": true,
 			"chat.commandCenter.enabled": false,
 			"window.commandCenter": false,
-			"workbench.secondarySideBar.defaultVisibility": "hidden",
 			"workbench.navigationControl.enabled": false,
 			"workbench.layoutControl.enabled": false,
 			"workbench.editor.editorActionsLocation": "default",
