@@ -4,7 +4,12 @@
 SHELL := /bin/bash
 ARCH  := $(shell uname -m)
 
-.PHONY: help node-check deps dev dist ledger-check clean
+.PHONY: help node-check deps dev dist install ledger-check clean
+
+# Where `gulp vscode-darwin-<arch>` leaves the packaged app, and where macOS
+# needs it for Launchpad to pick it up.
+APP     := .build/electron/Burrow — Go IDE.app
+INSTALL := /Applications/Burrow.app
 
 help:
 	@echo "Burrow build targets:"
@@ -12,6 +17,7 @@ help:
 	@echo "  make deps         npm ci (Electron + native modules)"
 	@echo "  make dev          run branded app from source (scripts/code.sh)"
 	@echo "  make dist         packaged .app (gulp vscode-darwin-$(ARCH))"
+	@echo "  make install      copy the packaged .app to $(INSTALL) for Launchpad"
 	@echo "  make ledger-check  fail if core-source diffs lack a patch ledger entry"
 
 node-check:
@@ -28,6 +34,19 @@ dev: node-check
 
 dist: node-check
 	npm run gulp vscode-darwin-$(ARCH)
+
+# Launchpad indexes /Applications, so installing IS copying there. The ad-hoc
+# signature is what lets a locally-built, un-notarized app launch at all: the
+# gulp output carries a stale signature once we have changed its contents, and
+# macOS kills it on sight. `-s -` signs with no identity, which Gatekeeper
+# accepts for a local build (full notarization is task 13).
+install:
+	@test -d "$(APP)" || { echo "No packaged app at '$(APP)' — run 'make dist' first."; exit 1; }
+	rm -rf "$(INSTALL)"
+	cp -R "$(APP)" "$(INSTALL)"
+	codesign --force --deep --sign - "$(INSTALL)"
+	@echo "Installed $(INSTALL) — open Launchpad, or: open -a Burrow"
+	@echo "First launch may need right-click -> Open (un-notarized local build)."
 
 ledger-check:
 	node build/burrow/check-ledger.js
