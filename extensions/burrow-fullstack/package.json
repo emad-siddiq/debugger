@@ -89,6 +89,22 @@
 					"tags": [
 						"burrow"
 					]
+				},
+				"burrow.fullstack.backendHealthUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:8080/healthz",
+					"markdownDescription": "URL polled to decide the backend tier is really up. `startDebugging` resolves when the debug *session* starts — for `dlv dap` that is before Go has been built, let alone listening — so the compound waits for this to answer before it reports the backend up. Empty = skip the check and report the tier up as soon as the session starts.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.fullstack.backendHealthTimeoutMs": {
+					"type": "number",
+					"default": 300000,
+					"markdownDescription": "How long to wait for `#burrow.fullstack.backendHealthUrl#` before calling the backend tier down. Generous by default: on a cold Go build cache `dlv` can take minutes before the program runs at all.",
+					"tags": [
+						"burrow"
+					]
 				}
 			}
 		},

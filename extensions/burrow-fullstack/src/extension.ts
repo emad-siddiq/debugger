@@ -276,6 +276,11 @@ async function debugFullStack(out: vscode.OutputChannel, afterBackendUp?: () => 
 				if (!started) {
 					throw new Error(`the "${backendConfig}" configuration did not start — check .vscode/launch.json, that dlv is installed, and (on macOS) that Developer Mode is enabled: sudo DevToolsSecurity -enable`);
 				}
+				// startDebugging resolves when the SESSION starts, which for `dlv dap`
+				// is before Go has been built, let alone booted and listening. Saying
+				// "backend up" there is a promise the tier has not made: the developer
+				// opens the app and gets connection-refused. Wait for it to answer.
+				await waitForBackend();
 				return true;
 			});
 			if (backendUp) {
@@ -436,6 +441,35 @@ async function waitForApp(timeoutMs = 60000): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
 	throw new Error('the frontend restarted into live mode but never started serving again');
+}
+
+/**
+ * Poll the backend until it actually answers.
+ *
+ * `dlv dap` builds the program before it runs it, so on a cold Go cache the gap
+ * between "session started" and "API listening" is minutes, not milliseconds.
+ * The timeout is generous for that reason — and when it does expire, the most
+ * common cause is not slowness but a program halted at a breakpoint that sits
+ * before the listener, so the message says so.
+ */
+async function waitForBackend(): Promise<void> {
+	const url = cfg('backendHealthUrl', 'http://127.0.0.1:8080/healthz');
+	if (!url) {
+		return;
+	}
+	const timeoutMs = Number(cfg('backendHealthTimeoutMs', 300000)) || 300000;
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		// `status < 500` rather than `ok`: a tier that answers at all is up. A 404
+		// from a health path that does not exist still proves it is listening.
+		const up = await fetch(url, { signal: AbortSignal.timeout(2000) })
+			.then((r) => r.status < 500, () => false);
+		if (up) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+	throw new Error(`the debug session started but ${url} never answered within ${Math.round(timeoutMs / 1000)}s — the program is most likely halted at a breakpoint that runs before it listens (or set burrow.fullstack.backendHealthUrl to '' to skip this check)`);
 }
 
 /** The running sidecar's UI port, via the frontend-debugger's read-only API. */
