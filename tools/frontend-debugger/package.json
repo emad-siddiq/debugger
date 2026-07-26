@@ -12,7 +12,7 @@
     "oracle": "node .claude/oracle/oracle.mjs",
     "verify": "node test/verify.mjs",
     "controls": "node test/isolationControls.mjs",
-    "unit": "node --test test/isolateHarness.test.mjs",
+    "unit": "node --test test/isolateHarness.test.mjs test/conditionalStates.test.mjs",
     "sweep": "node test/renderSweep.mjs"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ import path from 'node:path'
 import babel from '@babel/core'
 import { buildIsolateHtml } from './isolateHarness.js'
 import { locateProdCss } from './prodCss.js'
+import { scanConditionalStates } from './conditionalStates.js'
 
 // ---------------------------------------------------------------------------
 // Babel plugin: stamp every host JSX element with its source coordinates.
@@ -122,6 +123,22 @@ function sampleCandidates(moduleRel) {
   return ['ts', 'tsx', 'js', 'jsx'].map((ext) => `${stem}.samples.${ext}`)
 }
 
+// The component's conditional branches, for the harness's States tab. A parse
+// failure is not an error here — the component still renders, it just gets no
+// States tab, so every failure path returns null and says nothing.
+function readStates(frontendDir, moduleRel, schema) {
+  try {
+    const abs = path.join(frontendDir, moduleRel)
+    if (!fs.existsSync(abs)) return null
+    const source = fs.readFileSync(abs, 'utf8')
+    if (source.length > 400_000) return null // a generated file, not a component
+    const { states, parsed } = scanConditionalStates(source, { schema })
+    return parsed ? states : null
+  } catch {
+    return null
+  }
+}
+
 // Whether the target declares a dependency (prod or dev). Read from the target's
 // package.json rather than probing node_modules — in the merged docker setup the
 // target's deps live at a shared volume, not under <frontendDir>/node_modules, so
@@ -231,6 +248,11 @@ export function inspectorPlugin({
           // project root, so the harness needs no cross-origin call to the
           // sidecar API. Absent when the target has never been built.
           prodCss: locateProdCss(frontendDir),
+          // The branches this component renders on (loading / error / empty …),
+          // parsed from its source HERE rather than in the extension: the
+          // standalone SPA builds isolate URLs too, and the sidecar is the one
+          // process both paths go through. Null when the file cannot be read.
+          states: readStates(frontendDir, moduleRel, schema),
           css: firstExisting(frontendDir, [
             'src/index.css',
             'src/main.css',

@@ -6,8 +6,10 @@
 //               Tablet 768 / Desktop 1280; stage is also drag-resizable) ·
 //               labeled backgrounds (App/Dark/Checker) · dev|prod-css ·
 //               🎯 Inspect · panel ⚙
-//   side panel — two tabs (⚙ toggles the whole panel); drag its left edge to
-//               resize (width persisted).
+//   bottom dock — tabs (⚙ toggles the whole dock, ⌄ in its strip hides it);
+//               drag its top edge to resize (height persisted). It docks BELOW
+//               the canvas, the terminal's shape, so the component keeps the
+//               window's full width; its rows flow into as many columns as fit.
 //               Props: THE one props-editing surface — typed controls from the
 //               extension's parsed schema (`schema` query param), grouped
 //               Required then Optional, sample picker + Save-sample embedded,
@@ -133,8 +135,10 @@ export function buildIsolateHtml(cfg) {
     padding: 0 6px; border-radius: 3px; white-space: nowrap;
   }
   #iso-pick-tag .enter { opacity: .85; font-style: italic; margin-left: 6px; }
-  #iso-main { flex: 1; display: flex; min-height: 0; }
-  #iso-canvas { flex: 1; overflow: auto; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
+  /* Column, not row: the panel is a BOTTOM dock (the terminal's shape), so the
+     component gets the window's full width and the panel collapses downwards. */
+  #iso-main { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  #iso-canvas { flex: 1; min-height: 0; overflow: auto; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
   #iso-canvas.bg-dark { background: #101418; }
   #iso-canvas.bg-checker {
     background-image: linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%),
@@ -146,21 +150,63 @@ export function buildIsolateHtml(cfg) {
   #iso-canvas.bg-dark #iso-stage.frame { background: #101418; outline-color: #333c45; }
   #burrow-iso-root { padding: 16px; min-height: 40px; }
   #iso-panel {
-    flex: none; width: 280px; overflow: hidden; background: #15181e; color: #c9d1d9;
-    border-left: 1px solid #2b3138; padding: 8px; display: flex; flex-direction: column; gap: 8px;
+    flex: none; height: 260px; overflow: hidden; background: #15181e; color: #c9d1d9;
+    border-top: 1px solid #2b3138; padding: 8px; display: flex; flex-direction: column; gap: 8px;
   }
   #iso-panel.hidden { display: none; }
   #iso-panel h3 { margin: 2px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; }
   #iso-panel .phint { color: #6e7681; font-size: 10px; margin-top: 1px; }
-  #iso-tabs { flex: none; display: flex; gap: 2px; border-bottom: 1px solid #2b3138; }
+  #iso-tabs { flex: none; display: flex; align-items: center; gap: 2px; border-bottom: 1px solid #2b3138; }
   #iso-tabs .ptab {
     border: 0; background: none; color: #8b949e; font: inherit; cursor: pointer;
     padding: 3px 8px; border-bottom: 2px solid transparent;
   }
   #iso-tabs .ptab:hover { color: #e6edf3; }
   #iso-tabs .ptab.on { color: #e6edf3; border-bottom-color: #2f81f7; }
-  #iso-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  /* The dock's own hide button, where a docked panel's is: far end of its tab
+     strip. The top bar's toggle stays the way BACK, since this one goes with it. */
+  #iso-tabs .phide {
+    margin-left: auto; border: 0; background: none; color: #8b949e; font: inherit;
+    cursor: pointer; padding: 2px 6px; border-radius: 4px; flex: none;
+  }
+  #iso-tabs .phide:hover { background: #262c34; color: #e6edf3; }
+  /* Columns, because the dock is as wide as the window: one 280px-wide ladder of
+     controls with a metre of empty space beside it would waste the whole point of
+     moving it down here. Rows flow into as many columns as fit; headings, hints
+     and the full-width editors span the lot so the groups stay legible. */
+  #iso-body {
+    flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px 14px;
+  }
+  #iso-body > h3, #iso-body > .phint, #iso-body > .bp-note, #iso-body > .st-bar,
+  #iso-body > .srow, #iso-body > details, #iso-body > #iso-filter { grid-column: 1 / -1; }
   .bp-note { color: #6e7681; font-size: 10px; line-height: 1.45; }
+  /* States: one card per branch. The card carries its own condition, so the
+     grid can flow them into columns without a header to anchor them to. */
+  .st-row {
+    border: 1px solid #2b3138; border-radius: 5px; padding: 5px 6px;
+    display: flex; flex-direction: column; gap: 3px; background: #1a1e25;
+  }
+  .st-row.on { border-color: #2f81f7; background: #17233a; }
+  .st-row.blocked { opacity: .72; }
+  .st-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .st-go { flex: none; }
+  .st-go:disabled { cursor: default; color: #6e7681; }
+  .st-cond {
+    flex: 1; min-width: 0; color: #e6edf3; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .st-foot { color: #6e7681; font-size: 10px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+  .st-kind {
+    flex: none; border: 1px solid #2b3138; border-radius: 3px; padding: 0 4px;
+    color: #8b949e; text-transform: lowercase;
+  }
+  .st-line { border: 0; background: none; color: #58a6ff; font: inherit; cursor: pointer; padding: 0; text-decoration: underline dotted #30475e; }
+  .st-line:hover { color: #79c0ff; }
+  .st-why { color: #8b949e; font-size: 10px; line-height: 1.4; }
+  .st-bar { display: flex; align-items: center; gap: 8px; }
+  .st-bar .tbtn:disabled { opacity: .5; cursor: default; }
+  .st-now { color: #8b949e; font-size: 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bp-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
   .bp-row.hl .bp-media { color: #e6edf3; }
   .bp-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #30363d; border: 1px solid #444c56; }
@@ -230,7 +276,7 @@ export function buildIsolateHtml(cfg) {
   .prow .pname.scrub { cursor: ew-resize; }
   .prow .pname.scrub:hover { color: #58a6ff; }
   body.scrub-x { cursor: ew-resize; user-select: none; }
-  body.resize-x { cursor: col-resize; user-select: none; }
+  body.resize-y { cursor: row-resize; user-select: none; }
   .colrow input[type=color] {
     flex: none; width: 22px; height: 20px; padding: 0; cursor: pointer;
     background: #0d1117; border: 1px solid #2b3138; border-radius: 4px;
@@ -247,11 +293,32 @@ export function buildIsolateHtml(cfg) {
   }
   #iso-filter::placeholder { color: #6e7681; }
   .prow.filtered, #iso-body h3.filtered { display: none; }
-  #iso-grip { flex: none; width: 5px; cursor: col-resize; background: transparent; }
+  #iso-grip { flex: none; height: 5px; cursor: row-resize; background: transparent; }
   #iso-grip:hover, #iso-grip.dragging { background: #2b3138; }
   #iso-grip.hidden { display: none; }
   .srow { display: flex; gap: 6px; align-items: center; }
   .srow select { flex: 1; }
+  /* The help sheet. Anchored, not modal: you read it WHILE clicking the thing it
+     describes, so there is no scrim and the page underneath stays live. */
+  #iso-help {
+    position: fixed; top: 32px; right: 8px; z-index: 10001; width: 400px;
+    max-width: calc(100vw - 16px); max-height: calc(100vh - 64px); overflow: auto;
+    display: none; background: #15181e; color: #c9d1d9; border: 1px solid #2b3138;
+    border-radius: 8px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    font-size: 11px; line-height: 1.55;
+  }
+  #iso-help.on { display: block; }
+  #iso-help .hhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  #iso-help .hhead b { color: #e6edf3; font-size: 12px; }
+  #iso-help .hhead .hclose { margin-left: auto; }
+  #iso-help .lede { color: #8b949e; margin-bottom: 4px; }
+  #iso-help h4 {
+    margin: 10px 0 3px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: .06em; color: #8b949e; border-top: 1px solid #2b3138; padding-top: 7px;
+  }
+  #iso-help .hrow { display: flex; gap: 8px; padding: 1px 0; }
+  #iso-help .hkey { flex: none; width: 96px; color: #e6edf3; font-weight: 600; }
+  #iso-help .hval { flex: 1; min-width: 0; color: #8b949e; }
   .burrow-iso-error {
     margin: 12px; padding: 12px 14px; border-radius: 8px;
     background: #2b0f12; color: #ffd7d7; border: 1px solid #7f1d1d;
@@ -348,7 +415,7 @@ class Boundary extends Component {
     if (this.state.err) {
       return h('pre', { className: 'burrow-iso-error' },
         String((this.state.err && this.state.err.stack) || this.state.err),
-        h('span', { className: 'hint' }, 'Adjust the props in the panel on the right (⚙) — object-typed props may need realistic values.'))
+        h('span', { className: 'hint' }, 'Adjust the props in the panel below (⚙) — object-typed props may need realistic values.'))
     }
     return this.props.children
   }
@@ -390,31 +457,33 @@ const store = {
   set(k, v) { try { localStorage.setItem('burrow.iso.' + k, String(v)) } catch (e) {} },
 }
 
-const PANEL_MIN = 220
-const PANEL_GUTTER = 240 // the canvas never gets squeezed below this
-function setPanelWidth(px) {
-  const max = Math.max(PANEL_MIN, window.innerWidth - PANEL_GUTTER)
-  const w = Math.round(Math.min(max, Math.max(PANEL_MIN, px)))
-  panel.style.width = w + 'px'
-  return w
+const PANEL_MIN = 90    // the tab strip plus one row of controls
+const PANEL_GUTTER = 160 // the canvas never gets squeezed below this
+function setPanelHeight(px) {
+  const max = Math.max(PANEL_MIN, window.innerHeight - PANEL_GUTTER)
+  const h = Math.round(Math.min(max, Math.max(PANEL_MIN, px)))
+  panel.style.height = h + 'px'
+  return h
 }
 
 if (grip) {
   grip.addEventListener('pointerdown', (e) => {
     e.preventDefault()
-    const startX = e.clientX
-    const startW = panel.getBoundingClientRect().width
+    const startY = e.clientY
+    const startH = panel.getBoundingClientRect().height
     grip.classList.add('dragging')
-    document.body.classList.add('resize-x')
+    document.body.classList.add('resize-y')
     try { grip.setPointerCapture(e.pointerId) } catch (err) {}
-    const move = (ev) => setPanelWidth(startW + (startX - ev.clientX))
+    // Drag UP to grow: the grip is the dock's top edge, so the delta is
+    // start-minus-current, the same sign the right-hand dock used for x.
+    const move = (ev) => setPanelHeight(startH + (startY - ev.clientY))
     const up = (ev) => {
       grip.removeEventListener('pointermove', move)
       grip.removeEventListener('pointerup', up)
       grip.removeEventListener('pointercancel', up)
       grip.classList.remove('dragging')
-      document.body.classList.remove('resize-x')
-      store.set('panelWidth', setPanelWidth(startW + (startX - ev.clientX)))
+      document.body.classList.remove('resize-y')
+      store.set('panelHeight', setPanelHeight(startH + (startY - ev.clientY)))
     }
     grip.addEventListener('pointermove', move)
     grip.addEventListener('pointerup', up)
@@ -437,12 +506,13 @@ function setStageWidth(w) {
   if (widthSelect) widthSelect.value = String(w)
 }
 
-// Backgrounds have two shapes too (a row of buttons, and one cycling button
-// when there is no room for the row), so one function owns the state.
+// What is drawn BEHIND the component — not a theme switcher, which is what the
+// three one-word labels used to read as. The caption in the bar says "behind",
+// and each label now names a surface rather than a mood.
 const BGS = [
-  ['App', '', "The app's own background"],
-  ['Dark', 'bg-dark', 'Dark canvas — check light-on-dark rendering'],
-  ['▦ Checker', 'bg-checker', 'Transparency checkerboard — see through transparent areas'],
+  ['App bg', '', "The app's own page background — what the component sits on in the real app"],
+  ['Dark', 'bg-dark', 'A dark surface behind the component — checks light-on-dark rendering. This does NOT switch the app to dark mode'],
+  ['▦ Checker', 'bg-checker', 'A checkerboard behind the component, so anything transparent shows as squares'],
 ]
 let bgButtons = []
 let bgCycle = null
@@ -491,9 +561,9 @@ function buildTopBar(label) {
       el('span', { class: 'name', title: CFG.module }, label),
       el('span', { class: 'prov', id: 'iso-prov' }),
       el('span', { class: 'sep' }),
-      el('span', { class: 'tlabel' }, 'width'), wset, widthSelect,
+      el('span', { class: 'tlabel', title: 'How wide the stage the component is mounted on is' }, 'width'), wset, widthSelect,
       el('span', { class: 'sep' }),
-      el('span', { class: 'tlabel' }, 'bg'), bgset, bgCycle,
+      el('span', { class: 'tlabel', title: 'What is drawn behind the component. Not a theme switch — the component renders the same either way' }, 'behind'), bgset, bgCycle,
       ...cssButtons()),
     el('span', { class: 'rgroup' },
       el('button', {
@@ -501,9 +571,56 @@ function buildTopBar(label) {
         title: 'Inspect — hover a part to see which component renders it; click to open its code and CSS in the editor; Alt-click (or double-click) a child component to enter it. Esc exits.',
         onclick: () => setInspect(!inspectOn),
       }, '🎯 Inspect'),
-      el('button', { class: 'tbtn', title: 'Show/hide the props panel', onclick: () => setPanelVisible(panel.classList.contains('hidden')) }, '⚙ props')),
+      el('button', { class: 'tbtn', title: 'Show/hide the props panel docked below', onclick: () => setPanelVisible(panel.classList.contains('hidden')) }, '⚙ props'),
+      el('button', { class: 'tbtn', id: 'iso-help-btn', title: 'What is all this? — every control on this page, in one sentence each', onclick: () => setHelp(!helpOn) }, '?')),
   )
   watchTopBar(top)
+}
+
+// ---- help sheet ------------------------------------------------------------
+// The page has eleven controls and no room to caption any of them, so the
+// captions live here instead of in tooltips nobody hovers. One screen, plain
+// sentences, and it names the two things that read as something they are not:
+// "behind" is not a theme switch, and Responsive is not debugger breakpoints.
+let helpOn = false
+let helpEl = null
+const hrow = (k, v) => el('div', { class: 'hrow' }, el('span', { class: 'hkey' }, k), el('span', { class: 'hval' }, v))
+
+function buildHelp() {
+  const box = el('div', { id: 'iso-help' },
+    el('div', { class: 'hhead' },
+      el('b', null, 'Component isolation'),
+      el('button', { class: 'mini hclose', title: 'Close (Esc)', onclick: () => setHelp(false) }, '✕')),
+    el('div', { class: 'lede' },
+      'One component, mounted on its own with the app\\'s providers and router around it. '
+      + 'Everything you change here is live and in-memory — nothing touches your files until you press Save as sample.'),
+
+    el('h4', null, 'Top bar'),
+    hrow('name + chip', 'The component, then where its props came from: live (captured from the running app) · sample:NAME · SAMPLE_PROPS · synth (invented from the prop types) · empty.'),
+    hrow('width', 'How wide the stage under the component is. Fit hugs it; the presets frame it at phone/tablet/desktop widths. Drag the stage corner for anything in between.'),
+    hrow('behind', 'What is painted behind the component. App bg is the page background it really sits on, Dark checks light-on-dark, ▦ Checker exposes transparency. It does not change the component.'),
+    hrow('css', 'Swap the dev stylesheet for the built production one, to catch styles that only differ after a build.'),
+    hrow('🎯 Inspect', 'Hover any part to see which component renders it; click to open its JSX and CSS in the editor; Alt-click a child component to isolate that one instead. Esc leaves.'),
+    hrow('⚙ props', 'Show or hide the panel docked below.'),
+
+    el('h4', null, 'The panel below'),
+    hrow('Props', 'One typed control per prop — switch, segments, slider, colour, text, JSON. Required props are grouped first and marked with a red dot. ⟲ clears one prop, Reset all clears the lot, and Advanced holds the raw JSON if you would rather type it.'),
+    hrow('States', 'The conditions this component branches on, read out of its own source. Click one to see that branch — loading, error, empty, disabled. Grey means the harness cannot drive it from props (internal state), and it says so.'),
+    hrow('Responsive', 'The @media widths your stylesheets switch at — CSS breakpoints, NOT debugger breakpoints. A green dot means that query matches the preview right now; → Npx resizes the stage to it; clicking the query opens it in the CSS editor.'),
+    hrow('resize', 'Drag the panel\\'s top edge to resize it, ⌄ in its tab strip to hide it. It remembers the height.'),
+
+    el('h4', null, 'Keys'),
+    hrow('Esc', 'Closes this sheet, then leaves Inspect, then exits Focus Mode.'))
+  document.body.append(box)
+  return box
+}
+
+function setHelp(on) {
+  helpOn = on
+  if (!helpEl) helpEl = buildHelp()
+  helpEl.classList.toggle('on', on)
+  const btn = document.getElementById('iso-help-btn')
+  if (btn) btn.classList.toggle('on', on)
 }
 
 // Shrink the bar in two steps as the canvas column narrows: drop the uppercase
@@ -670,7 +787,10 @@ function onPickKey(e) { if (e.key === 'Escape') setInspect(false) }
 // Mode. Inspect mode claims Escape first (onPickKey above) — one Escape should
 // leave inspect, not the whole mode, so this stays out of the way while it is on.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !inspectOn) report('exitFocus')
+  if (e.key !== 'Escape' || inspectOn) return
+  // The help sheet is the shallowest thing Escape can close, so it goes first.
+  if (helpOn) { setHelp(false); return }
+  report('exitFocus')
 })
 
 function setInspect(on) {
@@ -799,14 +919,137 @@ function bpRow(entry) {
 function buildBreakpointsTab(body) {
   const all = scanBreakpoints()
   const affecting = all.filter((e) => e.affects)
+  const live = affecting.filter((e) => e.active).length
+  // Say what this list IS before showing it. In an IDE whose other panels are
+  // full of debugger breakpoints, a tab of @media widths needs the disclaimer.
   body.append(el('div', { class: 'bp-note' },
-    'Dots follow the preview frame (' + window.innerWidth + 'px wide) — drag the editor edge to cross a breakpoint. → sizes the stage.'))
-  body.append(el('h3', null, 'Affecting this component'))
-  if (!affecting.length) body.append(el('div', { class: 'phint' }, 'No responsive rules reach this component.'))
+    'The widths your CSS switches at — @media rules from the loaded stylesheets, not debugger breakpoints. '
+    + 'A green dot means the rule applies at the preview\\'s current width ('
+    + window.innerWidth + 'px): ' + (live ? live + ' of ' + affecting.length + ' reaching this component' : 'none of them')
+    + ' right now. Press → Npx to resize the stage to a rule, or click the rule to open it in the CSS editor.'))
+  body.append(el('h3', null, 'Reaching this component'))
+  if (!affecting.length) {
+    body.append(el('div', { class: 'phint' },
+      'None — this component looks the same at every width. That is a finding, not an error: its responsiveness comes from whatever lays it out.'))
+  }
   for (const entry of affecting) body.append(bpRow(entry))
-  body.append(el('h3', null, 'All breakpoints in the stylesheet'))
-  if (!all.length) body.append(el('div', { class: 'phint' }, 'This preview loaded no @media rules.'))
+  body.append(el('h3', null, 'Everywhere else in the loaded CSS'))
+  if (!all.length) body.append(el('div', { class: 'phint' }, 'This preview loaded no @media rules at all.'))
   for (const entry of all) body.append(bpRow(entry))
+}
+
+// ---- states tab ------------------------------------------------------------
+// A component almost never has one appearance: it has an early return for
+// loading, a guarded render for error, an empty list, a disabled button. The
+// sidecar parses those branches out of the component's own source (see
+// server/conditionalStates.js) and this tab turns each one into a single click.
+//
+// Two rules make it trustworthy rather than magic:
+//   1. A state the harness cannot reach from props (internal useState, a value
+//      computed in the body) is still LISTED, greyed, with the reason. You learn
+//      the branch exists even where the click cannot exist.
+//   2. Applying one is a props edit like any other — the Props tab shows exactly
+//      what changed, and Back to start puts it back.
+const STATES = Array.isArray(CFG.states) ? CFG.states : null
+let activeState = null
+
+// Set one prop-rooted path, copying the objects along the way so the seed we
+// keep resetting to is never mutated. A path is at most two deep by
+// construction (conditionalStates.js), which is why this stays this small.
+function setPath(target, path, value) {
+  if (path.length === 1) { target[path[0]] = value; return }
+  const head = path[0]
+  const base = target[head]
+  target[head] = (base && typeof base === 'object' && !Array.isArray(base)) ? { ...base } : {}
+  setPath(target[head], path.slice(1), value)
+}
+
+function applyState(index) {
+  const st = STATES && STATES[index]
+  if (!st || !st.ops) return
+  // From the SEED, not from whatever is on screen: two states applied in a row
+  // would otherwise compound into a third thing that matches neither branch.
+  const next = clone(seedProps)
+  for (const op of st.ops) setPath(next, op.path, op.value)
+  for (const path of (st.unset || [])) {
+    if (path.length === 1) delete next[path[0]]
+    else setPath(next, path, undefined)
+  }
+  rawProps = next
+  activeState = index
+  isoRoute = routeOf(rawProps)
+  buildPanel()
+  renderFn()
+}
+
+function clearState() {
+  rawProps = clone(seedProps)
+  activeState = null
+  isoRoute = routeOf(rawProps)
+  buildPanel()
+  renderFn()
+}
+
+function stateRow(st, index) {
+  const on = activeState === index
+  const go = el('button', {
+    class: 'tbtn st-go' + (on ? ' on' : ''),
+    title: st.blocked
+      ? 'Cannot be driven from props: ' + st.blocked
+      : 'Render this branch — sets ' + describePatch(st),
+    onclick: () => (on ? clearState() : applyState(index)),
+  }, on ? '● showing' : (st.blocked ? '— can\\'t set' : '▶ show'))
+  // Set as a property, not an attribute: el() would happily write
+  // disabled="null" for the enabled case and disable every row.
+  if (st.blocked) go.disabled = true
+  const head = el('div', { class: 'st-head' }, go, el('code', { class: 'st-cond', title: st.cond }, st.cond))
+  const foot = el('div', { class: 'st-foot' },
+    el('span', { class: 'st-kind' }, st.kind),
+    el('span', null, ' renders ' + st.renders + ' · '),
+    el('button', {
+      class: 'st-line', title: 'Open this branch in the source editor',
+      onclick: () => report('reveal', { file: CFG.module, line: st.line, col: 1 }),
+    }, 'line ' + st.line))
+  const why = st.blocked ? el('div', { class: 'st-why' }, st.blocked) : null
+  return el('div', { class: 'st-row' + (on ? ' on' : '') + (st.blocked ? ' blocked' : '') }, head, foot, why)
+}
+
+function describePatch(st) {
+  const parts = (st.ops || []).map((o) => o.path.join('.') + ' = ' + JSON.stringify(o.value))
+  for (const path of (st.unset || [])) parts.push(path.join('.') + ' unset')
+  return parts.length ? parts.join(', ') : 'nothing'
+}
+
+function buildStatesTab(body) {
+  if (!STATES) {
+    body.append(el('div', { class: 'bp-note' },
+      'The sidecar could not read this component\\'s source, so it has no branches to offer. '
+      + 'The Props tab still drives everything by hand.'))
+    return
+  }
+  const drivable = STATES.filter((s) => !s.blocked).length
+  body.append(el('div', { class: 'bp-note' },
+    'What this component renders INSTEAD, and when — every condition it branches on, read out of its own source. '
+    + (STATES.length
+      ? 'Click one to put the preview in that state (' + drivable + ' of ' + STATES.length + ' can be set from props; the rest say why not). '
+        + 'Each one starts from the props this preview opened with, so states never stack.'
+      : '')))
+  const back = el('button', {
+    class: 'tbtn', title: 'Back to the props this preview opened with',
+    onclick: () => clearState(),
+  }, '↩ Back to start')
+  if (activeState === null) back.disabled = true
+  body.append(el('div', { class: 'st-bar' }, back,
+    el('span', { class: 'st-now' }, activeState === null
+      ? 'Showing the props this preview opened with.'
+      : 'Showing: ' + STATES[activeState].cond)))
+  if (!STATES.length) {
+    body.append(el('div', { class: 'phint' },
+      'No conditional rendering found — this component draws the same tree every time. '
+      + 'Its variations, if any, come from the props themselves; try the Props tab.'))
+    return
+  }
+  for (let i = 0; i < STATES.length; i++) body.append(stateRow(STATES[i], i))
 }
 
 // ---- props tab -------------------------------------------------------------
@@ -1230,7 +1473,10 @@ function applySample(name, sample) {
 let panelTab = 'props'
 const PANEL_TABS = [
   ['props', 'Props', 'Edit the props this preview renders with'],
-  ['breakpoints', 'Breakpoints', 'The media queries in play, and what they match right now'],
+  ['states', 'States', 'The conditions this component branches on — loading, error, empty — as one click each'],
+  // NOT "Breakpoints": every other panel in this IDE means debugger breakpoints
+  // by that word, and this tab is @media widths.
+  ['breakpoints', 'Responsive', 'The @media widths your CSS switches at, and which ones match right now'],
 ]
 
 function buildPanel() {
@@ -1242,9 +1488,14 @@ function buildPanel() {
       onclick: () => { panelTab = key; buildPanel() },
     }, label))
   }
+  tabs.append(el('button', {
+    class: 'phide', title: 'Hide this panel (bring it back with ⚙ props in the top bar)',
+    onclick: () => setPanelVisible(false),
+  }, '⌄'))
   const body = el('div', { id: 'iso-body' })
   panel.append(tabs, body)
   if (panelTab === 'breakpoints') buildBreakpointsTab(body)
+  else if (panelTab === 'states') buildStatesTab(body)
   else buildPropsTab(body)
 }
 
@@ -1253,9 +1504,9 @@ function buildPanel() {
 // under a half-typed JSON textarea would throw the edit away.
 let bpTimer = null
 window.addEventListener('resize', () => {
-  // Re-clamp first, unconditionally: narrowing the window must never leave a
-  // 600px panel with no canvas beside it.
-  if (!panel.classList.contains('hidden')) setPanelWidth(panel.getBoundingClientRect().width)
+  // Re-clamp first, unconditionally: shortening the window must never leave a
+  // 600px dock with no canvas above it.
+  if (!panel.classList.contains('hidden')) setPanelHeight(panel.getBoundingClientRect().height)
   if (panelTab !== 'breakpoints' || panel.classList.contains('hidden')) return
   clearTimeout(bpTimer)
   bpTimer = setTimeout(buildPanel, 120)
@@ -1381,7 +1632,7 @@ function buildPropsTab(body) {
     buildTopBar(label)
     setProvenance()
     buildPanel()
-    setPanelWidth(Number(store.get('panelWidth', 280)) || 280)
+    setPanelHeight(Number(store.get('panelHeight', 260)) || 260)
     setPanelVisible(true)
 
     const root = createRoot(document.getElementById('burrow-iso-root'))

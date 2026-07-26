@@ -143,23 +143,49 @@ ok('the filter narrows by prop name', shown.length === 2 && shown.every((s) => /
 await page.locator('#iso-filter').fill('')
 await page.waitForTimeout(200)
 
+// --- the panel is a BOTTOM dock ---------------------------------------------
+// It docks below the canvas (the terminal's shape) so the component keeps the
+// window's full width — the assertions are the geometry that proves it, not the
+// class names, which would pass with the panel anywhere.
+const canvasBox = await page.locator('#iso-canvas').boundingBox()
+const panelBox = await page.locator('#iso-panel').boundingBox()
+ok('the panel sits BELOW the canvas, not beside it',
+	panelBox.y >= canvasBox.y + canvasBox.height - 1, `canvas ends ${Math.round(canvasBox.y + canvasBox.height)}, panel starts ${Math.round(panelBox.y)}`)
+ok('and spans the full window width',
+	Math.abs(panelBox.width - 1200) <= 1 && Math.abs(canvasBox.width - 1200) <= 1, `${Math.round(panelBox.width)}px`)
+ok('so the component gets the whole width', canvasBox.width > 1000, `${Math.round(canvasBox.width)}px`)
+
 // --- panel resize -----------------------------------------------------------
 const grip = await page.locator('#iso-grip').boundingBox()
-const w0 = (await page.locator('#iso-panel').boundingBox()).width
-await page.mouse.move(grip.x + 2, grip.y + 120)
+const h0 = (await page.locator('#iso-panel').boundingBox()).height
+await page.mouse.move(grip.x + 200, grip.y + 2)
 await page.mouse.down()
-await page.mouse.move(grip.x - 80, grip.y + 120, { steps: 8 })
+await page.mouse.move(grip.x + 200, grip.y - 80, { steps: 8 })
 await page.mouse.up()
 await page.waitForTimeout(250)
-const w1 = (await page.locator('#iso-panel').boundingBox()).width
-ok('the panel is drag-resizable', w1 > w0 + 40, `${Math.round(w0)} → ${Math.round(w1)}`)
-ok('the width is persisted', !!(await page.evaluate(() => localStorage.getItem('burrow.iso.panelWidth'))))
+const h1 = (await page.locator('#iso-panel').boundingBox()).height
+ok('dragging the top edge up grows the dock', h1 > h0 + 40, `${Math.round(h0)} → ${Math.round(h1)}`)
+ok('the height is persisted', !!(await page.evaluate(() => localStorage.getItem('burrow.iso.panelHeight'))))
 
-// --- narrow column ----------------------------------------------------------
+// --- minimise ---------------------------------------------------------------
+await page.locator('#iso-tabs .phide').click()
+await page.waitForTimeout(200)
+ok('⌄ hides the dock', !(await page.locator('#iso-panel').isVisible()))
+ok('and the grip goes with it', !(await page.locator('#iso-grip').isVisible()))
+const fullCanvas = await page.locator('#iso-canvas').boundingBox()
+ok('the canvas takes the space back', fullCanvas.height > canvasBox.height + 100,
+	`${Math.round(canvasBox.height)} → ${Math.round(fullCanvas.height)}`)
+await page.locator('#iso-top .rgroup .tbtn').filter({ hasText: 'props' }).click()
+await page.waitForTimeout(200)
+ok('⚙ props brings it back', await page.locator('#iso-panel').isVisible())
+
+// --- short window -----------------------------------------------------------
+await page.setViewportSize({ width: 1200, height: 320 })
+await page.waitForTimeout(500)
+const ph = (await page.locator('#iso-panel').boundingBox()).height
+ok('the dock re-clamps so the canvas is never starved', ph <= 320 - 120, `${Math.round(ph)}px`)
 await page.setViewportSize({ width: 430, height: 900 })
 await page.waitForTimeout(500)
-const pw = (await page.locator('#iso-panel').boundingBox()).width
-ok('the panel re-clamps so the canvas is never starved', pw <= 430 - 200 + 1, `${Math.round(pw)}px`)
 const truncated = await page.evaluate(() => [...document.querySelectorAll('.prow[data-prop="variant"] .seg-b')]
 	.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent))
 ok('segments stay readable at the minimum panel width', truncated.length === 0, truncated.join(','))
@@ -172,6 +198,66 @@ await page.setViewportSize({ width: 1200, height: 900 })
 await page.waitForTimeout(500)
 ok('the top bar expands again when there is room',
 	!/tight/.test(await page.locator('#iso-top').getAttribute('class') || ''))
+
+// --- the tabs say what they are ---------------------------------------------
+const tabNames = await page.locator('#iso-tabs .ptab').allTextContents()
+ok('the panel has Props, States and Responsive tabs',
+	tabNames.join('|') === 'Props|States|Responsive', tabNames.join('|'))
+// "Breakpoints" is what every OTHER panel in this IDE means by the word, and it
+// means debugger breakpoints there. This tab is @media widths.
+ok('no tab is called Breakpoints', !tabNames.includes('Breakpoints'))
+
+// --- States tab -------------------------------------------------------------
+await page.locator('#iso-tabs .ptab').filter({ hasText: 'States' }).click()
+await page.waitForTimeout(300)
+const statesLede = await page.locator('#iso-body .bp-note, #iso-body .phint').first().textContent()
+ok('the States tab explains itself before listing anything',
+	/renders|branch|condition/i.test(statesLede || ''), (statesLede || '').slice(0, 60))
+const stateRows = await page.locator('.st-row').count()
+if (stateRows) {
+	const blocked = await page.locator('.st-row.blocked').count()
+	ok('every state names the line it came from', (await page.locator('.st-line').count()) === stateRows)
+	ok('a state that cannot be driven says why, and its button is disabled',
+		blocked === 0 || (await page.locator('.st-row.blocked .st-why').count()) === blocked)
+	const clickable = page.locator('.st-row:not(.blocked) .st-go')
+	if (await clickable.count()) {
+		const before = JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.prow[data-prop] input, .prow[data-prop] select')].map((e) => e.value)))
+		await clickable.first().click()
+		await page.waitForTimeout(400)
+		ok('applying a state marks it as showing', (await page.locator('.st-row.on').count()) === 1)
+		await page.locator('#iso-tabs .ptab').filter({ hasText: 'Props' }).click()
+		await page.waitForTimeout(300)
+		const after = JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.prow[data-prop] input, .prow[data-prop] select')].map((e) => e.value)))
+		ok('and the Props tab shows exactly what it changed', after !== before)
+		await page.locator('#iso-tabs .ptab').filter({ hasText: 'States' }).click()
+		await page.waitForTimeout(300)
+		await page.locator('.st-row.on .st-go').click()
+		await page.waitForTimeout(400)
+		ok('clicking it again returns to the starting props', (await page.locator('.st-row.on').count()) === 0)
+	}
+} else {
+	ok('a component with no branches says so rather than showing an empty list',
+		(await page.locator('#iso-body .phint').count()) > 0)
+}
+
+// --- Responsive tab ---------------------------------------------------------
+await page.locator('#iso-tabs .ptab').filter({ hasText: 'Responsive' }).click()
+await page.waitForTimeout(300)
+const bpNote = (await page.locator('#iso-body .bp-note').first().textContent()) || ''
+ok('the Responsive tab disowns the debugger meaning of the word',
+	/not debugger breakpoints/i.test(bpNote), bpNote.slice(0, 70))
+
+// --- help sheet -------------------------------------------------------------
+await page.locator('#iso-help-btn').click()
+await page.waitForTimeout(200)
+ok('? opens the help sheet', await page.locator('#iso-help.on').isVisible())
+const helpKeys = await page.locator('#iso-help .hkey').allTextContents()
+for (const key of ['behind', '🎯 Inspect', 'Props', 'States', 'Responsive']) {
+	ok(`help explains ${key}`, helpKeys.includes(key), helpKeys.join(','))
+}
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+ok('Esc closes it', !(await page.locator('#iso-help').evaluate((e) => e.classList.contains('on'))))
 
 ok('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
 
