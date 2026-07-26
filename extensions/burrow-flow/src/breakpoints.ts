@@ -72,6 +72,51 @@ export async function openSymbol(backendDir: string, file: string, symbolLabel: 
 	return editor;
 }
 
+/**
+ * Where a breakpoint on a route handler actually belongs.
+ *
+ * A symbol's `selectionRange` points at the function NAME, and for the dominant
+ * Go idiom that is the wrong function entirely:
+ *
+ *     func ListNodes(db readQuerier) http.HandlerFunc {
+ *         return func(w http.ResponseWriter, r *http.Request) {   // <- the handler
+ *
+ * `ListNodes` is a FACTORY. It runs once, during route registration at startup,
+ * and never again. Arming it does the opposite of what was asked twice over: the
+ * backend halts while it is still wiring itself up — before it binds its port,
+ * so nothing can even reach it — and no request ever stops there. Observed as
+ * "the backend never starts" (WO-29) until dlv's own DAP log showed the stop was
+ * a legitimate breakpoint hit one second after `configurationDone`, 51 frames
+ * deep in router setup.
+ *
+ * So: descend through `return func(...)` wrappers and anchor on the first real
+ * statement of the closure that actually serves the request.
+ */
+function handlerAnchor(doc: vscode.TextDocument, symbol: vscode.DocumentSymbol): vscode.Position {
+	const last = Math.min(symbol.range.end.line, doc.lineCount - 1);
+	let line = symbol.selectionRange.start.line;
+	// Signatures wrap; walk to the line that opens the body.
+	while (line < last && !doc.lineAt(line).text.includes('{')) {
+		line++;
+	}
+	for (let i = line + 1; i <= last; i++) {
+		const text = doc.lineAt(i).text.trim();
+		if (!text || text.startsWith('//') || text.startsWith('/*') || text.startsWith('*')) {
+			continue;
+		}
+		// A returned closure IS the handler — step through it, not onto it.
+		if (/^return\s+func\s*\(/.test(text)) {
+			continue;
+		}
+		if (text === '}' || text === '})' || text === '})}') {
+			break;
+		}
+		return new vscode.Position(i, doc.lineAt(i).firstNonWhitespaceCharacterIndex);
+	}
+	// Nothing better found — the declaration still beats arming nothing.
+	return new vscode.Position(symbol.selectionRange.start.line, 0);
+}
+
 /** Arm a breakpoint anchored to the handler symbol; FunctionBreakpoint fallback. */
 export async function armSymbolBreakpoint(backendDir: string, file: string, handlerLabel: string): Promise<void> {
 	const uri = vscode.Uri.file(path.join(backendDir, file));
@@ -85,7 +130,7 @@ export async function armSymbolBreakpoint(backendDir: string, file: string, hand
 	}
 	const symbol = findHandlerSymbol(await documentSymbolsWithRetry(uri), handlerLabel);
 	if (symbol) {
-		const pos = symbol.selectionRange.start;
+		const pos = handlerAnchor(editor.document, symbol);
 		editor.revealRange(symbol.selectionRange, vscode.TextEditorRevealType.InCenter);
 		editor.selection = new vscode.Selection(pos, pos);
 		vscode.debug.addBreakpoints([new vscode.SourceBreakpoint(new vscode.Location(uri, pos))]);
