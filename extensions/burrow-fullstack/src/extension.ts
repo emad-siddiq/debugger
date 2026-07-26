@@ -411,9 +411,31 @@ async function openFrontendLive(): Promise<void> {
 			body: JSON.stringify({ mode: 'live' }),
 			signal: AbortSignal.timeout(60000),
 		});
+		// …and the restart means the app is briefly NOT being served. The browser
+		// tier opens next, so returning here would launch Chrome at a dead port:
+		// it lands on an error page, the app never boots, and every breakpoint on
+		// the request path stays cold. Wait for the app to answer again.
+		await waitForApp();
 	} catch (err) {
 		throw new Error(`the frontend is up but could not be put in live mode — it may still be serving mock data (${errText(err)})`);
 	}
+}
+
+/** Poll the target URL until the app is being served again (or give up). */
+async function waitForApp(timeoutMs = 60000): Promise<void> {
+	const url = await sidecarTargetUrl();
+	if (!url) {
+		return;
+	}
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const ok = await fetch(url, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
+		if (ok) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+	throw new Error('the frontend restarted into live mode but never started serving again');
 }
 
 /** The running sidecar's UI port, via the frontend-debugger's read-only API. */
