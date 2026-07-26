@@ -97,7 +97,8 @@
 				{
 					"id": "burrow-fullstack",
 					"title": "Run",
-					"icon": "$(run-all)"
+					"icon": "$(run-all)",
+					"order": 3
 				}
 			]
 		},

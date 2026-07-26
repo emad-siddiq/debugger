@@ -99,7 +99,8 @@
 				{
 					"id": "burrow-db",
 					"title": "Data",
-					"icon": "$(database)"
+					"icon": "$(database)",
+					"order": 5
 				}
 			]
 		},

@@ -162,7 +162,8 @@
 				{
 					"id": "burrow-frontend",
 					"title": "Components",
-					"icon": "$(preview)"
+					"icon": "$(preview)",
+					"order": 6
 				}
 			]
 		},

@@ -35,6 +35,8 @@ export interface IUserFriendlyViewsContainerDescriptor {
 	id: string;
 	title: string;
 	icon: string;
+	/** Optional, Burrow patch 0013: a stable position in the bar. */
+	order?: number;
 }
 
 const viewsContainerSchema: IJSONSchema = {
@@ -48,6 +50,10 @@ const viewsContainerSchema: IJSONSchema = {
 		title: {
 			description: localize('vscode.extension.contributes.views.containers.title', 'Human readable string used to render the container'),
 			type: 'string'
+		},
+		order: {
+			description: localize('vscode.extension.contributes.views.containers.order', "Optional position of this container in its bar. Without it, containers are ordered by whichever extension happened to activate first, which is not a stable arrangement for a product that ships a fixed rail."),
+			type: 'number'
 		},
 		icon: {
 			description: localize('vscode.extension.contributes.views.containers.icon', "Path to the container icon. Icons are 24x24 centered on a 50x40 block and have a fill color of 'rgb(215, 218, 224)' or '#d7dae0'. It is recommended that icons be in SVG, though any image file type is accepted."),
@@ -382,7 +388,10 @@ class ViewsExtensionHandler implements IWorkbenchContribution {
 			const icon = themeIcon || resources.joinPath(extension.extensionLocation, descriptor.icon);
 			const id = `workbench.view.extension.${descriptor.id}`;
 			const title = descriptor.title || id;
-			const viewContainer = this.registerCustomViewContainer(id, title, icon, order++, extension.identifier, location);
+			// A DECLARED order wins; otherwise fall back to the running counter,
+			// which is activation order and therefore arbitrary (patch 0013).
+			const declared = typeof descriptor.order === 'number' ? descriptor.order : undefined;
+			const viewContainer = this.registerCustomViewContainer(id, title, icon, declared ?? order++, extension.identifier, location);
 
 			// Move those views that belongs to this container
 			if (existingViewContainers.length) {

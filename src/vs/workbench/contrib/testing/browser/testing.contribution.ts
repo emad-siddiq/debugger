@@ -75,7 +75,11 @@ const viewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensio
 		order: 4,
 	},
 	hideIfEmpty: true,
-}, ViewContainerLocation.Sidebar);
+	// Burrow patch 0013: the rail is a fixed seven and the Run view already owns
+	// tests (its Tests section + the Test Lab). The stock container keeps every
+	// capability — it just lives in the panel, beside Test Results, instead of
+	// taking a rail slot for a second way to see the same runs.
+}, ViewContainerLocation.Panel);
 
 
 const testResultsViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
