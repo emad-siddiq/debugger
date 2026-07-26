@@ -11,6 +11,8 @@
     "serve": "NODE_ENV=production node server/index.js",
     "oracle": "node .claude/oracle/oracle.mjs",
     "verify": "node test/verify.mjs",
+    "controls": "node test/isolationControls.mjs",
+    "unit": "node --test test/isolateHarness.test.mjs",
     "sweep": "node test/renderSweep.mjs"
   },
   "dependencies": {

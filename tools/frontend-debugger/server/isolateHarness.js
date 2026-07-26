@@ -6,12 +6,24 @@
 //               Tablet 768 / Desktop 1280; stage is also drag-resizable) ·
 //               labeled backgrounds (App/Dark/Checker) · dev|prod-css ·
 //               🎯 Inspect · panel ⚙
-//   side panel — two tabs (⚙ toggles the whole panel).
+//   side panel — two tabs (⚙ toggles the whole panel); drag its left edge to
+//               resize (width persisted).
 //               Props: THE one props-editing surface — typed controls from the
 //               extension's parsed schema (`schema` query param), grouped
 //               Required then Optional, sample picker + Save-sample embedded,
-//               per-prop ⟲ + Reset-all, raw JSON tucked behind an Advanced
-//               disclosure (sole editor when there is no schema).
+//               per-prop ⟲ + Reset-all, a name/kind filter past 8 props, raw
+//               JSON tucked behind an Advanced disclosure (sole editor when
+//               there is no schema).
+//               Controls are shaped by kind: toggle switch (boolean),
+//               segmented control or dropdown (enum), field + optional slider
+//               + drag-scrubbable name (number), text or auto-grow textarea
+//               (string), swatch + picker (colour-valued), JSON textarea
+//               (array/set/object). A number's slider range is inferred from
+//               its NAME and omitted when nothing matches — a fake domain that
+//               clamps the value would be worse than no slider.
+//               INVARIANT: a control repairs its own row (refreshRowChrome /
+//               replaceRow) and never calls buildPanel(), because a rebuild
+//               discards a half-typed JSON edit elsewhere in the panel.
 //               Breakpoints: the @media queries in the loaded stylesheets —
 //               the ones affecting this component first, then the rest; a live
 //               dot per query, → Npx sizes the stage, clicking one opens its
@@ -181,6 +193,63 @@ export function buildIsolateHtml(cfg) {
   .prow textarea { resize: vertical; min-height: 34px; }
   .prow .invalid { border-color: #f85149; }
   .prow .stub { color: #8b949e; font-style: italic; }
+  /* ---- Figma-grade controls -------------------------------------------
+     Same token table as the rest of the lab shell (chip #1c2128 on #2b3138,
+     hover #262c34, on-state #2f81f7, field #0d1117). Duplicated per surface
+     on purpose — see docs/lab-shell-decision.md. */
+  .sw {
+    flex: none; position: relative; width: 26px; height: 14px; padding: 0; cursor: pointer;
+    border: 1px solid #2b3138; background: #1c2128; border-radius: 999px;
+    transition: background .12s, border-color .12s;
+  }
+  .sw:hover { background: #262c34; }
+  .sw.on { background: #2f81f7; border-color: #2f81f7; }
+  .sw-knob {
+    position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%;
+    background: #c9d1d9; transition: transform .12s, background .12s;
+  }
+  .sw.on .sw-knob { transform: translateX(12px); background: #fff; }
+  .seg { display: flex; min-width: 0; border: 1px solid #2b3138; background: #1c2128; border-radius: 4px; overflow: hidden; }
+  /* Basis auto, not 0: segments size to their own label and only then share the
+     slack, so a mixed-length union (primary|outline|ghost|danger) is not forced
+     into four equal boxes that ellipsise the longest one. */
+  .seg .seg-b {
+    flex: 1 1 auto; min-width: 0; border: 0; border-left: 1px solid #2b3138; background: none;
+    color: #8b949e; font: 11px/1.6 system-ui, sans-serif; padding: 2px 4px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .seg .seg-b:first-child { border-left: 0; }
+  .seg .seg-b:hover { background: #262c34; color: #e6edf3; }
+  .seg .seg-b.on { background: #2f81f7; color: #fff; }
+  .numrow, .colrow { display: flex; align-items: center; gap: 6px; }
+  /* Outspecify the generic width:100% rule for .prow input[type=number] above —
+     it is (0,2,1) and a plain .numrow .numfield is only (0,2,0), which loses
+     and collapses the slider beside it to nothing. */
+  .prow .numrow input.numfield { flex: none; width: 72px; }
+  .prow .numrow input[type=range] { flex: 1; min-width: 0; width: auto; height: 14px; accent-color: #2f81f7; }
+  .prow .pname.scrub { cursor: ew-resize; }
+  .prow .pname.scrub:hover { color: #58a6ff; }
+  body.scrub-x { cursor: ew-resize; user-select: none; }
+  body.resize-x { cursor: col-resize; user-select: none; }
+  .colrow input[type=color] {
+    flex: none; width: 22px; height: 20px; padding: 0; cursor: pointer;
+    background: #0d1117; border: 1px solid #2b3138; border-radius: 4px;
+  }
+  .colrow input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+  .colrow input[type=color]::-webkit-color-swatch { border: 0; border-radius: 2px; }
+  .colrow input[type=text] { flex: 1; min-width: 0; }
+  .colrow.token input[type=color] { outline: 1px dashed #8b949e; outline-offset: -1px; }
+  .colrow.unknown input[type=color] { opacity: .4; pointer-events: none; }
+  .prow textarea.grow { overflow: hidden; }
+  #iso-filter {
+    width: 100%; padding: 3px 6px; background: #0d1117; color: #e6edf3;
+    border: 1px solid #2b3138; border-radius: 4px; font: 11px/1.4 system-ui, sans-serif;
+  }
+  #iso-filter::placeholder { color: #6e7681; }
+  .prow.filtered, #iso-body h3.filtered { display: none; }
+  #iso-grip { flex: none; width: 5px; cursor: col-resize; background: transparent; }
+  #iso-grip:hover, #iso-grip.dragging { background: #2b3138; }
+  #iso-grip.hidden { display: none; }
   .srow { display: flex; gap: 6px; align-items: center; }
   .srow select { flex: 1; }
   .burrow-iso-error {
@@ -197,6 +266,7 @@ export function buildIsolateHtml(cfg) {
 <div id="iso-top"></div>
 <div id="iso-main">
   <div id="iso-canvas"><div id="iso-stage"><div id="burrow-iso-root"></div></div><div id="iso-pick-box"></div><div id="iso-pick-tag"></div></div>
+  <div id="iso-grip" class="hidden"></div>
   <aside id="iso-panel" class="hidden"></aside>
 </div>
 <script type="module">
@@ -302,13 +372,54 @@ const canvas = document.getElementById('iso-canvas')
 const stage = document.getElementById('iso-stage')
 const panel = document.getElementById('iso-panel')
 
+const grip = document.getElementById('iso-grip')
+
 // The panel and its resize grip show and hide together. One function owns it
 // because CSS cannot select a previous sibling, so the grip cannot follow the
 // panel on its own.
 function setPanelVisible(on) {
   panel.classList.toggle('hidden', !on)
-  const grip = document.getElementById('iso-grip')
   if (grip) grip.classList.toggle('hidden', !on)
+}
+
+// Persistence has to survive storage being unavailable: this page is a
+// cross-origin iframe inside a webview, where localStorage may be partitioned
+// or throw outright. A failed read or write must never break panel sizing.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('burrow.iso.' + k); return v == null ? d : v } catch (e) { return d } },
+  set(k, v) { try { localStorage.setItem('burrow.iso.' + k, String(v)) } catch (e) {} },
+}
+
+const PANEL_MIN = 220
+const PANEL_GUTTER = 240 // the canvas never gets squeezed below this
+function setPanelWidth(px) {
+  const max = Math.max(PANEL_MIN, window.innerWidth - PANEL_GUTTER)
+  const w = Math.round(Math.min(max, Math.max(PANEL_MIN, px)))
+  panel.style.width = w + 'px'
+  return w
+}
+
+if (grip) {
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = panel.getBoundingClientRect().width
+    grip.classList.add('dragging')
+    document.body.classList.add('resize-x')
+    try { grip.setPointerCapture(e.pointerId) } catch (err) {}
+    const move = (ev) => setPanelWidth(startW + (startX - ev.clientX))
+    const up = (ev) => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', up)
+      grip.removeEventListener('pointercancel', up)
+      grip.classList.remove('dragging')
+      document.body.classList.remove('resize-x')
+      store.set('panelWidth', setPanelWidth(startW + (startX - ev.clientX)))
+    }
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', up)
+    grip.addEventListener('pointercancel', up)
+  })
 }
 
 // Stage width has two callers — the top bar's presets and the breakpoints
@@ -402,19 +513,23 @@ function buildTopBar(label) {
 let topFitPending = false
 function fitTopBar(top) {
   topFitPending = false
-  // Measure from the roomiest state, otherwise "does it fit?" is answered about
-  // the collapsed layout and the bar can never expand again.
-  const was = top.className
+  // Measure the LEFT CLUSTER, not the bar. The bar can never overflow: .lgroup
+  // is flex:1 with overflow:hidden, so it absorbs the excess by clipping itself
+  // and #iso-top.scrollWidth always equals its clientWidth. The cluster's own
+  // children are flex:none, so it is the one that reports the overflow.
+  const lg = top.querySelector('.lgroup')
+  if (!lg) return
+  const overflows = () => lg.scrollWidth > lg.clientWidth + 1
+  // Probe from the roomiest state, or "does it fit?" gets answered about the
+  // collapsed layout and the bar could never expand again.
   top.className = ''
   let next = ''
-  if (top.scrollWidth > top.clientWidth + 1) {
+  if (overflows()) {
     next = 'compact'
     top.className = next
-    if (top.scrollWidth > top.clientWidth + 1) next = 'compact tight'
+    if (overflows()) next = 'compact tight'
   }
-  // Only write when it differs — a no-op write still churns the observer.
-  if (next !== was) top.className = next
-  else top.className = was
+  top.className = next
 }
 function watchTopBar(top) {
   const fit = () => {
@@ -698,69 +813,402 @@ function buildBreakpointsTab(body) {
 let textTimer = null
 const applySoon = () => { clearTimeout(textTimer); textTimer = setTimeout(() => renderFn(), 200) }
 
-function controlFor(spec) {
+// One binding per row: reading the current value late (not capturing it at
+// build time) means a control still reflects a props/sample command that
+// landed after it was built.
+function bindingFor(spec) {
   const name = spec.name
-  const set = (v) => { rawProps[name] = v }
-  const unset = () => { delete rawProps[name] }
-  const current = Object.prototype.hasOwnProperty.call(rawProps, name) ? rawProps[name]
-    : (spec.fromDefault ? spec.value : undefined)
-  const isSet = Object.prototype.hasOwnProperty.call(rawProps, name)
+  return {
+    name,
+    set: (v) => { rawProps[name] = v },
+    unset: () => { delete rawProps[name] },
+    isSet: () => Object.prototype.hasOwnProperty.call(rawProps, name),
+    current: () => Object.prototype.hasOwnProperty.call(rawProps, name) ? rawProps[name]
+      : (spec.fromDefault ? spec.value : undefined),
+  }
+}
 
-  if (spec.kind === 'function' || spec.kind === 'component') {
-    return el('span', { class: 'stub' }, spec.kind === 'component' ? 'ƒ stub component' : 'ƒ stub — calls log to console')
+// A number prop carries no range in its type, so one is inferred from the NAME
+// — and only when the name actually says something. Inventing a domain is worse
+// than omitting the slider: a 0-100 track silently clamping zIndex: 9999 is a
+// lie about the prop, whereas a bare field with a scrubbable label is honest and
+// still fast. Mirrors synthesizePlaceholder's vocabulary so the synthesized seed
+// and the slider domain agree.
+const NUM_RANGES = [
+  [/opacity$/, 0, 1, 0.01],
+  [/(percent|pct|ratio|rate|progress)$/, 0, 100, 1],
+  [/(zoom|scale)$/, 0.25, 4, 0.05],
+  [/(rotate|rotation|angle|deg|degrees)$/, 0, 360, 1],
+  [/(width|height|size|radius|offset|gap|padding|margin|spacing|inset)$/, 0, 512, 1],
+  [/(delay|duration|timeout|ms)$/, 0, 5000, 50],
+  [/(columns|cols|span)$/, 1, 12, 1],
+  [/(count|total|length|items|rows|index|page|step)$/, 0, 100, 1],
+]
+function rangeFor(name, value) {
+  const n = String(name).toLowerCase()
+  for (const [re, lo, hi, step] of NUM_RANGES) {
+    if (!re.test(n)) continue
+    let min = lo, max = hi
+    // A fraction-style ratio (0.4) and a percentage-style one (40) share a name.
+    if (re.source.indexOf('percent') >= 0 && typeof value === 'number' && value <= 1) return { min: 0, max: 1, step: 0.01 }
+    // Widen rather than clamp: the affordance must never move the value. This is
+    // what keeps a loosely-matched name honest — zIndex: 9999 matches on
+    // '...index' and gets a 0..14999 track rather than being snapped to 100.
+    if (typeof value === 'number') {
+      if (value > max) max = Math.ceil(value * 1.5)
+      if (value < min) min = value
+    }
+    return { min, max, step }
   }
-  if (spec.kind === 'boolean') {
-    return el('input', {
-      type: 'checkbox', checked: !!current,
-      onchange: (e) => { set(e.target.checked); renderFn() },
-    })
+  return null
+}
+
+// Colour detection is value-first: a literal is strong evidence, a name is a
+// hint. Deliberately not CSS.supports('color', v) — Chromium says true for
+// var(--anything), which would turn every token-valued string into a swatch.
+const COLOR_HEX = /^#[0-9a-fA-F]{3,8}$/
+const COLOR_FN = /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\\(/i
+const COLOR_NAME = /(color|colour|bg|background|fill|stroke|tint|shade|accent|swatch)$/
+const COLOR_WORD = { transparent: 1, currentcolor: 1, white: 1, black: 1, red: 1, green: 1, blue: 1, gray: 1, grey: 1, orange: 1, yellow: 1, purple: 1, pink: 1, brown: 1, cyan: 1, magenta: 1 }
+const looksColorValue = (v) => typeof v === 'string' && (COLOR_HEX.test(v) || COLOR_FN.test(v) || !!COLOR_WORD[v.toLowerCase()])
+function looksColorProp(spec, v) {
+  if (looksColorValue(v)) return true
+  return (spec.kind === 'string') && COLOR_NAME.test(String(spec.name).toLowerCase())
+}
+
+/** What a CSS colour expression actually paints, or null if nothing can.
+ *
+ *  Probed INSIDE the component subtree, because var(--token) only resolves
+ *  against an element in the right cascade.
+ *
+ *  Twice, against two different inherited colours, because a single sentinel
+ *  cannot detect failure here: an undefined var() is invalid at computed-value
+ *  time, and for an INHERITED property such as color that computes to the
+ *  inherited value — which silently overwrites the sentinel and reads back as
+ *  a real colour. Resolving the same expression under two different parents
+ *  discriminates cleanly: a value that truly resolves is identical both times,
+ *  and one that falls back to inheritance differs. */
+function resolveColor(v) {
+  if (typeof v !== 'string' || !v) return null
+  const root = document.getElementById('burrow-iso-root')
+  if (!root) return null
+  const probes = []
+  const under = (inherited) => {
+    const outer = el('span', { style: 'position:absolute;visibility:hidden;pointer-events:none;color:' + inherited })
+    const inner = el('span', {})
+    outer.append(inner)
+    probes.push(outer)
+    root.append(outer)
+    inner.style.color = v
+    return getComputedStyle(inner).color
   }
-  if (spec.kind === 'enum') {
-    const sel = el('select', {
-      onchange: (e) => { set(e.target.value); renderFn() },
-    }, ...(spec.options || []).map((o) => el('option', { value: o }, o)))
-    if (typeof current === 'string') sel.value = current
-    return sel
+  try {
+    const a = under('rgb(1, 2, 3)')
+    const b = under('rgb(4, 5, 6)')
+    return a === b ? a : null
+  } catch (e) {
+    return null
+  } finally {
+    // React must never find these in its tree — remove them on every path.
+    for (const p of probes) p.remove()
   }
-  if (spec.kind === 'number') {
-    return el('input', {
-      type: 'number', value: current == null ? '' : current,
-      oninput: (e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) { set(n); applySoon() } },
-    })
+}
+const rgbToHex = (c) => {
+  const m = /rgba?\\((\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)/.exec(c || '')
+  if (!m) return null
+  return '#' + [1, 2, 3].map((i) => Number(m[i]).toString(16).padStart(2, '0')).join('')
+}
+
+// A segmented control has to fit the NARROWEST legal panel, otherwise the rule
+// would depend on the live width and a resize would have to rebuild the panel —
+// which is what destroys half-typed edits.
+//
+// The budget: 220px panel - 8px padding each side = 204px; less the .seg border
+// (2px), four .seg-b paddings (4 x 8px) and three dividers (3px) leaves ~167px
+// of text. At 11px system-ui (~5.8px/char) that is ~28 characters — which is
+// why .seg-b pins 11px rather than inheriting the 12px body font, matching
+// every other control on this surface. Not a cliff either way: .seg-b
+// ellipsises, so one character over degrades rather than breaks.
+// 'primary|outline|ghost|danger' is 25, and it must fit at the MINIMUM panel
+// width — it is the canonical variant row this control exists for.
+const SEG_MAX_OPTIONS = 4
+const SEG_MAX_TOTAL = 28
+const SEG_MAX_LABEL = 12
+function segmentedFits(options) {
+  if (!options || options.length < 2 || options.length > SEG_MAX_OPTIONS) return false
+  let total = 0, longest = 0
+  for (const o of options) {
+    const n = String(o).length
+    total += n
+    if (n > longest) longest = n
   }
-  if (spec.kind === 'string' || spec.kind === 'element') {
-    return el('input', {
-      type: 'text', value: typeof current === 'string' ? current : '',
-      placeholder: spec.fromDefault && typeof spec.value === 'string' ? spec.value : '',
-      oninput: (e) => { set(e.target.value); applySoon() },
-    })
+  return total <= SEG_MAX_TOTAL && longest <= SEG_MAX_LABEL
+}
+
+const MULTILINE_AT = 60
+const GROW_MAX_PX = 180
+const isLongText = (v) => typeof v === 'string' && (v.length > MULTILINE_AT || v.indexOf('\\n') >= 0)
+function autoGrow(ta) {
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, GROW_MAX_PX) + 'px'
+}
+
+function stubControl(spec) {
+  return el('span', { class: 'stub' }, spec.kind === 'component' ? 'ƒ stub component' : 'ƒ stub — calls log to console')
+}
+
+function toggleControl(spec, row) {
+  const b = bindingFor(spec)
+  const sw = el('button', { class: 'sw', type: 'button', role: 'switch', title: 'Toggle ' + spec.name })
+  const paint = () => {
+    const on = !!b.current()
+    sw.classList.toggle('on', on)
+    sw.setAttribute('aria-checked', on ? 'true' : 'false')
   }
-  // array | set | object | json → JSON textarea
-  const seed = current !== undefined ? current : (spec.shape !== undefined ? spec.shape : {})
-  const ta = el('textarea', {
-    oninput: (e) => {
-      try { set(JSON.parse(e.target.value)); e.target.classList.remove('invalid'); applySoon() }
-      catch (err) { e.target.classList.add('invalid') }
-    },
+  sw.append(el('span', { class: 'sw-knob' }))
+  sw.addEventListener('click', () => {
+    b.set(!b.current())
+    paint()
+    refreshRowChrome(row, spec)
+    renderFn() // a discrete gesture with one outcome — no reason to debounce
   })
+  paint()
+  return sw
+}
+
+function enumControl(spec, row) {
+  const b = bindingFor(spec)
+  const options = spec.options || []
+  const commit = (v) => { b.set(v); refreshRowChrome(row, spec); renderFn() }
+  if (segmentedFits(options)) {
+    const seg = el('div', { class: 'seg' })
+    const btns = []
+    const paint = () => {
+      const cur = b.current()
+      for (let i = 0; i < btns.length; i++) btns[i].classList.toggle('on', options[i] === cur)
+    }
+    for (const o of options) {
+      btns.push(el('button', {
+        class: 'seg-b', type: 'button', title: String(o),
+        onclick: () => { commit(o); paint() },
+      }, String(o)))
+    }
+    seg.append(...btns)
+    paint()
+    return seg
+  }
+  // An unset optional prop must not look like option 0 is selected.
+  const sel = el('select', { onchange: (e) => { if (e.target.value === '') { b.unset() } else { b.set(e.target.value) } refreshRowChrome(row, spec); renderFn() } },
+    ...(spec.required ? [] : [el('option', { value: '' }, '— unset —')]),
+    ...options.map((o) => el('option', { value: o }, String(o))))
+  const cur = b.current()
+  sel.value = typeof cur === 'string' ? cur : ''
+  return sel
+}
+
+function numberControl(spec, row) {
+  const b = bindingFor(spec)
+  const cur = b.current()
+  const range = rangeFor(spec.name, typeof cur === 'number' ? cur : undefined)
+  const wrap = el('div', { class: 'numrow' })
+  const field = el('input', { type: 'number', class: 'numfield', value: cur == null ? '' : cur })
+  if (range) { field.step = String(range.step); field.min = String(range.min); field.max = String(range.max) }
+  let slider = null
+  const sync = (v, from) => {
+    if (from !== 'field') field.value = v == null ? '' : String(v)
+    if (slider && from !== 'slider' && v != null) slider.value = String(v)
+  }
+  field.addEventListener('input', () => {
+    // An emptied field means "no value", not zero — Number('') is 0, which used
+    // to silently write one.
+    if (field.value === '') { b.unset(); refreshRowChrome(row, spec); applySoon(); return }
+    const n = Number(field.value)
+    if (Number.isNaN(n)) return
+    b.set(n); sync(n, 'field'); refreshRowChrome(row, spec); applySoon()
+  })
+  wrap.append(field)
+  if (range) {
+    slider = el('input', { type: 'range', min: range.min, max: range.max, step: range.step, value: typeof cur === 'number' ? cur : range.min })
+    slider.addEventListener('input', () => { const n = Number(slider.value); b.set(n); sync(n, 'slider'); refreshRowChrome(row, spec); applySoon() })
+    slider.addEventListener('change', () => renderFn())
+    wrap.append(slider)
+  }
+  attachScrub(row, spec, b, (v) => sync(v, 'scrub'), range)
+  return wrap
+}
+
+/** Drag the prop NAME left/right to change a number — the Figma gesture. Lives
+ *  on the name span so it never overlaps the reset button. */
+function attachScrub(row, spec, b, sync, range) {
+  const nameEl = row.querySelector('.pname')
+  if (!nameEl) return
+  nameEl.classList.add('scrub')
+  nameEl.title = 'Drag left/right to change ' + spec.name + ' (Shift ×10, Alt ×0.1)'
+  const step = range ? range.step : 1
+  nameEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startV = typeof b.current() === 'number' ? b.current() : 0
+    const decimals = String(step).indexOf('.') >= 0 ? String(step).split('.')[1].length : 0
+    document.body.classList.add('scrub-x')
+    try { nameEl.setPointerCapture(e.pointerId) } catch (err) {}
+    const move = (ev) => {
+      const mult = ev.shiftKey ? 10 : (ev.altKey ? 0.1 : 1)
+      let v = startV + (ev.clientX - startX) * step * mult
+      if (range) { v = Math.min(range.max, Math.max(range.min, v)) }
+      v = Number(v.toFixed(decimals + 2))
+      if (decimals === 0) v = Math.round(v)
+      b.set(v); sync(v); applySoon()
+    }
+    const up = () => {
+      nameEl.removeEventListener('pointermove', move)
+      nameEl.removeEventListener('pointerup', up)
+      nameEl.removeEventListener('pointercancel', up)
+      document.body.classList.remove('scrub-x')
+      refreshRowChrome(row, spec)
+      renderFn()
+    }
+    nameEl.addEventListener('pointermove', move)
+    nameEl.addEventListener('pointerup', up)
+    nameEl.addEventListener('pointercancel', up)
+  })
+}
+
+function stringControl(spec, row) {
+  const b = bindingFor(spec)
+  const cur = b.current()
+  const value = typeof cur === 'string' ? cur : ''
+  const placeholder = spec.fromDefault && typeof spec.value === 'string' ? spec.value : ''
+  // Decided ONCE, at build time: swapping an input for a textarea mid-typing
+  // would throw away focus and caret.
+  if (isLongText(value)) {
+    const ta = el('textarea', { class: 'grow', placeholder: placeholder })
+    ta.value = value
+    ta.addEventListener('input', () => { b.set(ta.value); autoGrow(ta); refreshRowChrome(row, spec); applySoon() })
+    setTimeout(() => autoGrow(ta), 0)
+    return ta
+  }
+  const input = el('input', { type: 'text', value: value, placeholder: placeholder })
+  input.addEventListener('input', () => { b.set(input.value); refreshRowChrome(row, spec); applySoon() })
+  return input
+}
+
+function colorControl(spec, row) {
+  const b = bindingFor(spec)
+  const wrap = el('div', { class: 'colrow' })
+  const swatch = el('input', { type: 'color' })
+  const text = el('input', { type: 'text', value: typeof b.current() === 'string' ? b.current() : '' })
+  // The text field is ALWAYS authoritative: it takes var(--x), color-mix(), a
+  // token name, anything, verbatim. The picker is a convenience on top.
+  const paint = () => {
+    const raw = typeof b.current() === 'string' ? b.current() : ''
+    const resolved = resolveColor(raw)
+    const hex = resolved ? rgbToHex(resolved) : null
+    wrap.classList.toggle('unknown', !hex)
+    const literal = COLOR_HEX.test(raw) || COLOR_FN.test(raw)
+    wrap.classList.toggle('token', !!hex && !literal)
+    if (hex) swatch.value = hex
+    swatch.title = !hex ? raw + ' — no picker can represent this; edit it as text'
+      : literal ? 'Pick a colour' : raw + ' → ' + hex + ' · picking replaces the token with a literal'
+  }
+  text.addEventListener('input', () => { b.set(text.value); paint(); refreshRowChrome(row, spec); applySoon() })
+  swatch.addEventListener('input', () => { b.set(swatch.value); text.value = swatch.value; refreshRowChrome(row, spec); applySoon() })
+  swatch.addEventListener('change', () => { paint(); renderFn() })
+  wrap.append(swatch, text)
+  paint()
+  return wrap
+}
+
+function jsonControl(spec, row) {
+  const b = bindingFor(spec)
+  const cur = b.current()
+  const seed = cur !== undefined ? cur : (spec.shape !== undefined ? spec.shape : {})
+  const ta = el('textarea', {})
   ta.value = JSON.stringify(seed, null, 1)
+  ta.addEventListener('input', () => {
+    try { b.set(JSON.parse(ta.value)); ta.classList.remove('invalid'); refreshRowChrome(row, spec); applySoon() }
+    catch (err) { ta.classList.add('invalid') }
+  })
   return ta
+}
+
+function controlFor(spec, row) {
+  if (spec.kind === 'function' || spec.kind === 'component') return stubControl(spec)
+  if (spec.kind === 'boolean') return toggleControl(spec, row)
+  if (spec.kind === 'enum') return enumControl(spec, row)
+  if (spec.kind === 'number') return numberControl(spec, row)
+  if (spec.kind === 'string' || spec.kind === 'element') {
+    const b = bindingFor(spec)
+    return looksColorProp(spec, b.current()) ? colorControl(spec, row) : stringControl(spec, row)
+  }
+  return jsonControl(spec, row) // array | set | object | json
+}
+
+/** Setting a value on a previously-unset optional prop has to drop the muted
+ *  styling and grow a reset button. Doing that IN PLACE is what lets every
+ *  control avoid buildPanel() — the rebuild that discards a half-typed edit. */
+function refreshRowChrome(row, spec) {
+  const isSet = Object.prototype.hasOwnProperty.call(rawProps, spec.name)
+  row.classList.toggle('unset', !isSet && !spec.required)
+  const label = row.querySelector('label')
+  if (!label) return
+  const existing = label.querySelector('.reset')
+  if (!spec.required && isSet && !existing) label.append(resetButton(row, spec))
+  else if (existing && (spec.required || !isSet)) existing.remove()
+}
+
+function resetButton(row, spec) {
+  return el('button', {
+    class: 'reset', title: 'Reset to the component default',
+    onclick: () => { delete rawProps[spec.name]; replaceRow(row, spec); renderFn() },
+  }, '⟲')
+}
+
+/** Rebuild ONE row, not the panel — every other row keeps its state, including
+ *  a JSON textarea someone is mid-edit in. */
+function replaceRow(row, spec) {
+  const next = propRow(spec)
+  if (row.parentNode) row.parentNode.replaceChild(next, row)
+  applyFilter()
+}
+
+// Narrowing the prop list is a CLASS TOGGLE, never a rebuild — typing in the
+// filter must not discard a half-typed value three rows down. Matches the prop
+// name, and the kind as a prefix so "bool" surfaces the booleans.
+const FILTER_AT = 8
+let propFilter = ''
+function applyFilter() {
+  const body = document.getElementById('iso-body')
+  if (!body) return
+  const q = propFilter.trim().toLowerCase()
+  for (const row of body.querySelectorAll('.prow[data-prop]')) {
+    const name = (row.getAttribute('data-prop') || '').toLowerCase()
+    const kind = (row.getAttribute('data-kind') || '').toLowerCase()
+    row.classList.toggle('filtered', !!q && name.indexOf(q) < 0 && kind.indexOf(q) !== 0)
+  }
+  // A group heading with nothing left under it is noise.
+  for (const h of body.querySelectorAll('h3[data-group]')) {
+    let node = h.nextElementSibling, any = false
+    while (node && node.tagName !== 'H3') {
+      if (node.classList.contains('prow') && node.hasAttribute('data-prop') && !node.classList.contains('filtered')) { any = true; break }
+      node = node.nextElementSibling
+    }
+    h.classList.toggle('filtered', !!q && !any)
+  }
 }
 
 function propRow(spec) {
   const isSet = Object.prototype.hasOwnProperty.call(rawProps, spec.name)
-  const row = el('div', { class: 'prow' + (!isSet && !spec.required ? ' unset' : '') })
+  const row = el('div', { class: 'prow' + (!isSet && !spec.required ? ' unset' : ''), 'data-prop': spec.name, 'data-kind': spec.kind })
   const label = el('label', null,
     spec.required ? el('span', { class: 'req', title: 'Required — the component needs this to render' }) : null,
-    spec.name,
+    el('span', { class: 'pname' }, spec.name),
     el('span', { class: 'tkind' }, spec.kind))
-  if (!spec.required && isSet) {
-    label.append(el('button', {
-      class: 'reset', title: 'Reset to the component default',
-      onclick: () => { delete rawProps[spec.name]; buildPanel(); renderFn() },
-    }, '⟲'))
-  }
-  row.append(label, controlFor(spec))
+  if (!spec.required && isSet) label.append(resetButton(row, spec))
+  row.append(label)
+  // The control is built AFTER the label is in the row: numberControl reaches
+  // back for .pname to attach the scrub gesture.
+  row.append(controlFor(spec, row))
   const jsonKinds = { array: 1, set: 1, object: 1, json: 1 }
   if (jsonKinds[spec.kind]) row.append(el('div', { class: 'phint' }, 'Object value — edit as JSON'))
   else if (spec.kind === 'function') row.append(el('div', { class: 'phint' }, 'Calls are stubbed and logged to the console'))
@@ -805,6 +1253,9 @@ function buildPanel() {
 // under a half-typed JSON textarea would throw the edit away.
 let bpTimer = null
 window.addEventListener('resize', () => {
+  // Re-clamp first, unconditionally: narrowing the window must never leave a
+  // 600px panel with no canvas beside it.
+  if (!panel.classList.contains('hidden')) setPanelWidth(panel.getBoundingClientRect().width)
   if (panelTab !== 'breakpoints' || panel.classList.contains('hidden')) return
   clearTimeout(bpTimer)
   bpTimer = setTimeout(buildPanel, 120)
@@ -832,12 +1283,18 @@ function buildPropsTab(body) {
   if (schema) {
     const required = schema.filter((s) => s.required)
     const optional = schema.filter((s) => !s.required)
+    // Past a handful of props, scanning is slower than typing.
+    if (schema.length > FILTER_AT) {
+      const f = el('input', { type: 'text', id: 'iso-filter', placeholder: 'Filter props…', value: propFilter })
+      f.addEventListener('input', () => { propFilter = f.value; applyFilter() })
+      body.append(f)
+    }
     if (required.length) {
-      body.append(el('h3', null, 'Required'))
+      body.append(el('h3', { 'data-group': 'required' }, 'Required'))
       for (const spec of required) body.append(propRow(spec))
     }
     if (optional.length) {
-      body.append(el('h3', null, 'Optional'))
+      body.append(el('h3', { 'data-group': 'optional' }, 'Optional'))
       for (const spec of optional) body.append(propRow(spec))
     }
     body.append(el('div', { class: 'prow pfoot' }, el('button', {
@@ -860,6 +1317,9 @@ function buildPropsTab(body) {
     el('div', { class: 'prow' }, raw))
   if (!schema) adv.setAttribute('open', '')
   body.append(adv)
+  // A rebuild from any other path (sample pick, props command) must not silently
+  // widen the list back out from under an active filter.
+  applyFilter()
 }
 
 // ---- boot ------------------------------------------------------------------
@@ -921,6 +1381,7 @@ function buildPropsTab(body) {
     buildTopBar(label)
     setProvenance()
     buildPanel()
+    setPanelWidth(Number(store.get('panelWidth', 280)) || 280)
     setPanelVisible(true)
 
     const root = createRoot(document.getElementById('burrow-iso-root'))
