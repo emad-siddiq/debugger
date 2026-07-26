@@ -3,7 +3,7 @@
 - **Layer:** 3 (core patch — build wiring)
 - **Task:** 02 (strip to Go-only)
 - **Upstream files touched:** `build/lib/extensions.ts`, `package.json`,
-  `build/hygiene.ts`
+  `build/hygiene.ts`, `build/gulpfile.vscode.ts`
 - **Size:** ~20 lines net removed
 - **Last verified against:** upstream 1.128.0
 
@@ -29,6 +29,12 @@ break `npm run compile` / `make verify` against a missing path:
    `extensions/copilot/package.json` unconditionally and throws once the file is
    gone. Guarded to return clean (nothing to check) when the copilot extension
    is absent.
+4. **`build/gulpfile.vscode.ts` → `prepareBuiltInCopilotRipgrepShim`** — the
+   same class of reference, but on the *packaging* path rather than the compile
+   path, so it stayed hidden until the first real `make dist`: it throws
+   `Copilot SDK directory not found at …/extensions/copilot/node_modules/…`
+   and takes the whole package down. Guarded on the extension directory
+   existing. Found 2026-07-26, packaging for WO-19.
 
 ## What
 

@@ -615,7 +615,13 @@ function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinati
 		const appNodeModulesDir = path.join(appBase, 'node_modules');
 
 		const builtInCopilotExtensionDir = path.join(appBase, 'extensions', 'copilot');
-		prepareBuiltInCopilotRipgrepShim(platform, arch, builtInCopilotExtensionDir, appNodeModulesDir);
+		// Burrow strips the built-in copilot extension (layer 2, STRIP.md), and
+		// this shim throws outright when its SDK is absent — so packaging died
+		// on an extension the product does not ship. Skip it when it is not there
+		// (patch 0002).
+		if (fs.existsSync(builtInCopilotExtensionDir)) {
+			prepareBuiltInCopilotRipgrepShim(platform, arch, builtInCopilotExtensionDir, appNodeModulesDir);
+		}
 	};
 }
 
