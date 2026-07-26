@@ -132,7 +132,10 @@ function html(run: LabRun | undefined): string {
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${n}'; script-src 'nonce-${n}'">
+<!-- style-src-attr: the per-test duration bar is sized with an inline style
+     attribute, and a nonce covers <style> elements only — without this every bar
+     renders at zero width. Same defect as the wire diagram's node positions. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${n}'; style-src-attr 'unsafe-inline'; script-src 'nonce-${n}'">
 <style nonce="${n}">
 	/* --- the lab shell (docs/plans/04 §6) ------------------------------- */
 	* { box-sizing: border-box; }

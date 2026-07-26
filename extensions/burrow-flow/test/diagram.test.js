@@ -49,4 +49,14 @@ assert.strictEqual(escapeHtml('<a "b">'), '&lt;a &quot;b&quot;&gt;');
 const hostile = renderFlow({ ...flow, nodes: [{ kind: 'query', label: 'SELECT', sql: 'SELECT \'"<script>\' FROM x' }], edges: [], middleware: [] });
 assert.ok(!hostile.includes('<script>\' FROM'), 'sql is escaped into attributes');
 
+// A handler that calls no store method has no edges — and any producer writing
+// JSON from a nil list sends `null`, not `[]`. flowscan did, for 16 of merkle's
+// 235 routes, and iterating it threw before a single node was drawn: the whole
+// diagram was lost to the routes that needed the least of it.
+const bare = { ...flow, nodes: [{ kind: 'handler', label: 'health.Check', file: 'health.go', line: 12 }], edges: null };
+const bareHtml = renderFlow(bare);
+assert.ok(bareHtml.includes('health.Check'), 'a flow with null edges still renders its handler');
+assert.ok(!bareHtml.includes('<path d='), 'and draws no edges');
+assert.doesNotThrow(() => renderFlow({ ...flow, nodes: null, edges: null }), 'null nodes are survivable too');
+
 console.log('diagram.test.js OK');

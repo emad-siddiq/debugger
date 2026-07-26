@@ -78,5 +78,5 @@ export function groupFlows(flows: Flow[]): Map<string, Flow[]> {
 
 /** The flow's handler node, when analysis resolved one. */
 export function handlerOf(flow: Flow): FlowNode | undefined {
-	return flow.nodes.find(n => n.kind === 'handler');
+	return (flow.nodes ?? []).find(n => n.kind === 'handler');
 }

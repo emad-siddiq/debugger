@@ -31,12 +31,19 @@ interface Placed {
 
 /** Column per BFS depth from the parentless roots; table nodes always last. */
 export function layout(flow: Flow): { placed: Placed[]; width: number; height: number } {
-	const depth = new Array<number>(flow.nodes.length).fill(0);
+	// `?? []` is not defensive programming for its own sake: a route whose
+	// handler calls no store method has no edges, and any producer that writes
+	// JSON from a nil list (flowscan did) sends `null`. Iterating that threw
+	// before a single node was drawn, so the whole diagram was lost to the one
+	// case that needed no diagram at all.
+	const nodes = flow.nodes ?? [];
+	const edges = flow.edges ?? [];
+	const depth = new Array<number>(nodes.length).fill(0);
 	// Relax edges until depths settle (edge lists are tiny — no need for a queue).
 	let changed = true;
 	while (changed) {
 		changed = false;
-		for (const [from, to] of flow.edges) {
+		for (const [from, to] of edges) {
 			if (depth[to] < depth[from] + 1) {
 				depth[to] = depth[from] + 1;
 				changed = true;
@@ -46,7 +53,7 @@ export function layout(flow: Flow): { placed: Placed[]; width: number; height: n
 	const maxDepth = depth.reduce((a, b) => Math.max(a, b), 0);
 	const placed: Placed[] = [];
 	const rowsPerCol = new Map<number, number>();
-	flow.nodes.forEach((node, idx) => {
+	nodes.forEach((node, idx) => {
 		const col = node.kind === 'table' ? maxDepth : depth[idx];
 		const row = rowsPerCol.get(col) ?? 0;
 		rowsPerCol.set(col, row + 1);
@@ -99,7 +106,7 @@ export function renderFlow(flow: Flow): string {
 	const { placed, width, height } = layout(flow);
 	const byIdx = new Map(placed.map(p => [p.idx, p]));
 
-	const edges = flow.edges.map(([from, to]) => {
+	const edges = (flow.edges ?? []).map(([from, to]) => {
 		const a = byIdx.get(from);
 		const b = byIdx.get(to);
 		if (!a || !b) {

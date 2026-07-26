@@ -117,7 +117,14 @@ export class DiagramPanel implements vscode.Disposable {
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+	<!-- style-src-attr is load-bearing, not boilerplate. The diagram positions every
+	     node with an inline style attribute, and a nonce whitelists <style> ELEMENTS
+	     only — never style ATTRIBUTES. Without this the browser silently drops all of
+	     them: the SVG edges (plain attributes) still draw in the right places while
+	     every node collapses to the canvas origin with a zero-height canvas, which is
+	     to say "squiggly lines that don't connect anything". Reported by the user;
+	     the nonce still gates the stylesheet and all script. -->
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'nonce-${nonce}';">
 	<style nonce="${nonce}">
 		body { font: 13px var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 10px 14px; }
 		.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
