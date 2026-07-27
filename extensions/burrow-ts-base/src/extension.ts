@@ -5,7 +5,7 @@
 
 import { ExtensionContext, commands, window, workspace } from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
-import { resolveTsLsp } from './tslsp';
+import { TsLspResolution, resolveTsLsp } from './tslsp';
 
 // burrow-ts-base is the Full-Stack-Debugger frontend counterpart of burrow-go-base:
 // a minimal language client that starts `typescript-language-server` (the community
@@ -20,7 +20,7 @@ const RESTART_COMMAND = 'burrow.ts.restartLanguageServer';
 // Single window, single client — no per-workspace map (mirrors burrow-go-base).
 let client: LanguageClient | undefined;
 
-/** node_modules/.bin roots to probe: each workspace folder, then the extension's own. */
+/** node_modules roots to probe: each workspace folder, then the extension's own. */
 function binRoots(context: ExtensionContext): string[] {
 	const roots = (workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath);
 	roots.push(context.extensionPath); // bundled fallback — turnkey without a project install
@@ -36,15 +36,15 @@ function binRoots(context: ExtensionContext): string[] {
 export async function activate(context: ExtensionContext): Promise<void> {
 	context.subscriptions.push(commands.registerCommand(RESTART_COMMAND, () => restart(context)));
 
-	const serverPath = resolveTsLsp(process.env, { binRoots: binRoots(context) });
-	if (!serverPath) {
+	const server = resolveTsLsp(process.env, { binRoots: binRoots(context) });
+	if (!server) {
 		void window.showErrorMessage(
 			'Burrow: the TypeScript language server was not found. Reinstall Burrow (it bundles one), install `typescript-language-server` in your project, or set BURROW_TS_LSP_PATH, then run "Burrow: Restart TypeScript Language Server".',
 		);
 		return;
 	}
 
-	await start(serverPath);
+	await start(server);
 	context.subscriptions.push({ dispose: () => void stop() });
 }
 
@@ -54,11 +54,20 @@ export async function activate(context: ExtensionContext): Promise<void> {
  * vscode-languageclient append it, so we set the transport and pass no explicit
  * args. `run` and `debug` are identical — there is no separate debug build.
  */
-async function start(serverPath: string): Promise<void> {
-	const serverOptions: ServerOptions = {
-		run: { command: serverPath, args: [], transport: TransportKind.stdio },
-		debug: { command: serverPath, args: [], transport: TransportKind.stdio },
-	};
+async function start(server: TsLspResolution): Promise<void> {
+	// A `module` resolution is a plain .mjs with no execute bit and no shebang to
+	// rely on, so it runs under the Electron binary in Node mode — the same
+	// mechanism the workbench uses for its own forked processes. An `executable`
+	// (an npm shim, or something on PATH) is spawned as-is.
+	const launch = server.kind === 'module'
+		? {
+			command: process.execPath,
+			args: [server.path],
+			transport: TransportKind.stdio,
+			options: { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+		}
+		: { command: server.path, args: [], transport: TransportKind.stdio };
+	const serverOptions: ServerOptions = { run: launch, debug: launch };
 
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [
@@ -89,12 +98,12 @@ async function stop(): Promise<void> {
  */
 async function restart(context: ExtensionContext): Promise<void> {
 	await stop();
-	const serverPath = resolveTsLsp(process.env, { binRoots: binRoots(context) });
-	if (!serverPath) {
+	const server = resolveTsLsp(process.env, { binRoots: binRoots(context) });
+	if (!server) {
 		void window.showErrorMessage('Burrow: the TypeScript language server was not found. Reinstall Burrow, install it in your project, or set BURROW_TS_LSP_PATH.');
 		return;
 	}
-	await start(serverPath);
+	await start(server);
 }
 
 /** Stops the language client on extension shutdown. */

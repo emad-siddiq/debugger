@@ -153,10 +153,14 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 			void vscode.window.showErrorMessage(`Frontend Debugger: ${err instanceof Error ? err.message : String(err)}`);
 			return;
 		}
-		let args = source instanceof vscode.Uri ? { file: source.fsPath } : source;
+		// Same rule as showInApp: only a `file:` Uri names a component. A webview's
+		// Uri reaching here would be turned into a path that cannot exist.
+		let args = source instanceof vscode.Uri
+			? (source.scheme === 'file' ? { file: source.fsPath } : undefined)
+			: source;
 		if (!args) {
 			const editor = vscode.window.activeTextEditor;
-			if (!editor) {
+			if (!editor || editor.document.uri.scheme !== 'file') {
 				void vscode.window.showWarningMessage('Frontend Debugger: open a component file to isolate it.');
 				return;
 			}
@@ -178,14 +182,19 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 	const lastRouteKey = (rel: string) => `fedbg.lastRoute:${rel}`;
 	const showInApp = async (source?: vscode.Uri | { kind?: string; abs?: string }): Promise<void> => {
 		const cfg = resolveConfig(context);
-		let abs: string | undefined;
-		if (source instanceof vscode.Uri) {
-			abs = source.fsPath;
-		} else if (source && typeof source.abs === 'string') {
-			abs = source.abs; // a Components-tree node
-		} else {
-			abs = currentIsolationFile() || vscode.window.activeTextEditor?.document.uri.fsPath;
-		}
+		// `editor/title` hands a command the ACTIVE EDITOR's Uri — including when
+		// that editor is a webview. This command's entry there is gated on
+		// `activeWebviewPanelId == burrow.frontendIsolation`, so the button on the
+		// isolation preview ALWAYS arrived with
+		// `webview-panel://webview-burrow.frontendIsolation-<uuid>`, whose fsPath
+		// is not a file at all — and the warning then said that path "is outside
+		// the target frontend", which is true and completely beside the point.
+		// Only a `file:` Uri names a component; anything else means "the thing on
+		// the canvas", which is what a button on that canvas meant all along.
+		const fromUri = source instanceof vscode.Uri && source.scheme === 'file' ? source.fsPath : undefined;
+		const fromNode = !(source instanceof vscode.Uri) && typeof source?.abs === 'string' ? source.abs : undefined;
+		const active = vscode.window.activeTextEditor?.document.uri;
+		const abs = fromUri ?? fromNode ?? currentIsolationFile() ?? (active?.scheme === 'file' ? active.fsPath : undefined);
 		if (!abs) {
 			void vscode.window.showWarningMessage('Frontend Debugger: open or isolate a component to show it in the app.');
 			return;
