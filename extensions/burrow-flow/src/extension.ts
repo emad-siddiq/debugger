@@ -60,14 +60,55 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!paths || !item?.flow) {
 			return;
 		}
-		panel.show(item.flow, paths.backendDir, migrationFor);
-		// …and take the code with it. Clicking route after route used to redraw the
-		// diagram while the editor beside it kept showing whichever handler you had
-		// opened by hand — the panel moved and the code did not. A PREVIEW tab
-		// replaces itself, so this follows the selection instead of stacking up.
+		// The CODE first, then the diagram beside it. The other order looks right
+		// and is not: on a window with no editors open, `ViewColumn.Beside`
+		// resolves to column one, so the handler's preview tab opened straight on
+		// top of the diagram that had just been created there. Only reproducible
+		// from a cold window, which is why it survived — measured 2026-07-27,
+		// picking a route from search on a fresh profile left one tab, the source.
+		//
+		// A PREVIEW tab replaces itself, so the code follows the route you clicked
+		// instead of stacking one tab per route.
 		const handler = handlerOf(item.flow);
 		if (handler?.file) {
 			await openSymbol(paths.backendDir, handler.file, handler.label, handler.line, { preview: true, preserveFocus: true });
+		}
+		panel.show(item.flow, paths.backendDir, migrationFor);
+	}));
+
+	// Search: 235 routes in merkle, grouped into 20-odd domains. The tree is for
+	// reading the surface by domain; this is for when you know the path. Picking
+	// does exactly what clicking a tree row does — diagram, and the code follows.
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.searchRoutes', async () => {
+		const flows = tree.document?.flows ?? [];
+		if (!flows.length) {
+			void vscode.window.showWarningMessage('No routes indexed yet — run "API Flows: Refresh Flows" first.');
+			return;
+		}
+		interface Item extends vscode.QuickPickItem { readonly flow: (typeof flows)[number] }
+		const items: Item[] = flows
+			.slice()
+			.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+			.map((flow) => {
+				const handler = handlerOf(flow);
+				return {
+					flow,
+					label: `${flow.method} ${flow.path}`,
+					description: handler?.label ?? '',
+					// Tables are what you actually search for half the time —
+					// "which route writes node_metrics" is a real question.
+					detail: [flow.file ? `${flow.file}:${flow.line}` : undefined, flow.tables?.length ? `▤ ${flow.tables.join(', ')}` : undefined]
+						.filter(Boolean).join('  ·  ') || undefined,
+				};
+			});
+		const chosen = await vscode.window.showQuickPick(items, {
+			placeHolder: 'Search routes — method, path, handler or table',
+			matchOnDescription: true,
+			matchOnDetail: true,
+			title: `${flows.length} routes`,
+		});
+		if (chosen) {
+			await vscode.commands.executeCommand('burrow.flow.openDiagram', new FlowItem(chosen.flow));
 		}
 	}));
 

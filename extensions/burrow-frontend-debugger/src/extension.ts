@@ -14,6 +14,7 @@ import { announceOnVisible, claimSurface } from './toolSurface';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
 import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
+import { pickComponent } from './search';
 
 // burrow-frontend-debugger (task 15): hosts the tools/frontend-debugger
 // sidecar in an editor WebviewPanel and bridges its reveals into the editor.
@@ -191,7 +192,19 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		}
 		const rel = path.relative(cfg.targetDir, abs).split(path.sep).join('/');
 		if (rel.startsWith('..') || path.isAbsolute(rel)) {
-			void vscode.window.showWarningMessage('Frontend Debugger: the component must live under the target frontend.');
+			// Name both halves and offer a way forward. This used to be a bare
+			// "the component must live under the target frontend", which is true
+			// and useless: it does not say which file, which target, or what to do
+			// — and the commonest way to hit it is a component that IS part of the
+			// app but sits outside the Vite project (merkle's `@shared/*`), which
+			// the search picker at least lists and explains.
+			const choice = await vscode.window.showWarningMessage(
+				`Frontend Debugger: ${path.basename(abs)} is outside the target frontend (${cfg.targetDir}), so the live app has no module for it.`,
+				'Search components…',
+			);
+			if (choice === 'Search components…') {
+				await vscode.commands.executeCommand('burrow.frontendDebugger.searchComponents');
+			}
 			return;
 		}
 		const stem = path.basename(abs).replace(/\.[^.]+$/, '');
@@ -248,6 +261,15 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
 		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.showInApp', (source?: vscode.Uri | { kind?: string; abs?: string }) => showInApp(source)),
+		// Search: the gallery tree is for browsing 60-odd directories; this is for
+		// when you already know the name. Isolating is what a click in the tree
+		// does, so it is what picking here does too.
+		vscode.commands.registerCommand('burrow.frontendDebugger.searchComponents', async () => {
+			const hit = await pickComponent(resolveConfig(context).targetDir, 'Search components — type a name');
+			if (hit) {
+				await isolate(vscode.Uri.file(hit.abs));
+			}
+		}),
 		vscode.commands.registerCommand('burrow.frontendDebugger.reloadPreview', () => reloadPreview()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.saveSample', () => saveSample()),
 		vscode.commands.registerCommand('burrow.frontendDebugger.refreshComponents', () => components.refresh()),

@@ -35,6 +35,12 @@
 				"icon": "$(refresh)"
 			},
 			{
+				"command": "burrow.flow.searchRoutes",
+				"title": "Search Routes",
+				"category": "API Flows",
+				"icon": "$(search)"
+			},
+			{
 				"command": "burrow.flow.openDiagram",
 				"title": "Open Wire Diagram",
 				"category": "API Flows"
@@ -60,6 +66,11 @@
 		],
 		"menus": {
 			"view/title": [
+				{
+					"command": "burrow.flow.searchRoutes",
+					"when": "view == burrowFlowRoutes",
+					"group": "navigation@0"
+				},
 				{
 					"command": "burrow.flow.refresh",
 					"when": "view == burrowFlowRoutes",

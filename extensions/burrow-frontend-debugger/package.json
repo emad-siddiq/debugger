@@ -34,6 +34,12 @@
 				"icon": "$(play)"
 			},
 			{
+				"command": "burrow.frontendDebugger.searchComponents",
+				"title": "Search Components",
+				"category": "Burrow",
+				"icon": "$(search)"
+			},
+			{
 				"command": "burrow.frontendDebugger.showInApp",
 				"title": "Show in App",
 				"category": "Burrow",
@@ -91,6 +97,11 @@
 		],
 		"menus": {
 			"view/title": [
+				{
+					"command": "burrow.frontendDebugger.searchComponents",
+					"when": "view == burrowComponents",
+					"group": "navigation@0"
+				},
 				{
 					"command": "burrow.frontendDebugger.open",
 					"when": "view == burrowComponents",
