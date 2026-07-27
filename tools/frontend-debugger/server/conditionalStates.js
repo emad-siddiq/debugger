@@ -134,8 +134,38 @@ function pathOf(node, world) {
   if (n.computed || !n.property || !n.property.name) return null
   const base = unwrap(n.object)
   if (!base || base.type !== 'Identifier') return null
+  // `function Card(props) { … props.tone … }` — the parameter was never
+  // destructured, so `props` is not a prop NAME. The path is still one deep.
+  if (world.propsParam.has(base.name)) return [n.property.name]
   if (!world.props.has(base.name)) return null
   return [base.name, n.property.name]
+}
+
+/**
+ * A name that is not a prop may still be reachable: a local `const` whose
+ * initializer is written in terms of props, or a `useState` seeded from one.
+ *
+ * This is where most of the "can't set" used to come from. Components rarely
+ * branch on a raw prop — they compute `const isEmpty = !rows?.length` first and
+ * branch on that, and refusing to look one hop further declared two thirds of
+ * every real component undrivable. Resolving the initializer costs one
+ * recursion and turns those into ordinary prop patches.
+ *
+ * `useState(x)` is honest but partial, and the caller labels it as such: setting
+ * the prop decides what the component renders with on FIRST paint. Anything the
+ * component does to that state afterwards is beyond the harness.
+ */
+function resolveName(name, world) {
+  if (world.resolving.has(name)) return null // `const a = b, b = a` — give up, do not hang
+  const init = world.localInit.get(name) || world.stateInit.get(name)
+  if (!init) return null
+  world.resolving.add(name)
+  try {
+    const patch = patchFor(init, world)
+    return patch.blocked ? null : patch
+  } finally {
+    world.resolving.delete(name)
+  }
 }
 
 const op = (path, value) => ({ ops: [{ path, value }], unset: [] })
@@ -154,8 +184,12 @@ function patchFor(node, world) {
   if (!n) return { blocked: 'unreadable condition' }
   const kindAt = (path) => (path.length === 1 && world.kinds[path[0]] !== undefined ? world.kinds[path[0]] : null)
   const why = (name) => {
-    if (world.state.has(name)) return 'internal state (useState) — flip it in the component, not from props'
-    if (world.locals.has(name)) return 'computed inside the component from other values'
+    if (world.state.has(name)) {
+      return world.stateInit.has(name)
+        ? 'useState seeded by something the harness cannot set'
+        : 'internal state (useState) — flip it in the component, not from props'
+    }
+    if (world.locals.has(name)) return 'computed inside the component from values no prop reaches'
     return 'not one of this component\'s props'
   }
   const nameOf = (node2) => {
@@ -178,7 +212,10 @@ function patchFor(node, world) {
         return { blocked: 'a non-empty ' + arr + ' needs realistic items — set it in Props' }
       }
       const path = pathOf(n, world)
-      if (!path) return { blocked: why(nameOf(n)) }
+      if (!path) {
+        const via = n.type === 'Identifier' ? resolveName(n.name, world) : null
+        return via || { blocked: why(nameOf(n)) }
+      }
       const last = path[path.length - 1]
       return op(path, truthyForName(last, kindAt(path)))
     }
@@ -223,7 +260,24 @@ function patchFor(node, world) {
         return needsItems
       }
       const path = pathOf(other, world)
-      if (!path) return { blocked: why(nameOf(other)) }
+      if (!path) {
+        // `const status = data?.state` then `status === 'error'`: resolve the
+        // name and re-run the comparison against what it actually stands for.
+        const u = unwrap(other)
+        const init = u && u.type === 'Identifier' && !world.resolving.has(u.name)
+          ? (world.localInit.get(u.name) || world.stateInit.get(u.name))
+          : null
+        if (init) {
+          world.resolving.add(u.name)
+          try {
+            const again = patchFor({ ...n, [litRight ? 'left' : 'right']: init }, world)
+            if (!again.blocked) return again
+          } finally {
+            world.resolving.delete(u.name)
+          }
+        }
+        return { blocked: why(nameOf(other)) }
+      }
       const kind = kindAt(path)
       if (cmp === '===' || cmp === '==') {
         if (lit === null) return { ops: [], unset: [path] }
@@ -309,8 +363,16 @@ export function scanConditionalStates(source, opts = {}) {
   }
   const world = {
     props: new Set(Object.keys(kinds)),
+    /** Names of undestructured props parameters — `function C(props)`. */
+    propsParam: new Set(),
     state: new Set(),
     locals: new Set(),
+    /** name → initializer, so a condition on a computed value can be resolved
+     *  one hop back to the props it was computed from. */
+    localInit: new Map(),
+    stateInit: new Map(),
+    /** Cycle guard for that resolution. */
+    resolving: new Set(),
     kinds,
   }
   const states = []
@@ -333,12 +395,16 @@ export function scanConditionalStates(source, opts = {}) {
   // destructured parameter (the schema may be absent — the standalone SPA builds
   // isolate URLs without one), useState bindings, and plain locals.
   walk(ast, (node, parent) => {
+    const learnParam = (param) => {
+      if (param && param.type === 'Identifier') world.propsParam.add(param.name)
+      destructuredNames(param, world.props)
+    }
     if (node.type === 'FunctionDeclaration' && isComponentName(node.id && node.id.name)) {
-      destructuredNames(node.params[0], world.props)
+      learnParam(node.params[0])
     }
     if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression')
       && parent && parent.type === 'VariableDeclarator' && isComponentName(parent.id && parent.id.name)) {
-      destructuredNames(node.params[0], world.props)
+      learnParam(node.params[0])
     }
     if (node.type === 'VariableDeclarator' && node.init) {
       const init = unwrap(node.init)
@@ -346,9 +412,16 @@ export function scanConditionalStates(source, opts = {}) {
       const calleeName = callee && (callee.name || (callee.property && callee.property.name))
       if (node.id.type === 'ArrayPattern' && /^useState|^useReducer/.test(String(calleeName || ''))) {
         const first = node.id.elements[0]
-        if (first && first.type === 'Identifier') world.state.add(first.name)
+        if (first && first.type === 'Identifier') {
+          world.state.add(first.name)
+          // `useState(props.defaultOpen)` — the prop decides the FIRST paint,
+          // which is the only paint the harness renders.
+          const seed = init.arguments && init.arguments[0]
+          if (seed) world.stateInit.set(first.name, seed)
+        }
       } else if (node.id.type === 'Identifier' && !world.props.has(node.id.name)) {
         world.locals.add(node.id.name)
+        world.localInit.set(node.id.name, node.init)
       }
     }
   })

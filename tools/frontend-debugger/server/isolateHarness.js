@@ -1049,6 +1049,23 @@ function buildStatesTab(body) {
       + 'Its variations, if any, come from the props themselves; try the Props tab.'))
     return
   }
+  // The honest headline when nothing here is clickable. A wall of greyed cards
+  // each explaining itself is worse than one sentence explaining the shape of
+  // the problem: this component decides its own appearance, so no prop will
+  // move it. Saying that once is the difference between "broken" and "not
+  // applicable to this component".
+  if (!drivable) {
+    var owns = STATES.filter(function (s) { return /useState|computed inside/.test(s.blocked || '') }).length
+    body.append(el('div', { class: 'phint' },
+      owns
+        ? 'None of these can be set from props, and that is a fact about the component rather than the lab: '
+          + 'it owns its own state (useState, or values it computes from data it fetches itself), so nothing '
+          + 'passed in from outside can change which branch it takes. Presentational components — the ones '
+          + 'that take what they render as props — are where this tab does its work. To drive a container '
+          + 'like this one you need its data mocked at the provider, which is not something the harness does yet.'
+        : 'None of these can be set from props. Each card says why; the commonest reason is a value that '
+          + 'comes from somewhere other than this component\\'s own props.'))
+  }
   for (let i = 0; i < STATES.length; i++) body.append(stateRow(STATES[i], i))
 }
 
@@ -1534,6 +1551,19 @@ function buildPropsTab(body) {
   if (schema) {
     const required = schema.filter((s) => s.required)
     const optional = schema.filter((s) => !s.required)
+    // A props panel showing three callbacks and nothing else looks broken. It is
+    // not — it is the component telling you it takes no data from outside. Say
+    // so, once, instead of leaving the emptiness to be interpreted.
+    var payload = schema.filter((s) => s.kind !== 'function' && s.kind !== 'component' && s.kind !== 'element')
+    if (!payload.length) {
+      body.append(el('div', { class: 'bp-note' },
+        schema.length
+          ? 'Every prop this component takes is a callback — it renders no data you can hand it, so there is '
+            + 'nothing here to turn. Whatever it shows, it fetches or computes itself. The same is true of its '
+            + 'States tab, and for the same reason.'
+          : 'This component takes no props at all. It draws itself from data it fetches, so the lab can show '
+            + 'you what it looks like but not vary it.'))
+    }
     // Past a handful of props, scanning is slower than typing.
     if (schema.length > FILTER_AT) {
       const f = el('input', { type: 'text', id: 'iso-filter', placeholder: 'Filter props…', value: propFilter })

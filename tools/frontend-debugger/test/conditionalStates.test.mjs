@@ -83,7 +83,10 @@ test('internal useState is listed but not drivable, and says so', () => {
   assert.match(s.blocked, /useState/)
 })
 
-test('a value computed in the body is listed with a different reason', () => {
+test('a value computed from a prop resolves one hop back to that prop', () => {
+  // Components almost never branch on a raw prop — they name the condition
+  // first. Refusing to look through that one hop is what made two thirds of
+  // real components report "can't set" for every branch they have.
   const states = scan(`
     export function Row({ items }) {
       const isEmpty = items.length === 0
@@ -92,8 +95,45 @@ test('a value computed in the body is listed with a different reason', () => {
     }
   `)
   const s = find(states, 'isEmpty')
+  assert.equal(s.blocked, null)
+  assert.deepEqual(s.ops, [{ path: ['items'], value: [] }])
+})
+
+test('a computed value with nothing behind it still says so', () => {
+  const states = scan(`
+    export function Row({ items }) {
+      const isEmpty = useSelector(pickEmptiness)
+      if (isEmpty) return <Empty />
+      return <ul />
+    }
+  `)
+  const s = find(states, 'isEmpty')
   assert.equal(s.ops, null)
   assert.match(s.blocked, /computed inside/)
+})
+
+test('useState seeded from a prop is drivable for the first paint', () => {
+  const states = scan(`
+    export function Panel({ startOpen }) {
+      const [open, setOpen] = useState(startOpen)
+      return <div>{open ? <Body /> : <Stub />}</div>
+    }
+  `)
+  const s = find(states, 'open')
+  assert.equal(s.blocked, null)
+  assert.deepEqual(s.ops, [{ path: ['startOpen'], value: true }])
+})
+
+test('an undestructured props parameter is still a set of props', () => {
+  const states = scan(`
+    export function Card(props) {
+      if (props.tone === 'danger') return <Danger />
+      return <Plain />
+    }
+  `)
+  const s = find(states, 'danger')
+  assert.equal(s.blocked, null)
+  assert.deepEqual(s.ops, [{ path: ['tone'], value: 'danger' }])
 })
 
 test('an enum equality sets the literal it compares against', () => {
