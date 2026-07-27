@@ -278,3 +278,18 @@
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-toolbar {
 	-webkit-app-region: no-drag;
 }
+
+/** …and when there are no editors at all, that title bar has ZERO height, so
+	the rule above leaves a fresh window with no drag region anywhere and it
+	cannot be moved until you open a file. Measured 2026-07-27: both drag
+	elements in the DOM reported a 0×0 rect on a freshly opened window. The
+	watermark background is the handle in that state; its shortcut list and the
+	letterpress stay clickable. */
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container.empty {
+	-webkit-app-region: drag;
+}
+
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container.empty .editor-group-watermark,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container.empty .editor-group-letterpress {
+	-webkit-app-region: no-drag;
+}

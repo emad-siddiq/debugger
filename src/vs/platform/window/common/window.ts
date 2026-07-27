@@ -261,20 +261,17 @@ export function hasNativeTitlebar(configurationService: IConfigurationService, t
 }
 
 /**
- * BURROW patch 0011 — where macOS draws the traffic lights when Burrow runs
- * with no title strip at all (`titleBarStyle: custom` +
- * `customTitleBarVisibility: never`), and how much room the workbench reserves
- * for them at the top of the activity bar.
+ * BURROW patch 0011 — how much room the workbench keeps clear for the macOS
+ * traffic lights when Burrow runs with no title strip at all
+ * (`titleBarStyle: custom` + `customTitleBarVisibility: never`).
  *
- * Both processes need to agree: the main process positions the buttons, the
- * renderer reserves the space. Keep `.window-controls-inset` in
- * `parts/activitybar/media/activitybar.css` in step with STRIP_HEIGHT.
+ * Only the renderer reads this now. There is no matching `trafficLightPosition`
+ * in the main process on purpose: repositioning the buttons is what broke them
+ * (see the patch note). macOS places them itself, ~20px from the left and
+ * vertically centred in its own 28px titlebar band, which this strip covers.
  */
 export const WindowControlsInset = {
-	/** Left/top of the leftmost button, in content coordinates. */
-	x: 7,
-	y: 13,
-	/** Reserved strip at the top of the activity bar, also the drag handle. */
+	/** Reserved strip at the top of the activity bar. Background, nothing else. */
 	STRIP_HEIGHT: 38
 } as const;
 

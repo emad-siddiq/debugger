@@ -39,15 +39,53 @@ adds nothing to the app". Both defaults are back to upstream's `custom`; the
 lesson worth keeping is that the two processes disagree about this setting
 unless the default lives in `window.ts`.
 
+## The second thing that was tried and withdrawn (2026-07-27)
+
+**`trafficLightPosition` is gone too.** It was set to `{ x: 7, y: 13 }` to park
+the buttons neatly inside the reserved strip. That is what made them unclickable,
+and it survived the drag-region fix below — the user reported them *still*
+"partially hidden … and I can't click them" after the drag region moved out.
+
+What was measured on the installed build before deciding, driving the running app
+over CDP:
+
+| Checked | Result |
+|---|---|
+| `window-controls-inset` on the workbench | **yes** |
+| `.part.activitybar > .content` margin-top | **38px**, rect starts at y=38 |
+| `.part.titlebar` | **0×0** — no title row, as intended |
+| **Every** element with computed `-webkit-app-region: drag` | **two, both 0×0** |
+| `elementFromPoint` across x=10…64, y=19, walking each ancestor chain | **no drag region anywhere near the buttons** |
+
+So the drag region is not the cause any more, and nothing in the DOM sits over
+the buttons in a way the workbench can see. What is left is the one thing Burrow
+does that upstream does not: upstream **never sets `trafficLightPosition`**, and
+its traffic lights work on macOS over a custom title bar. The correlation is
+exact — before this patch there was no `trafficLightPosition` and the user
+confirmed the buttons worked ("the overlap was better"); the build that added it
+is the build they could not click.
+
+The mechanism fits both halves of the report. The buttons live inside macOS's own
+titlebar container view, which is ~28pt tall and clips its subviews; `y: 13` puts
+a 12–14pt button group at 13–27, at or past that edge — clipped at the bottom
+("partially hidden") with a hit region that no longer matches where they draw
+("can't click"). Electron has since **deprecated `trafficLightPosition`** in
+favour of `setWindowButtonPosition()`, which is what a load-bearing API does not
+do. Burrow now sets nothing and lets macOS place them, which is the only
+configuration this project has evidence of working.
+
+The strip stays. It is what stopped the buttons landing on the first rail icon,
+and that part of the complaint never came back.
+
 ## What
 
-Keep the frameless window, and **give the buttons a home instead of a row**:
+Keep the frameless window, and **keep content out from under the buttons**:
 
-1. `window.ts` exports `WindowControlsInset` — `{ x: 7, y: 13, STRIP_HEIGHT: 38 }`.
-   Both processes load this file, which is why the constant lives here: the main
-   process positions the buttons, the renderer reserves the space.
-2. `windows.ts` sets `options.trafficLightPosition` from it on macOS whenever the
-   native title bar is hidden.
+1. `window.ts` exports `WindowControlsInset` — `{ STRIP_HEIGHT: 38 }`, read by
+   the renderer only.
+2. `windows.ts` sets **no** `trafficLightPosition` — see above. macOS places the
+   buttons ~20px from the left, vertically centred in its own 28px band, which
+   the strip covers.
 2a. `desktop.contribution.ts` defaults `window.customTitleBarVisibility` to
    **`never`** (was `auto`). This is the one that actually removes the bar, and it
    **cannot** be done from `burrow-core`'s `configurationDefaults`: the setting is
@@ -68,7 +106,11 @@ Keep the frameless window, and **give the buttons a home instead of a row**:
 4. `activitybarpart.css` insets `.activitybar > .content` by 38px under that
    class. The strip is background and nothing else.
 5. `editorgroupview.css` puts the window's `-webkit-app-region: drag` on the
-   editor title bar, with `no-drag` on the tabs, breadcrumbs and both toolbars.
+   editor title bar, with `no-drag` on the tabs, breadcrumbs and both toolbars —
+   **and on `.editor-group-container.empty`**, because with no editors open that
+   title bar has zero height and a fresh window would otherwise have no drag
+   region at all. Measured: both drag elements reported a 0×0 rect on a window
+   opened straight onto a folder.
 
 ### The drag region does NOT go in the strip (2026-07-27)
 
