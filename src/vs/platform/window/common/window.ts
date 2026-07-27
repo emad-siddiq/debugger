@@ -272,6 +272,15 @@ export function hasNativeTitlebar(configurationService: IConfigurationService, t
  */
 export const WindowControlsInset = {
 	/**
+	 * Where the buttons go, in the window's own coordinates. `0, 0` is the
+	 * top-left of the content — the user's instruction after macOS's own
+	 * placement put them outside the viewport entirely: *"make sure the traffic
+	 * lights are at 0,0, not outside the viewport"*. Overridable at runtime with
+	 * `window.trafficLightPosition` so nudging it does not need a rebuild.
+	 */
+	x: 0,
+	y: 0,
+	/**
 	 * How far the activity bar's icons drop to clear the buttons. The renderer
 	 * expresses this as `max(3vh, 28px)` in activitybarpart.css — the user's own
 	 * measure, floored so a short window cannot close the gap; 28 is that floor

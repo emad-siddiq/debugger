@@ -86,9 +86,20 @@ Keep the frameless window, and **keep content out from under the buttons**:
 
 1. `window.ts` exports `WindowControlsInset` — `{ STRIP_HEIGHT: 28 }`, a note for
    readers of the main-process side; the renderer owns the real value in CSS.
-2. `windows.ts` sets **no** `trafficLightPosition` — see above. macOS places the
-   buttons ~20px from the left, vertically centred in its own 28px band, which
-   item 4's offset clears.
+2. `windows.ts` pins `trafficLightPosition` to **`{ x: 0, y: 0 }`** — the
+   top-left of the content — overridable at runtime by the new
+   **`window.trafficLightPosition`** setting (registered in
+   `desktop.contribution.ts`, macOS only, read by the MAIN process at window
+   creation, so it takes a new window rather than a reload).
+
+   Leaving it to macOS was tried in between and was worse: the buttons landed
+   **outside the viewport entirely**. The user's instruction, three rounds in:
+   *"make sure the traffic lights are at 0,0, not outside the viewport"*. The
+   setting exists because every guess here costs a full rebuild and **there is
+   no way to read the buttons' real position back** — they are native views
+   outside the web contents, `screencapture -l` refuses an occluded window, and
+   `CGWindowListCreateImage` is denied to an unentitled binary. Three rounds of
+   inference; the fourth ships a knob.
 2a. `desktop.contribution.ts` defaults `window.customTitleBarVisibility` to
    **`never`** (was `auto`). This is the one that actually removes the bar, and it
    **cannot** be done from `burrow-core`'s `configurationDefaults`: the setting is

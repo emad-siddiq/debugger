@@ -17,7 +17,7 @@ import { ServicesAccessor, createDecorator } from '../../instantiation/common/in
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
-import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowMinimumSize, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
+import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowControlsInset, WindowMinimumSize, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
 import { ICodeWindow, IWindowState, WindowMode, defaultWindowState } from '../../window/electron-main/window.js';
 
 export const IWindowsMainService = createDecorator<IWindowsMainService>('windowsMainService');
@@ -214,11 +214,22 @@ export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowSt
 			options.frame = false;
 		}
 
-		// BURROW patch 0011 — deliberately NO `trafficLightPosition` here. See the
-		// patch note: moving the buttons is what made them unclickable. macOS's
-		// own placement is left alone, and the workbench reserves
-		// `WindowControlsInset.STRIP_HEIGHT` at the top of the activity bar so
-		// nothing is drawn where they land.
+		// BURROW patch 0011 — pin the traffic lights to the top-left of the content.
+		//
+		// Leaving macOS to place them put them OUTSIDE the viewport (user, three
+		// rounds in: "make sure the traffic lights are at 0,0, not outside the
+		// viewport"), and `{ x: 7, y: 13 }` before that left them partly clipped.
+		// So: an explicit origin, and a SETTING, because every guess at this costs
+		// a full rebuild and there is no way to read the buttons' real position
+		// back from the renderer. `window.trafficLightPosition` takes effect on the
+		// next window — the value is read here, at window creation.
+		if (isMacintosh) {
+			const configured = configurationService.getValue<{ x?: number; y?: number } | undefined>('window.trafficLightPosition');
+			options.trafficLightPosition = {
+				x: typeof configured?.x === 'number' ? configured.x : WindowControlsInset.x,
+				y: typeof configured?.y === 'number' ? configured.y : WindowControlsInset.y,
+			};
+		}
 
 		if (useWindowControlsOverlay(configurationService)) {
 			if (isMacintosh) {

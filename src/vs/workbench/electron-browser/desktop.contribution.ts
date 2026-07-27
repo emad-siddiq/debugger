@@ -272,6 +272,23 @@ import product from '../../platform/product/common/product.js';
 				'scope': ConfigurationScope.APPLICATION,
 				'markdownDescription': localize('window.customTitleBarVisibility', "Adjust when the custom title bar should be shown. The custom title bar can be hidden when in full screen mode with `windowed`. The custom title bar can only be hidden in non full screen mode with `never` when {0} is set to `native`.", '`#window.titleBarStyle#`'),
 			},
+			// BURROW patch 0011 — where macOS draws the window buttons, in the window's
+			// own coordinates. Burrow has no title bar to put them in, and there is no
+			// way to read their real position back from the renderer, so this is a knob
+			// rather than a constant: nudge it, open a new window, look. Read by the
+			// MAIN process at window creation — a reload will not pick it up, a new
+			// window will.
+			'window.trafficLightPosition': {
+				'type': 'object',
+				'properties': {
+					'x': { 'type': 'number' },
+					'y': { 'type': 'number' }
+				},
+				'default': { 'x': 0, 'y': 0 },
+				'included': isMacintosh,
+				'scope': ConfigurationScope.APPLICATION,
+				'description': localize('window.trafficLightPosition', "Position of the macOS window buttons (close, minimise, zoom), measured from the top-left of the window. Applies to windows opened after the change."),
+			},
 			'window.menuStyle': {
 				'type': 'string',
 				'enum': ['custom', 'native', 'inherit'],
