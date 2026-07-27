@@ -88,18 +88,47 @@ function nodeBody(node: FlowNode): string {
 	}
 }
 
+/**
+ * What a click on the box itself does — shown on every node, because the
+ * commonest question about this panel was "why can't I click on each part".
+ * Most nodes DO open their source; the ones that have no source (a table is a
+ * row in the database, not a line of Go) say what they open instead.
+ */
+function clickHint(node: FlowNode): string {
+	if (node.kind === 'table') {
+		return 'Click: open this table in Data';
+	}
+	if (node.file) {
+		return `Click: open ${node.file}${node.line ? ':' + node.line : ''}`;
+	}
+	return 'No source to open — flowscan could not place this hop';
+}
+
+/**
+ * The buttons were a bare ▶ and a bare ●, which read as play and record. They
+ * are neither. Labelled, and every one of them is captioned in the ? sheet.
+ */
 function nodeActions(node: FlowNode): string {
 	if (node.kind === 'query') {
-		return '<button class="act" data-act="query" title="Run in DB Explorer">▶ db</button>';
+		return '<button class="act" data-act="query" title="Run this SQL in the Data view">run in Data</button>';
 	}
 	if (node.kind === 'table') {
-		return '<button class="act" data-act="table" title="Open in DB Explorer">▶ db</button>';
+		return '<button class="act" data-act="table" title="Open this table in the Data view">open in Data</button>';
 	}
 	if (node.kind === 'handler') {
-		return '<button class="act" data-act="breakpoint" title="Arm symbol breakpoint">●</button>';
+		return '<button class="act" data-act="breakpoint" title="Set a breakpoint on this handler, so the next request that hits this route stops here">break here</button>';
 	}
 	return '';
 }
+
+/** The colour key. Every left border in the diagram is one of these. */
+export const LEGEND: readonly { readonly kind: string; readonly label: string; readonly what: string }[] = [
+	{ kind: 'handler', label: 'handler', what: 'the Go function this route runs' },
+	{ kind: 'store', label: 'store', what: 'a data-access method the handler calls' },
+	{ kind: 'query', label: 'SQL', what: 'a statement that method runs' },
+	{ kind: 'table', label: 'table', what: 'a table that SQL reads or writes' },
+	{ kind: 'unknown', label: 'unresolved', what: 'a hop flowscan could not follow — dashed, and it says why' },
+];
 
 /** Render the diagram body for one flow. The host page supplies CSS + the message script. */
 export function renderFlow(flow: Flow): string {
@@ -130,19 +159,33 @@ export function renderFlow(flow: Flow): string {
 		const dataExtra = n.kind === 'query'
 			? ` data-sql="${escapeHtml(n.sql ?? '')}"`
 			: n.kind === 'table' ? ` data-table="${escapeHtml(n.label)}"` : '';
-		const title = n.kind === 'query' ? escapeHtml(n.sql ?? '') : escapeHtml(`${n.file ?? ''}${n.line ? ':' + n.line : ''}`);
-		return `<div class="node ${n.kind}" style="left:${p.x}px;top:${p.y}px;width:${COL_W}px" ${dataPos}${dataExtra} title="${title}">${nodeBody(n)}${nodeActions(n)}</div>`;
+		const detail = n.kind === 'query' ? escapeHtml(n.sql ?? '') : escapeHtml(`${n.file ?? ''}${n.line ? ':' + n.line : ''}`);
+		const title = `${detail}${detail ? '\n' : ''}${clickHint(n)}`;
+		const dead = n.kind !== 'table' && !n.file ? ' dead' : '';
+		return `<div class="node ${n.kind}${dead}" style="left:${p.x}px;top:${p.y}px;width:${COL_W}px" ${dataPos}${dataExtra} title="${escapeHtml(title)}">${nodeBody(n)}${nodeActions(n)}</div>`;
 	}).join('');
 
-	const statusBadge = `<span class="badge ${flow.status}">${flow.status}</span>`;
+	const legend = LEGEND.map(item =>
+		`<span class="key ${item.kind}" title="${escapeHtml(item.what)}">${escapeHtml(item.label)}</span>`
+	).join('');
+
+	const statusBadge = `<span class="badge ${flow.status}" title="${flow.status === 'traced'
+		? 'flowscan followed this route all the way to the tables it touches'
+		: flow.status === 'partial'
+			? 'flowscan followed part of this route — some hops are missing or approximate'
+			: 'flowscan found the route registration but could not follow it any further'}">${flow.status}</span>`;
 	return `
 <div class="head">
 	<span class="method ${flow.method.toLowerCase()}">${escapeHtml(flow.method)}</span>
 	<span class="path">${escapeHtml(flow.path)}</span>
 	${statusBadge}
-	<span class="reg" data-file="${escapeHtml(flow.file)}" data-line="${flow.line}" title="registration site">${escapeHtml(flow.file)}:${flow.line}</span>
+	<span class="reg" data-file="${escapeHtml(flow.file)}" data-line="${flow.line}" title="Where this route is registered. Click to open it.">${escapeHtml(flow.file)}:${flow.line}</span>
+	<button class="helpbtn" id="helpbtn" title="What am I looking at?">?</button>
 </div>
-${chips ? `<div class="chips">${chips}</div>` : ''}
+<div class="lede">Everything this route runs, left to right: the Go handler, the store methods it
+	calls, the SQL those run, and the tables that SQL touches. <b>Click any box</b> to open it.</div>
+${chips ? `<div class="chiprow"><span class="chiplabel" title="Middleware that runs before the handler, in order. Click one to open where it is mounted.">before the handler:</span><div class="chips">${chips}</div></div>` : ''}
+<div class="legend">${legend}</div>
 <div class="canvas" style="width:${width}px;height:${height}px">
 	<svg class="edges" width="${width}" height="${height}">${edges}</svg>
 	${nodes}

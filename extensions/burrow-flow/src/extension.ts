@@ -55,12 +55,20 @@ export function activate(context: vscode.ExtensionContext): void {
 		);
 	}));
 
-	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.openDiagram', (item: FlowItem) => {
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.openDiagram', async (item: FlowItem) => {
 		const paths = detectProject();
 		if (!paths || !item?.flow) {
 			return;
 		}
 		panel.show(item.flow, paths.backendDir, migrationFor);
+		// …and take the code with it. Clicking route after route used to redraw the
+		// diagram while the editor beside it kept showing whichever handler you had
+		// opened by hand — the panel moved and the code did not. A PREVIEW tab
+		// replaces itself, so this follows the selection instead of stacking up.
+		const handler = handlerOf(item.flow);
+		if (handler?.file) {
+			await openSymbol(paths.backendDir, handler.file, handler.label, handler.line, { preview: true, preserveFocus: true });
+		}
 	}));
 
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.armBreakpoint', async (item: FlowItem) => {

@@ -12,11 +12,11 @@ import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { armSymbolBreakpoint } from './breakpoints';
-import { renderFlow } from './diagram';
+import { escapeHtml, LEGEND, renderFlow } from './diagram';
 import { Flow, handlerOf } from './model';
 
 interface PanelMessage {
-	readonly type: 'open' | 'query' | 'table' | 'breakpoint';
+	readonly type: 'open' | 'query' | 'table' | 'breakpoint' | 'exitFocus';
 	readonly file?: string;
 	readonly line?: number;
 	readonly col?: number;
@@ -55,6 +55,12 @@ export class DiagramPanel implements vscode.Disposable {
 
 	private async onMessage(message: PanelMessage): Promise<void> {
 		switch (message.type) {
+			case 'exitFocus': {
+				try {
+					await vscode.commands.executeCommand('burrow.focus.exit');
+				} catch { /* focus mode is another extension's; Esc simply does nothing without it */ }
+				return;
+			}
 			case 'open': {
 				if (!message.file) {
 					return;
@@ -136,7 +142,29 @@ export class DiagramPanel implements vscode.Disposable {
 		.badge { font-size: 10px; padding: 0 5px; border-radius: 7px; margin-left: 4px; vertical-align: middle; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
 		.badge.write { background: #7a1e1e; color: #fff; } .badge.read { background: #2d6a4f; color: #fff; }
 		.badge.partial, .badge.unknown { background: #8a5a00; color: #fff; } .badge.traced { background: #2d6a4f; color: #fff; }
-		.chips { margin: 2px 0 10px; display: flex; flex-wrap: wrap; gap: 4px; }
+		.lede { opacity: .75; margin: 0 0 8px; max-width: 70ch; line-height: 1.45; }
+		.lede b { opacity: 1; }
+		.chiprow { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 8px; flex-wrap: wrap; }
+		.chiplabel { font-size: 11px; opacity: .55; white-space: nowrap; }
+		.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; font-size: 11px; opacity: .8; }
+		.key { padding-left: 8px; border-left: 3px solid var(--vscode-editorLineNumber-foreground); }
+		.key.handler { border-left-color: var(--vscode-charts-blue, #3794ff); }
+		.key.store { border-left-color: var(--vscode-charts-purple, #b180d7); }
+		.key.query { border-left-color: var(--vscode-charts-green, #89d185); }
+		.key.table { border-left-color: var(--vscode-charts-orange, #d18616); }
+		.key.unknown { border-left-color: var(--vscode-charts-yellow, #cca700); border-left-style: dashed; }
+		.helpbtn { margin-left: auto; width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+			background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; font-weight: 700; }
+		.helpbtn:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+		#help { display: none; position: fixed; top: 8px; right: 8px; width: 420px; max-height: 88vh; overflow-y: auto; z-index: 20;
+			background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground));
+			border-radius: 8px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+		#help.on { display: block; }
+		.hh { font-weight: 700; margin: 10px 0 4px; } .hh:first-child { margin-top: 0; }
+		.hlede { opacity: .8; line-height: 1.5; margin-bottom: 6px; }
+		.hrow { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; margin: 3px 0; align-items: baseline; }
+		.hk { opacity: .95; font-weight: 600; } .hv { opacity: .75; line-height: 1.45; }
+		.chips { display: flex; flex-wrap: wrap; gap: 4px; }
 		.chip { font-size: 11px; padding: 1px 8px; border-radius: 9px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border, transparent); cursor: pointer; opacity: .85; }
 		.chip:hover { opacity: 1; text-decoration: underline; }
 		.canvas { position: relative; }
@@ -150,6 +178,8 @@ export class DiagramPanel implements vscode.Disposable {
 		.node.query { border-left: 3px solid var(--vscode-charts-green, #89d185); }
 		.node.table { border-left: 3px solid var(--vscode-charts-orange, #d18616); }
 		.node.unknown { border-left: 3px solid var(--vscode-charts-yellow, #cca700); border-style: dashed; }
+		/* A node with nowhere to go should not pretend to be a link. */
+		.node.dead { cursor: default; opacity: .72; }
 		.title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.sub { opacity: .6; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.sub.sql { font-family: var(--vscode-editor-font-family); }
@@ -160,9 +190,46 @@ export class DiagramPanel implements vscode.Disposable {
 </head>
 <body>
 ${renderFlow(flow)}
+<div id="help">
+	<div class="hh">The wire diagram</div>
+	<div class="hlede">One route, and everything the backend runs to serve it — read left to right.
+		Burrow builds this by reading the Go source, not by watching traffic, so it is here before you
+		send a single request.</div>
+	<div class="hh">The boxes</div>
+	${LEGEND.map(item => `<div class="hrow"><span class="hk">${escapeHtml(item.label)}</span><span class="hv">${escapeHtml(item.what)}</span></div>`).join('')}
+	<div class="hrow"><span class="hk">the curves</span><span class="hv">"this calls that". A box with two curves out of it does two things; a table with two curves in is touched twice.</span></div>
+	<div class="hh">Clicking</div>
+	<div class="hrow"><span class="hk">a box</span><span class="hv">opens its source at the exact line. A <b>table</b> has no source — it opens in the Data view instead. A faded box is one flowscan could not place, and there is nothing to open.</span></div>
+	<div class="hrow"><span class="hk">break here</span><span class="hv">sets a breakpoint on the handler. Start the backend and the next request to this route stops in Go, on this line.</span></div>
+	<div class="hrow"><span class="hk">run in Data</span><span class="hv">sends that exact SQL to the Data view and runs it. Read-only unless you have turned writes on there.</span></div>
+	<div class="hrow"><span class="hk">open in Data</span><span class="hv">opens the table's rows in the Data view.</span></div>
+	<div class="hrow"><span class="hk">a chip</span><span class="hv">the middleware that runs before the handler, in the order it runs. Opens where it is mounted.</span></div>
+	<div class="hrow"><span class="hk">the file:line</span><span class="hv">top right of the header — where the route is registered, usually the router.</span></div>
+	<div class="hh">traced · partial · unknown</div>
+	<div class="hrow"><span class="hk">traced</span><span class="hv">followed all the way to the tables.</span></div>
+	<div class="hrow"><span class="hk">partial</span><span class="hv">some hops are missing or the SQL was only partly constant — the dashed boxes say why.</span></div>
+	<div class="hrow"><span class="hk">unknown</span><span class="hv">the route is registered but nothing past it could be followed.</span></div>
+	<div class="hh">One panel, not one per route</div>
+	<div class="hlede">Clicking another route redraws <i>this</i> tab rather than opening a second one.
+		The editor beside it follows too: the handler's source opens as a preview tab, so the code you
+		are looking at is always the route you last clicked.</div>
+	<div class="hh">Keys</div>
+	<div class="hrow"><span class="hk">?</span><span class="hv">this sheet</span></div>
+	<div class="hrow"><span class="hk">Esc</span><span class="hv">closes it, then leaves Focus Mode</span></div>
+</div>
 <script nonce="${nonce}">
 	const vscode = acquireVsCodeApi();
+	const help = document.getElementById('help');
+	const setHelp = (on) => help.classList.toggle('on', on);
+	document.getElementById('helpbtn').addEventListener('click', e => { e.stopPropagation(); setHelp(!help.classList.contains('on')); });
+	document.addEventListener('keydown', e => {
+		if (e.key === '?') { setHelp(true); return; }
+		if (e.key !== 'Escape') { return; }
+		if (help.classList.contains('on')) { setHelp(false); return; }
+		vscode.postMessage({ type: 'exitFocus' });
+	});
 	document.addEventListener('click', e => {
+		if (help.contains(e.target)) { return; }
 		const act = e.target.closest('.act');
 		if (act) {
 			const node = act.closest('.node');

@@ -50,16 +50,24 @@ async function documentSymbolsWithRetry(uri: vscode.Uri): Promise<vscode.Documen
 }
 
 /** Open a backend-relative file and reveal the named symbol (or a line fallback). */
-export async function openSymbol(backendDir: string, file: string, symbolLabel: string, fallbackLine?: number): Promise<vscode.TextEditor | undefined> {
+export async function openSymbol(backendDir: string, file: string, symbolLabel: string, fallbackLine?: number, options?: { preview?: boolean; preserveFocus?: boolean }): Promise<vscode.TextEditor | undefined> {
 	const uri = vscode.Uri.file(path.join(backendDir, file));
 	let doc: vscode.TextDocument;
 	try {
 		doc = await vscode.workspace.openTextDocument(uri);
 	} catch {
-		void vscode.window.showWarningMessage(`File not found: ${file} — refresh the flows?`);
+		if (!options?.preview) {
+			void vscode.window.showWarningMessage(`File not found: ${file} — refresh the flows?`);
+		}
 		return undefined;
 	}
-	const editor = await vscode.window.showTextDocument(doc, { preview: false });
+	// A preview open REPLACES the previous preview tab, which is what makes the
+	// code follow the route you clicked instead of stacking one tab per route.
+	const editor = await vscode.window.showTextDocument(doc, {
+		preview: options?.preview ?? false,
+		preserveFocus: options?.preserveFocus ?? false,
+		viewColumn: vscode.ViewColumn.One,
+	});
 	const symbol = findHandlerSymbol(await documentSymbolsWithRetry(uri), symbolLabel);
 	if (symbol) {
 		editor.revealRange(symbol.selectionRange, vscode.TextEditorRevealType.InCenter);
