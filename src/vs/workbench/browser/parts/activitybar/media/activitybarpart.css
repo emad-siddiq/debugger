@@ -73,27 +73,33 @@
 	height: 35px;
 }
 
-/** BURROW patch 0011 — the traffic-light strip.
+/** BURROW patch 0011 — drop the rail icons below the window buttons.
 
 	Burrow ships no title bar (WO-01), so macOS paints the window buttons
-	straight onto content at (0,0) — the activity bar's first icon. Reserve a
-	strip at the top of the bar for them instead of buying back a whole title
-	row that would cost 28px of height to show nothing.
+	straight onto content at (0,0) — the activity bar's first icon. Nothing
+	moves the buttons (see the patch note: repositioning them is what made them
+	unclickable), so the icons move instead. The bar's background still starts
+	at y=0, so this reads as the icons sitting a little lower, NOT as a strip or
+	a title row.
 
-	38px must match WindowControlsInset.STRIP_HEIGHT in
-	src/vs/platform/window/common/window.ts, which is also where the main
-	process reads the buttons' position from.
+	`3vh` is the user's own measure ("add 2-3vh to the left hand menu explorer
+	icon"), with a 28px floor so a short window cannot shrink the gap back under
+	the buttons — macOS centres them in its own 28pt band, and at the 270px
+	minimum window height 3vh would be 8px. WindowControlsInset.STRIP_HEIGHT in
+	src/vs/platform/window/common/window.ts records the same intent for readers
+	of the main-process side.
 
-	The strip carries NO `-webkit-app-region: drag`, and that is the point of
+	This gap carries NO `-webkit-app-region: drag`, and that is the point of
 	this comment. It did, for exactly one build, and a drag region drawn over
 	the traffic lights makes them unclickable — the buttons are still painted,
 	still hovered, and swallow every click. Reported by the user the same day.
-	The window's drag region lives in the editor title bar instead (see
-	`.editor-group-container > .title` in media/editorgroupview.css), which is
-	well clear of x < 64px where the buttons are.
+	The window's drag region lives in the editor area instead (see
+	media/editorgroupview.css), well clear of x < 72px where the buttons are.
 
-	Fullscreen hides the buttons, so `.fullscreen` turns the strip back off. */
+	Fullscreen hides the buttons, so `.fullscreen` turns the offset back off. */
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.activitybar > .content {
-	height: calc(100% - 38px);
-	margin-top: 38px;
+	--burrow-window-controls-inset: max(3vh, 28px);
+
+	height: calc(100% - var(--burrow-window-controls-inset));
+	margin-top: var(--burrow-window-controls-inset);
 }

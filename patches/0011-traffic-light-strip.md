@@ -1,4 +1,4 @@
-# 0011 — No title bar, and a traffic-light strip in the activity bar
+# 0011 — No title bar, and the rail icons dropped below the window buttons
 
 - **Layer:** 3 (window-frame defaults + one workbench layout class + its CSS)
 - **Task:** — (WO-01, `debugger/docs/plans/01` — chrome removal)
@@ -9,7 +9,7 @@
   `src/vs/workbench/services/layout/browser/layoutService.ts`,
   `src/vs/workbench/browser/layout.ts`,
   `src/vs/workbench/browser/parts/activitybar/media/activitybarpart.css`
-- **Size:** one exported constant, one default, one `trafficLightPosition`, one predicate, one layout class, one CSS block
+- **Size:** one exported constant, two defaults, one predicate, one layout class, two CSS blocks
 - **Last verified against:** upstream 1.128.0
 
 ## Why
@@ -52,7 +52,7 @@ over CDP:
 | Checked | Result |
 |---|---|
 | `window-controls-inset` on the workbench | **yes** |
-| `.part.activitybar > .content` margin-top | **38px**, rect starts at y=38 |
+| `.part.activitybar > .content` margin-top | **38px** at the time (now `max(3vh, 28px)`), rect started below it |
 | `.part.titlebar` | **0×0** — no title row, as intended |
 | **Every** element with computed `-webkit-app-region: drag` | **two, both 0×0** |
 | `elementFromPoint` across x=10…64, y=19, walking each ancestor chain | **no drag region anywhere near the buttons** |
@@ -74,18 +74,21 @@ favour of `setWindowButtonPosition()`, which is what a load-bearing API does not
 do. Burrow now sets nothing and lets macOS place them, which is the only
 configuration this project has evidence of working.
 
-The strip stays. It is what stopped the buttons landing on the first rail icon,
-and that part of the complaint never came back.
+What stays is the **offset on the rail icons** — it is what stopped the buttons
+landing on the first one, and that part of the complaint never came back. This is
+the "overlap version" the user asked to return to: macOS puts the buttons where it
+likes, they overhang the sidebar's empty top-left padding, and the only thing
+Burrow does about it is start its icons lower down.
 
 ## What
 
 Keep the frameless window, and **keep content out from under the buttons**:
 
-1. `window.ts` exports `WindowControlsInset` — `{ STRIP_HEIGHT: 38 }`, read by
-   the renderer only.
+1. `window.ts` exports `WindowControlsInset` — `{ STRIP_HEIGHT: 28 }`, a note for
+   readers of the main-process side; the renderer owns the real value in CSS.
 2. `windows.ts` sets **no** `trafficLightPosition` — see above. macOS places the
    buttons ~20px from the left, vertically centred in its own 28px band, which
-   the strip covers.
+   item 4's offset clears.
 2a. `desktop.contribution.ts` defaults `window.customTitleBarVisibility` to
    **`never`** (was `auto`). This is the one that actually removes the bar, and it
    **cannot** be done from `burrow-core`'s `configurationDefaults`: the setting is
@@ -103,8 +106,13 @@ Keep the frameless window, and **keep content out from under the buttons**:
    (`LayoutClasses.WINDOW_CONTROLS_INSET`), true when macOS + custom title-bar
    style + the custom title bar is not shown. Applied in `getLayoutClasses()` and
    refreshed from `updateCustomTitleBarVisibility()`.
-4. `activitybarpart.css` insets `.activitybar > .content` by 38px under that
-   class. The strip is background and nothing else.
+4. `activitybarpart.css` drops `.activitybar > .content` by `max(3vh, 28px)`
+   under that class — the user's own measure (*"go to the overlap version and
+   just add 2-3vh to the left hand menu explorer icon"*, 2026-07-27), with a
+   floor so a short window cannot close the gap: at the 270px minimum window
+   height 3vh is 8px, and macOS centres the buttons in a 28pt band. The bar's
+   background still starts at y=0, so this reads as the icons sitting lower,
+   not as a strip.
 5. `editorgroupview.css` puts the window's `-webkit-app-region: drag` on the
    editor title bar, with `no-drag` on the tabs, breadcrumbs and both toolbars —
    **and on `.editor-group-container.empty`**, because with no editors open that
@@ -119,8 +127,8 @@ unclickable** — the buttons still paint, still hover, and swallow every click.
 Reported by the user within the hour: *"now I can't even click the traffic
 lights"*.
 
-There is no room to keep both: the buttons are 52px wide and the activity bar is
-48px, so any drag region in that strip covers them. The empty run of the editor
+There is no room to keep both: the buttons are ~52px wide and the activity bar is
+48px, so any drag region in that gap covers them. The empty run of the editor
 title bar to the right of the tabs is the next best handle, is nowhere near
 x &lt; 64px, and is where a macOS user reaches for a window anyway. Every
 interactive child of that bar needs an explicit `no-drag` or it stops responding
@@ -131,7 +139,7 @@ workbench turns the strip back off via `:not(.fullscreen)`.
 
 ## Known edges
 
-- The buttons are 52px wide and the activity bar is 48px, so they overhang the
+- The buttons are ~52px wide and the activity bar is 48px, so they overhang the
   sidebar's top-left corner by ~11px. That corner is empty padding above the
   view title, so nothing is covered. With the sidebar hidden the overhang lands
   on the leading edge of the first editor tab.

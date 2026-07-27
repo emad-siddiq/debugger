@@ -271,8 +271,13 @@ export function hasNativeTitlebar(configurationService: IConfigurationService, t
  * vertically centred in its own 28px titlebar band, which this strip covers.
  */
 export const WindowControlsInset = {
-	/** Reserved strip at the top of the activity bar. Background, nothing else. */
-	STRIP_HEIGHT: 38
+	/**
+	 * How far the activity bar's icons drop to clear the buttons. The renderer
+	 * expresses this as `max(3vh, 28px)` in activitybarpart.css — the user's own
+	 * measure, floored so a short window cannot close the gap; 28 is that floor
+	 * and the height of the band macOS centres the buttons in.
+	 */
+	STRIP_HEIGHT: 28
 } as const;
 
 export function getTitleBarStyle(configurationService: IConfigurationService): TitlebarStyle {
