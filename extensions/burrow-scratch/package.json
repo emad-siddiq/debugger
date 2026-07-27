@@ -1,0 +1,205 @@
+{
+	"name": "burrow-scratch",
+	"displayName": "Burrow Scratch",
+	"description": "Rebuild a project by hand, one file at a time, in a second Burrow window. Reads the reference project, orders every file so nothing is written before what it imports, and turns that order into stages you work through — with per-file checks, a diff against the reference when you want it, and progress saved in the scratch folder itself. See docs/plans/08-scratch-mode.md.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-scratch",
+		"watch": "gulp watch-extension:burrow-scratch",
+		"test": "node test/planModel.test.js && node test/progressModel.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.scratch.start",
+				"title": "New Scratch Build…",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.page",
+				"title": "Show the Step Page",
+				"category": "Scratch",
+				"icon": "$(book)"
+			},
+			{
+				"command": "burrow.scratch.open",
+				"title": "Open the File to Write",
+				"category": "Scratch",
+				"icon": "$(go-to-file)"
+			},
+			{
+				"command": "burrow.scratch.reference",
+				"title": "Compare With the Reference",
+				"category": "Scratch",
+				"icon": "$(diff)"
+			},
+			{
+				"command": "burrow.scratch.copy",
+				"title": "Copy the Reference In",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.check",
+				"title": "Run This File's Checks",
+				"category": "Scratch",
+				"icon": "$(check)"
+			},
+			{
+				"command": "burrow.scratch.checkStage",
+				"title": "Build and Test This Stage",
+				"category": "Scratch",
+				"icon": "$(beaker)"
+			},
+			{
+				"command": "burrow.scratch.done",
+				"title": "Mark This File Written",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.next",
+				"title": "Next File",
+				"category": "Scratch",
+				"icon": "$(arrow-right)"
+			},
+			{
+				"command": "burrow.scratch.setup",
+				"title": "Run This Stage's Setup Commands",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.replan",
+				"title": "Re-plan Against the Reference",
+				"category": "Scratch",
+				"icon": "$(refresh)"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "burrow.scratch.page",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.open",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.reference",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.copy",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.check",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.checkStage",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.done",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.next",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.setup",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.replan",
+					"when": "burrow.scratch.active"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.scratch.page",
+					"when": "view == burrowScratchSteps",
+					"group": "navigation@1"
+				},
+				{
+					"command": "burrow.scratch.check",
+					"when": "view == burrowScratchSteps",
+					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.scratch.next",
+					"when": "view == burrowScratchSteps",
+					"group": "navigation@3"
+				},
+				{
+					"command": "burrow.scratch.replan",
+					"when": "view == burrowScratchSteps",
+					"group": "1_more@1"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "burrow.scratch.checkStage",
+					"when": "view == burrowScratchSteps && viewItem == burrowScratchStage",
+					"group": "inline@1"
+				},
+				{
+					"command": "burrow.scratch.reference",
+					"when": "view == burrowScratchSteps && viewItem =~ /burrowScratchStep/",
+					"group": "inline@1"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Burrow Scratch",
+			"properties": {
+				"burrow.scratch.location": {
+					"type": "string",
+					"default": "",
+					"description": "Where new scratch builds are created. Empty = ~/Burrow Scratch. The folder name is the reference project's, with -scratch appended.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "burrow-scratch",
+					"title": "Scratch",
+					"icon": "$(mortar-board)",
+					"order": 1
+				}
+			]
+		},
+		"views": {
+			"burrow-scratch": [
+				{
+					"id": "burrowScratchSteps",
+					"name": "Rebuild",
+					"when": "burrow.scratch.active"
+				}
+			]
+		}
+	}
+}

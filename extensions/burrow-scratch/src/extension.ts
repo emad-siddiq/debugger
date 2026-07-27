@@ -1,0 +1,427 @@
+/*---------------------------------------------------------------------------------------------
+ *  Burrow — Go IDE. Licensed under the MIT License.
+ *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
+ *--------------------------------------------------------------------------------------------*/
+
+// extension.ts — Scratch mode.
+//
+// One extension, two roles, decided by what is open:
+//
+//   * In an ordinary project window it contributes ONE command, "Scratch: New
+//     Scratch Build…", which plans the project and opens the plan in a second
+//     Burrow window. The rail icon stays hidden — `burrow.scratch.active` is
+//     false, so the view's `when` clause hides its container.
+//
+//   * In a scratch window (`.burrow-scratch/plan.json` is present) it is the
+//     Scratch view, the step page, the checks and the progress file.
+//
+// The second window is a plain `vscode.openFolder … forceNewWindow`, which
+// means it is a full Burrow: the same debugger, the same Data grid, the same
+// API view, the same isolation harness — pointed at code you are writing rather
+// than code that already exists. That is the entire trick, and it is why this
+// needed no core patch.
+
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as vscode from 'vscode';
+import { CheckRun, runChecks, summarize } from './checks';
+import { buildPlan } from './planModel';
+import { PageMessage, StepPage } from './page';
+import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
+import { scanProject } from './scan';
+import { StepsProvider } from './stepsTree';
+import { announceOnVisible } from './toolSurface';
+import { copyReference, ensureFile, isScratch, materialize, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
+
+const TOOL_ID = 'burrow-scratch';
+
+export function activate(context: vscode.ExtensionContext): void {
+	const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	const log = vscode.window.createOutputChannel('Burrow Scratch');
+	context.subscriptions.push(log);
+
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.start', () => startScratch(log)));
+
+	if (root && isScratch(root)) {
+		activateScratch(context, root, log);
+	} else {
+		void vscode.commands.executeCommand('setContext', 'burrow.scratch.active', false);
+	}
+}
+
+export function deactivate(): void {
+	// Disposables are owned by the extension context; progress is on disk.
+}
+
+// ---------------------------------------------------------------------------
+// The launcher — runs in the reference project's window
+// ---------------------------------------------------------------------------
+
+async function startScratch(log: vscode.OutputChannel): Promise<void> {
+	const folder = vscode.workspace.workspaceFolders?.[0];
+	if (!folder) {
+		void vscode.window.showWarningMessage('Open the project you want to rebuild first — Scratch plans it from the folder you have open.');
+		return;
+	}
+	const reference = folder.uri.fsPath;
+	if (isScratch(reference)) {
+		void vscode.window.showInformationMessage('This window is already a scratch. Use "Scratch: Re-plan Against the Reference" to pick up changes.');
+		return;
+	}
+
+	const configured = vscode.workspace.getConfiguration('burrow.scratch').get<string>('location', '');
+	const suggested = configured
+		? path.join(configured.replace(/^~/, os.homedir()), `${folder.name}-scratch`)
+		: path.join(os.homedir(), 'Burrow Scratch', `${folder.name}-scratch`);
+	const answer = await vscode.window.showInputBox({
+		title: `Rebuild ${folder.name} from scratch`,
+		prompt: 'Where should the scratch live? An existing scratch here is resumed, never overwritten.',
+		value: suggested,
+		ignoreFocusOut: true,
+	});
+	if (!answer) {
+		return;
+	}
+	const dest = answer.replace(/^~/, os.homedir());
+
+	const plan = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: `Scratch: reading ${folder.name}…`, cancellable: false },
+		async (progress) => {
+			const scan = scanProject(reference);
+			progress.report({ message: `${scan.files.length} files — working out the order…` });
+			// Yield once so the notification paints before the plan is built.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const built = buildPlan(scan.files, { name: folder.name, reference });
+			log.appendLine(`planned ${folder.name}: ${built.counts.steps} steps in ${built.counts.stages} stages, ${built.counts.lines} lines (${scan.skipped} binary/oversized files left out)`);
+			return built;
+		},
+	);
+
+	if (!plan.counts.steps) {
+		void vscode.window.showWarningMessage(`Nothing to plan in ${folder.name} — no source files were found.`);
+		return;
+	}
+
+	try {
+		const progress = materialize(dest, plan, new Date().toISOString());
+		const resumed = overallTally(plan, progress).settled;
+		log.appendLine(`scratch at ${dest} — ${resumed} steps already settled`);
+	} catch (error) {
+		void vscode.window.showErrorMessage(`Could not create the scratch at ${dest}: ${error instanceof Error ? error.message : String(error)}`);
+		return;
+	}
+
+	await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest), { forceNewWindow: true });
+}
+
+// ---------------------------------------------------------------------------
+// The scratch — runs in the second window
+// ---------------------------------------------------------------------------
+
+function activateScratch(context: vscode.ExtensionContext, root: string, log: vscode.OutputChannel): void {
+	const plan = readPlan(root);
+	if (!plan) {
+		void vscode.window.showErrorMessage('This scratch has a plan file Burrow cannot read. Re-run "Scratch: New Scratch Build…" against the reference to rebuild it — your files are untouched.');
+		return;
+	}
+	void vscode.commands.executeCommand('setContext', 'burrow.scratch.active', true);
+
+	let progress = readProgress(root, new Date().toISOString());
+	let checks: CheckRun | undefined;
+	let running = false;
+
+	const tree = new StepsProvider(plan, progress);
+	const view = vscode.window.createTreeView(StepsProvider.viewId, { treeDataProvider: tree, showCollapseAll: true });
+	const page = new StepPage((message) => void onPageMessage(message));
+	// No `claimSurface` here, deliberately. The step page is not a transient
+	// result tab like the Test Lab — it is where the work happens, and the rail
+	// already tidies it: patch 0014's per-rail editor sets hide it when you go
+	// to Data and bring the set back when you return. Claiming it as well would
+	// mean two mechanisms closing the same tab.
+	context.subscriptions.push(view, page, announceOnVisible(TOOL_ID, view));
+
+	const currentId = (): string | undefined => progress.current ?? resumeAt(plan, progress);
+
+	const save = (next: Progress, redraw = true): void => {
+		progress = next;
+		writeProgress(root, progress);
+		writeIndex(root, plan, progress);
+		if (redraw) {
+			tree.update(plan, progress);
+			const id = currentId();
+			if (id) {
+				page.refresh({ plan, progress, stepId: id, checks, running });
+			}
+		}
+	};
+
+	const badge = (): void => {
+		const tally = overallTally(plan, progress);
+		view.title = 'Scratch';
+		view.description = `${percent(tally)}% · ${tally.settled}/${tally.total}`;
+	};
+	badge();
+
+	/** Move to a step: it becomes current, the page follows, and so does the code. */
+	const goto = async (id: string, focusPage = false): Promise<void> => {
+		if (!plan.steps[id]) {
+			return;
+		}
+		checks = undefined;
+		save(setCurrent(progress, id, new Date().toISOString()), false);
+		tree.update(plan, progress);
+		badge();
+		// The FILE first, then the page beside it. The other order looks right and
+		// is not: on a fresh window with nothing open, `ViewColumn.Beside`
+		// resolves to column one, and the file then opens on top of the page.
+		//
+		// A PREVIEW tab replaces itself, so walking the plan does not leave one
+		// tab per file behind — the same rule the API view follows.
+		const uri = vscode.Uri.file(ensureFile(root, id));
+		const doc = await vscode.workspace.openTextDocument(uri);
+		await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: focusPage, viewColumn: vscode.ViewColumn.One });
+		page.show({ plan, progress, stepId: id, checks, running }, focusPage);
+		const node = tree.find(id);
+		if (node && view.visible) {
+			try {
+				await view.reveal(node, { select: true, focus: false });
+			} catch { /* the tree may not have rendered that branch yet */ }
+		}
+	};
+
+	const runStepChecks = async (id: string): Promise<CheckRun> => {
+		running = true;
+		page.refresh({ plan, progress, stepId: id, checks, running });
+		try {
+			const run = await runChecks(root, id, plan.steps[id].checks);
+			checks = run;
+			log.appendLine(`check ${id}: ${run.verdict} — ${summarize(run)}`);
+			save(recordCheck(progress, id, run.verdict === 'fail' ? 'fail' : 'pass', new Date().toISOString()), false);
+			return run;
+		} finally {
+			running = false;
+			page.refresh({ plan, progress, stepId: id, checks, running });
+			tree.update(plan, progress);
+		}
+	};
+
+	const markDone = async (id: string): Promise<void> => {
+		const run = await runStepChecks(id);
+		if (run.verdict === 'fail') {
+			const anyway = await vscode.window.showWarningMessage(
+				`${plan.steps[id].title}: ${summarize(run)}`,
+				'Mark written anyway', 'Keep working',
+			);
+			if (anyway !== 'Mark written anyway') {
+				return;
+			}
+		}
+		save(setState(progress, id, 'done', new Date().toISOString()));
+		badge();
+		const next = nextStep(plan, progress, id);
+		if (next) {
+			await goto(next);
+		} else {
+			void vscode.window.showInformationMessage(`${plan.name} is rebuilt — every file in the plan is written.`);
+		}
+	};
+
+	async function onPageMessage(message: PageMessage): Promise<void> {
+		const id = currentId();
+		if (!id) {
+			return;
+		}
+		switch (message.type) {
+			case 'open': return void vscode.commands.executeCommand('burrow.scratch.open');
+			case 'reference': return void vscode.commands.executeCommand('burrow.scratch.reference');
+			case 'copy': return void vscode.commands.executeCommand('burrow.scratch.copy');
+			case 'check': { await runStepChecks(id); return; }
+			case 'done': return void markDone(id);
+			case 'undone': {
+				save(setState(progress, id, 'writing', new Date().toISOString()));
+				badge();
+				return;
+			}
+			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
+			case 'setup': return void vscode.commands.executeCommand('burrow.scratch.setup');
+			case 'goto': return void goto(message.id);
+			case 'tool': {
+				try {
+					await vscode.commands.executeCommand(message.command);
+				} catch {
+					void vscode.window.showWarningMessage(`That tool is not available in this window (${message.command}).`);
+				}
+				return;
+			}
+			default: return;
+		}
+	}
+
+	const register = (id: string, handler: (...args: never[]) => unknown): void => {
+		context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+	};
+
+	register('burrow.scratch.goto', ((arg?: string | { id?: string }) => {
+		const id = typeof arg === 'string' ? arg : arg?.id;
+		return id ? goto(id) : undefined;
+	}) as never);
+
+	register('burrow.scratch.page', (() => {
+		const id = currentId();
+		return id ? goto(id, true) : undefined;
+	}) as never);
+
+	register('burrow.scratch.open', (async () => {
+		const id = currentId();
+		if (!id) {
+			return;
+		}
+		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(ensureFile(root, id)));
+		await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
+		if (stateOf(progress, id) === 'todo') {
+			save(setState(progress, id, 'writing', new Date().toISOString()));
+		}
+	}) as never);
+
+	// Also reachable as an inline action on a tree row, which does NOT make that
+	// row current — comparing a file you have not opened is a fair thing to want.
+	register('burrow.scratch.reference', (async (node?: { id?: string }) => {
+		const id = (typeof node === 'object' && node?.id && plan.steps[node.id]) ? node.id : currentId();
+		if (!id) {
+			return;
+		}
+		// A DIFF, not the file: side by side with what you have written, so the
+		// reference answers "what is still missing" instead of being a thing to
+		// copy out of.
+		ensureFile(root, id);
+		await vscode.commands.executeCommand(
+			'vscode.diff',
+			vscode.Uri.file(path.join(plan.reference, id)),
+			vscode.Uri.file(path.join(root, id)),
+			`${plan.steps[id].title} — reference ↔ yours`,
+			{ preview: true },
+		);
+	}) as never);
+
+	register('burrow.scratch.copy', (async () => {
+		const id = currentId();
+		if (!id) {
+			return;
+		}
+		const step = plan.steps[id];
+		if (step.mode === 'write') {
+			const ok = await vscode.window.showWarningMessage(
+				`Copy ${step.title} in from the reference? It will count as copied, not written.`,
+				'Copy it in', 'Cancel',
+			);
+			if (ok !== 'Copy it in') {
+				return;
+			}
+		}
+		try {
+			copyReference(root, plan.reference, id);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not copy ${id}: ${error instanceof Error ? error.message : String(error)}`);
+			return;
+		}
+		save(setState(progress, id, 'copied', new Date().toISOString()));
+		badge();
+		const next = nextStep(plan, progress, id);
+		if (next) {
+			await goto(next);
+		}
+	}) as never);
+
+	register('burrow.scratch.check', (async () => {
+		const id = currentId();
+		if (!id) {
+			return;
+		}
+		const run = await runStepChecks(id);
+		const message = `${plan.steps[id].title}: ${summarize(run)}`;
+		if (run.verdict === 'pass') {
+			void vscode.window.showInformationMessage(message);
+		} else if (run.verdict === 'unavailable') {
+			void vscode.window.showWarningMessage(message);
+		} else {
+			void vscode.window.showErrorMessage(message);
+		}
+	}) as never);
+
+	register('burrow.scratch.checkStage', (async (node?: { stage?: { id: string } }) => {
+		const stageId = node?.stage?.id ?? plan.steps[currentId() ?? '']?.stage;
+		const stage = plan.stages.find((s) => s.id === stageId);
+		if (!stage) {
+			return;
+		}
+		if (!stage.checks.length) {
+			void vscode.window.showInformationMessage(`${stage.title} has no stage check — its files are checked one at a time.`);
+			return;
+		}
+		const run = await vscode.window.withProgress(
+			{ location: vscode.ProgressLocation.Notification, title: `Scratch: checking ${stage.title}…` },
+			() => runChecks(root, undefined, stage.checks),
+		);
+		log.appendLine(`check stage ${stage.id}: ${run.verdict} — ${summarize(run)}`);
+		const message = `${stage.title}: ${summarize(run)}`;
+		if (run.verdict === 'pass') {
+			void vscode.window.showInformationMessage(message);
+		} else {
+			void vscode.window.showWarningMessage(message);
+		}
+	}) as never);
+
+	register('burrow.scratch.done', (() => {
+		const id = currentId();
+		return id ? markDone(id) : undefined;
+	}) as never);
+
+	register('burrow.scratch.next', (() => {
+		const id = currentId();
+		const next = nextStep(plan, progress, id);
+		if (!next) {
+			void vscode.window.showInformationMessage('Nothing left unwritten in the plan.');
+			return undefined;
+		}
+		return goto(next);
+	}) as never);
+
+	register('burrow.scratch.setup', (() => {
+		const stage = plan.stages.find((s) => s.id === plan.steps[currentId() ?? '']?.stage);
+		if (!stage?.setup.length) {
+			return;
+		}
+		const terminal = vscode.window.createTerminal({ name: 'Scratch setup', cwd: root });
+		terminal.show();
+		for (const line of stage.setup) {
+			terminal.sendText(line);
+		}
+	}) as never);
+
+	register('burrow.scratch.replan', (async () => {
+		const scan = scanProject(plan.reference);
+		const rebuilt = buildPlan(scan.files, { name: plan.name, reference: plan.reference });
+		const kept = order(rebuilt).filter((id) => isSettled(stateOf(progress, id))).length;
+		const lost = order(plan).filter((id) => isSettled(stateOf(progress, id)) && !rebuilt.steps[id]);
+		const ok = await vscode.window.showWarningMessage(
+			`Re-plan against ${plan.reference}? ${rebuilt.counts.steps} files (was ${plan.counts.steps}). `
+			+ `${kept} of your finished files are still in the plan${lost.length ? `; ${lost.length} are no longer in the reference` : ''}.`,
+			'Re-plan', 'Cancel',
+		);
+		if (ok !== 'Re-plan') {
+			return;
+		}
+		materialize(root, rebuilt, new Date().toISOString());
+		void vscode.window.showInformationMessage('Plan rewritten. Reload the window to pick it up.', 'Reload')
+			.then((choice) => choice === 'Reload' && vscode.commands.executeCommand('workbench.action.reloadWindow'));
+	}) as never);
+
+	// Resume where the developer stopped, without stealing focus at startup.
+	const resume = resumeAt(plan, progress);
+	if (resume) {
+		save(setCurrent(progress, resume, new Date().toISOString()), false);
+		tree.update(plan, progress);
+		badge();
+		log.appendLine(`resumed at ${resume} (${percent(overallTally(plan, progress))}%)`);
+	}
+}
