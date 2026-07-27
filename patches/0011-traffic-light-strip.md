@@ -66,8 +66,23 @@ Keep the frameless window, and **give the buttons a home instead of a row**:
    style + the custom title bar is not shown. Applied in `getLayoutClasses()` and
    refreshed from `updateCustomTitleBarVisibility()`.
 4. `activitybarpart.css` insets `.activitybar > .content` by 38px under that
-   class and puts a `-webkit-app-region: drag` pseudo-element in the gap — so the
-   strip is both the buttons' background and the window's drag handle.
+   class. The strip is background and nothing else.
+5. `editorgroupview.css` puts the window's `-webkit-app-region: drag` on the
+   editor title bar, with `no-drag` on the tabs, breadcrumbs and both toolbars.
+
+### The drag region does NOT go in the strip (2026-07-27)
+
+It did, for one build. **A drag region drawn over the traffic lights makes them
+unclickable** — the buttons still paint, still hover, and swallow every click.
+Reported by the user within the hour: *"now I can't even click the traffic
+lights"*.
+
+There is no room to keep both: the buttons are 52px wide and the activity bar is
+48px, so any drag region in that strip covers them. The empty run of the editor
+title bar to the right of the tabs is the next best handle, is nowhere near
+x &lt; 64px, and is where a macOS user reaches for a window anyway. Every
+interactive child of that bar needs an explicit `no-drag` or it stops responding
+— drag regions swallow mouse events whole.
 
 Fullscreen hides the traffic lights; the `fullscreen` class already on the
 workbench turns the strip back off via `:not(.fullscreen)`.

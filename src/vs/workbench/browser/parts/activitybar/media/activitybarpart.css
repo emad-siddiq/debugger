@@ -84,20 +84,16 @@
 	src/vs/platform/window/common/window.ts, which is also where the main
 	process reads the buttons' position from.
 
-	The strip is the window's ONLY drag region: a frameless window with no
-	title bar has none at all, so without this the window cannot be moved.
+	The strip carries NO `-webkit-app-region: drag`, and that is the point of
+	this comment. It did, for exactly one build, and a drag region drawn over
+	the traffic lights makes them unclickable — the buttons are still painted,
+	still hovered, and swallow every click. Reported by the user the same day.
+	The window's drag region lives in the editor title bar instead (see
+	`.editor-group-container > .title` in media/editorgroupview.css), which is
+	well clear of x < 64px where the buttons are.
+
 	Fullscreen hides the buttons, so `.fullscreen` turns the strip back off. */
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.activitybar > .content {
 	height: calc(100% - 38px);
 	margin-top: 38px;
-}
-
-.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.activitybar::after {
-	content: '';
-	position: absolute;
-	top: 0;
-	left: 0;
-	width: 100%;
-	height: 38px;
-	-webkit-app-region: drag;
 }

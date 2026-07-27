@@ -253,3 +253,28 @@
 	width: 100%;
 	height: 100%;
 }
+
+/** BURROW patch 0011 — the window's drag region.
+
+	Burrow has no title bar, so nothing in the workbench sets
+	`-webkit-app-region: drag` and the window cannot be moved at all. The
+	obvious home — the strip reserved for the traffic lights at the top of the
+	activity bar — is the one place it MUST NOT go: a drag region over the
+	buttons makes them unclickable.
+
+	So the empty run of the editor title bar to the right of the tabs is the
+	drag handle, which is where a macOS user reaches for a window anyway. Every
+	interactive child is explicitly `no-drag`, or it would stop responding:
+	drag regions swallow mouse events whole. */
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title {
+	-webkit-app-region: drag;
+}
+
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .tabs-container,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .title-actions,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .editor-actions,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .label-container,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-breadcrumbs,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-toolbar {
+	-webkit-app-region: no-drag;
+}
