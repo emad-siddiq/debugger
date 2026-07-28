@@ -401,11 +401,12 @@ func (b *flowBuilder) attachTables() {
 		for _, table := range n.Tables {
 			idx, ok := tableIdx[table]
 			if !ok {
-				file := ""
+				file, line := "", 0
 				if mig, ok := b.a.knownTables[table]; ok && mig != "" {
 					file = "migrations/" + mig
+					line = b.a.tableLine(file, table)
 				}
-				idx = b.addNode(&Node{Kind: "table", Label: table, File: file}, -1)
+				idx = b.addNode(&Node{Kind: "table", Label: table, File: file, Line: line}, -1)
 				tableIdx[table] = idx
 				b.flow.Tables = append(b.flow.Tables, table)
 			}

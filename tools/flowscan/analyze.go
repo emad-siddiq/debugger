@@ -19,12 +19,14 @@ type declSite struct {
 }
 
 type analyzer struct {
-	backendDir string
-	fset       *token.FileSet
-	pkgs       []*packages.Package
-	decls      map[*types.Func]declSite
-	sqlPkgs    map[*types.Package]bool // package contains querier calls (recursion prune)
+	backendDir  string
+	fset        *token.FileSet
+	pkgs        []*packages.Package
+	decls       map[*types.Func]declSite
+	sqlPkgs     map[*types.Package]bool // package contains querier calls (recursion prune)
 	knownTables map[string]string
+	// migration (backend-relative) -> table -> CREATE TABLE line; see migrations.go.
+	migLines map[string]map[string]int
 }
 
 func newAnalyzer(backendDir string, knownTables map[string]string) (*analyzer, error) {
