@@ -3,34 +3,34 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
-// materialise.js — write Acts 0..N of the symbol-unit plan into a scratch
-// folder for real, so `go build ./...` can answer the only question that
-// matters about a curriculum: does it compile as you go?
+// materialise.js — write Option D's acts into a scratch folder, cumulatively,
+// and run `go build ./...` after each. This is threshold 4, and it is the only
+// one that cannot be argued with.
 //
-// Deliberately GENEROUS to the plan, so that a failure is attributable to the
-// ordering and not to this renderer:
+// What it emits per file:
+//   - the reference's own package clause
+//   - an import block derived from R11's per-declaration import sets, unioned
+//     over everything currently written in that file and filtered to what the
+//     emitted text actually names (an unused import is a compile error, so an
+//     over-broad union would fail for the wrong reason)
+//   - the written declarations, verbatim, in source order
+//   - accreted lines with their scaffold: the block openers and closers that
+//     hold a route registration up, also verbatim
 //
-//   - Each written symbol is the reference's own text, verbatim, for the whole
-//     enclosing declaration.
-//   - An accreted LINE (a route registration, a middleware mount) cannot stand
-//     outside a function, so its enclosing declaration is emitted as a STUB —
-//     signature, the accreted lines, closing brace — rather than skipped.
-//   - Each file gets the reference's package clause and its import block,
-//     filtered to the imports the emitted body actually names. Imports are a
-//     mechanical consequence of typing a function; making the plan fail on them
-//     would be testing the wrong thing.
+// Act 0's fixture is prepended to the same files. Its declarations are named so
+// they cannot collide with the reference's (`serve`, `newRouter`); if a
+// reference declaration of the same name ever arrives, the fixture's is dropped.
 //
 // Usage:
-//   node materialise.js --reference <project> --plan option-c-plan.dryrun.json \
-//                       --out <scratch dir> --acts 5
-//
-// It writes only inside --out and reads the reference read-only.
+//   node materialise.js --reference <p> --plan option-d-plan.dryrun.json \
+//                       --decls decls.json --out <dir> [--acts N] [--every N]
 
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
+const { scaffoldFor } = require('./scaffold');
 
 function arg(name, fallback) {
 	const i = process.argv.indexOf(`--${name}`);
@@ -38,98 +38,78 @@ function arg(name, fallback) {
 }
 
 const REFERENCE = path.resolve(arg('reference', path.join(process.env.HOME || '', 'Projects/merkle')));
-const PLAN = path.resolve(arg('plan', path.join(__dirname, 'option-c-plan.dryrun.json')));
+const PLAN = path.resolve(arg('plan', path.join(__dirname, 'option-d-plan.dryrun.json')));
+const DECLS = path.resolve(arg('decls', path.join(__dirname, 'decls.json')));
 const OUT = path.resolve(arg('out', path.join(__dirname, 'materialised')));
-const LAST_ACT = Number(arg('acts', '5'));
+const LAST = Number(arg('acts', '235'));
+const VERBOSE_TO = Number(arg('verbose', '20'));
 const GO = arg('go', 'go');
 
 const plan = JSON.parse(fs.readFileSync(PLAN, 'utf8'));
+const decls = JSON.parse(fs.readFileSync(DECLS, 'utf8'));
+const PREFIX = plan.landmarks[0].file.split('/')[0];
+const BACKEND = path.join(REFERENCE, PREFIX);
 
 // ---------------------------------------------------------------------------
-// Act 0 — the hand-authored skeleton, verbatim
+// Act 0 — the hand-authored skeleton
 // ---------------------------------------------------------------------------
 
-const SKELETON = {
-	'main.go': `// NodeWatch backend — a real-time node monitoring API.
-package main
-
-import (
-	"log/slog"
-	"os"
-)
-
-func main() {
-	if err := Run(); err != nil {
+const FIXTURE = {
+	'main.go': {
+		name: 'main',
+		imports: [{ path: 'log/slog', local: 'slog' }, { path: 'os', local: 'os' }],
+		text: `func main() {
+	if err := serve(); err != nil {
 		slog.Error("exit", "err", err)
 		os.Exit(1)
 	}
-}
-`,
-	'app.go': `// app.go — the running server: what it is, and how it serves.
-package main
-
-import (
-	"log/slog"
-	"net/http"
-	"os"
-)
-
-// App is the process: configuration, plus the routes it answers.
-type App struct {
-	Router http.Handler
-}
-
-// Run builds the app and serves until the process is killed.
-func Run() error {
+}`,
+	},
+	'app.go': {
+		name: 'serve',
+		imports: [{ path: 'log/slog', local: 'slog' }, { path: 'net/http', local: 'http' }, { path: 'os', local: 'os' }],
+		text: `// serve binds the port and answers until the process is killed.
+func serve() error {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	a := &App{Router: NewRouter()}
 	srv := &http.Server{
 		Addr:    ":" + port,
-		Handler: a.Router,
+		Handler: newRouter(),
 	}
 	slog.Info("listening", "port", port)
 	return srv.ListenAndServe()
-}
-`,
-	'router.go': `// router.go — the mux. Every act from here adds one line to it.
-package main
-
-import (
-	"net/http"
-
-	"github.com/go-chi/chi/v5"
-)
-
-// NewRouter builds the route table.
-func NewRouter() http.Handler {
+}`,
+	},
+	'router.go': {
+		name: 'newRouter',
+		imports: [{ path: 'net/http', local: 'http' }, { path: 'github.com/go-chi/chi/v5', local: 'chi' }],
+		text: `// newRouter builds the mux. Every act from here adds a line to it.
+func newRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	return r
-}
-`,
+}`,
+	},
 };
 
 // ---------------------------------------------------------------------------
-// Reading the reference
+// Reference access
 // ---------------------------------------------------------------------------
 
 const cache = new Map();
-function refLines(projFile) {
-	if (!cache.has(projFile)) {
-		const abs = path.join(REFERENCE, projFile);
-		cache.set(projFile, fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8').split('\n') : undefined);
+function refLines(rel) {
+	if (!cache.has(rel)) {
+		const abs = path.join(BACKEND, rel);
+		cache.set(rel, fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8').split('\n') : []);
 	}
-	return cache.get(projFile);
+	return cache.get(rel);
 }
-
-/** The `package x` clause of a Go file. */
-function packageClause(projFile) {
-	for (const line of refLines(projFile) || []) {
+function packageClause(rel) {
+	for (const line of refLines(rel)) {
 		if (/^package\s+\w+/.test(line)) {
 			return line.trim();
 		}
@@ -137,54 +117,13 @@ function packageClause(projFile) {
 	return 'package main';
 }
 
-/** The file's import specs, as { local, pathSpec, raw }. */
-function importsOf(projFile) {
-	const lines = refLines(projFile) || [];
-	const out = [];
-	let inBlock = false;
-	for (const line of lines) {
-		const t = line.trim();
-		if (!inBlock && /^import\s*\($/.test(t)) {
-			inBlock = true;
-			continue;
-		}
-		if (inBlock && t === ')') {
-			break;
-		}
-		const single = /^import\s+(?:(\S+)\s+)?"([^"]+)"$/.exec(t);
-		const inner = /^(?:(\S+)\s+)?"([^"]+)"$/.exec(t);
-		const m = inBlock ? inner : single;
-		if (!m) {
-			continue;
-		}
-		const spec = m[2];
-		// `github.com/go-chi/chi/v5` is package `chi`, not package `v5`: the
-		// major-version suffix is not part of the name. Getting this wrong
-		// dropped chi from every generated file and made the plan look worse
-		// than it is.
-		const segs = spec.split('/');
-		const last = segs.pop();
-		const local = m[1] || (/^v\d+$/.test(last) ? segs.pop() : last);
-		out.push({ local, spec, blank: m[1] === '_' });
-	}
-	return out;
-}
-
-/** Signature lines of a declaration: start through the line ending in `{`. */
-function signature(projFile, start, end) {
-	const lines = refLines(projFile) || [];
-	const sig = [];
-	for (let i = start - 1; i < end && i < lines.length; i++) {
-		sig.push(lines[i]);
-		if (/\{\s*$/.test(lines[i])) {
-			return sig;
-		}
-	}
-	return sig.slice(0, 1);
+const declAt = new Map();   // "file:line" -> decl
+for (const d of decls.decls) {
+	declAt.set(`${d.file}:${d.line}`, d);
 }
 
 // ---------------------------------------------------------------------------
-// Assemble
+// State
 // ---------------------------------------------------------------------------
 
 if (fs.existsSync(OUT)) {
@@ -192,129 +131,159 @@ if (fs.existsSync(OUT)) {
 }
 fs.mkdirSync(OUT, { recursive: true });
 
-const backendPrefix = plan.landmarks[0].file.split('/')[0];   // "backend"
-const results = [];
-
-/** Files under construction: projFile -> { units: [{start,end}], lines: Set } */
-const state = new Map();
-
-function fileState(projFile) {
-	if (!state.has(projFile)) {
-		state.set(projFile, { units: [], lines: new Set() });
+const state = new Map();   // backend-relative file -> { decls:Set<line>, lines:Set<line> }
+function st(rel) {
+	if (!state.has(rel)) {
+		state.set(rel, { decls: new Set(), lines: new Set() });
 	}
-	return state.get(projFile);
+	return state.get(rel);
 }
 
-function emitFile(projFile) {
-	const st = state.get(projFile);
-	const lines = refLines(projFile);
-	if (!lines) {
-		return;
-	}
-	const body = [];
-
-	// Accreted lines grouped by their enclosing declaration, so a registration
-	// line lands inside a stub of the function that holds it.
-	const stubs = new Map();
-	for (const line of [...st.lines].sort((a, b) => a - b)) {
-		const owner = st.units.find((u) => u.start <= line && line <= u.end);
-		if (owner) {
-			continue;   // the whole declaration is already being written
-		}
-		const encl = (plan.enclosing || {})[`${projFile}:${line}`];
-		const key = encl ? `${encl.start}` : `@${line}`;
-		if (!stubs.has(key)) {
-			stubs.set(key, { encl, lines: [] });
-		}
-		stubs.get(key).lines.push(line);
-	}
-
+function emit(rel) {
+	const s = state.get(rel);
+	const lines = refLines(rel);
 	const blocks = [];
-	for (const u of st.units) {
-		blocks.push({ at: u.start, text: lines.slice(u.start - 1, u.end).join('\n') });
+	for (const start of s.decls) {
+		const d = declAt.get(`${rel}:${start}`);
+		blocks.push({ at: start, text: lines.slice(d.line - 1, d.endLine).join('\n') });
 	}
-	for (const [, s] of stubs) {
-		if (!s.encl) {
-			blocks.push({ at: s.lines[0], text: s.lines.map((l) => lines[l - 1]).join('\n') });
-			continue;
+	// An accreted line inside a declaration the closure already wrote in full is
+	// redundant — emitting both produces the same function twice.
+	const whole = [...s.decls].map((start) => declAt.get(`${rel}:${start}`));
+	const accreted = [...s.lines]
+		.filter((l) => !whole.some((d) => d.line <= l && l <= d.endLine))
+		.sort((a, b) => a - b);
+	// Group runs of accreted lines by their enclosing declaration, so two
+	// registrations in different functions do not fuse into one broken block.
+	const groups = new Map();
+	for (const l of accreted) {
+		const d = [...declAt.values()].find((x) => x.file === rel && x.line <= l && l <= x.endLine);
+		const gk = d ? d.line : `@${l}`;
+		if (!groups.has(gk)) {
+			groups.set(gk, []);
 		}
-		const sig = signature(projFile, s.encl.start, s.encl.end);
-		const text = [...sig, ...s.lines.map((l) => lines[l - 1]), '}'].join('\n');
-		blocks.push({ at: s.encl.start, text });
+		groups.get(gk).push(l);
+	}
+	for (const [gk, ls] of groups) {
+		blocks.push({ at: typeof gk === 'number' ? gk : ls[0], text: ls.map((l) => lines[l - 1]).join('\n') });
 	}
 	blocks.sort((a, b) => a.at - b.at);
-	const source = blocks.map((b) => b.text).join('\n\n');
 
-	const used = importsOf(projFile).filter((i) =>
-		i.blank || new RegExp(`\\b${i.local.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.`).test(source));
-	const header = [packageClause(projFile), ''];
-	if (used.length) {
-		header.push('import (');
-		for (const i of used) {
-			header.push(`\t${i.blank ? '_ ' : ''}"${i.spec}"`);
+	const fixture = FIXTURE[rel];
+	const useFixture = fixture && ![...s.decls].some((start) => declAt.get(`${rel}:${start}`).name === fixture.name);
+	const body = (useFixture ? [fixture.text] : []).concat(blocks.map((b) => b.text)).join('\n\n');
+
+	// Imports: R11's sets for what is written, plus the imports the accreted and
+	// scaffold lines need, filtered to what the text actually names.
+	const want = new Map();
+	if (useFixture) {
+		for (const i of fixture.imports) {
+			want.set(i.path, i);
 		}
-		header.push(')', '');
+	}
+	const own = (declAt.get(`${rel}:${[...s.decls][0]}`) || {}).pkg;
+	for (const start of s.decls) {
+		for (const i of decls.imports[`${rel}:${start}`] || []) {
+			want.set(i.path, i);
+		}
+	}
+	for (const l of s.lines) {
+		for (const r of decls.lineRefs[`${rel}:${l}`] || []) {
+			if (r.pkg === own) {
+				continue;
+			}
+			const spelled = (decls.fileImps[rel] || []).find((i) => i.path === r.pkg);
+			if (spelled) {
+				want.set(spelled.path, spelled);
+			}
+		}
+	}
+	const used = [...want.values()].filter((i) =>
+		new RegExp(`\\b${i.local.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.`).test(body));
+
+	const head = [packageClause(rel), ''];
+	if (used.length) {
+		head.push('import (');
+		for (const i of used.sort((a, b) => (a.path < b.path ? -1 : 1))) {
+			head.push(`\t${i.alias ? i.local + ' ' : ''}"${i.path}"`);
+		}
+		head.push(')', '');
 	}
 
-	const abs = path.join(OUT, projFile.slice(backendPrefix.length + 1));
+	const abs = path.join(OUT, rel);
 	fs.mkdirSync(path.dirname(abs), { recursive: true });
-	fs.writeFileSync(abs, header.join('\n') + source + '\n');
-	body.length = 0;
+	fs.writeFileSync(abs, head.join('\n') + body + '\n');
 }
 
 function run(cmd) {
 	try {
-		const stdout = execSync(cmd, { cwd: OUT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-		return { code: 0, out: stdout.trim() };
+		return { code: 0, out: execSync(cmd, { cwd: OUT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() };
 	} catch (e) {
 		return { code: e.status ?? -1, out: `${e.stdout || ''}${e.stderr || ''}`.trim() };
 	}
 }
 
-// --- Act 0 ---------------------------------------------------------------
-for (const [name, text] of Object.entries(SKELETON)) {
-	fs.writeFileSync(path.join(OUT, name), text);
+// ---------------------------------------------------------------------------
+// Replay
+// ---------------------------------------------------------------------------
+
+const results = [];
+const t0 = Date.now();
+
+for (const name of Object.keys(FIXTURE)) {
+	st(name);
+	emit(name);
 }
 run(`${GO} mod init ${plan.generatedFrom.module}`);
-const tidy0 = run(`GOFLAGS=-mod=mod ${GO} mod tidy`);
-results.push({ act: 0, title: plan.acts[0].title, tidy: tidy0, build: run(`${GO} build ./...`) });
+results.push({ act: 0, title: plan.acts[0].title, tidy: run(`GOFLAGS=-mod=mod ${GO} mod tidy`), build: run(`${GO} build ./...`) });
 
-// --- Acts 1..N -----------------------------------------------------------
-for (const a of plan.acts.filter((a) => a.act >= 1 && a.act <= LAST_ACT)) {
+for (const a of plan.acts.filter((x) => x.act >= 1 && x.act <= LAST)) {
 	const touched = new Set();
-	for (const s of a.steps) {
-		if (!s.file || !s.file.startsWith(`${backendPrefix}/`)) {
-			continue;
-		}
-		if (!s.file.endsWith('.go')) {
-			// migrations: materialise them, they do not affect `go build`
-			const st = fileState(s.file);
-			st.units.push({ start: s.unit.start, end: s.unit.end });
-			const lines = refLines(s.file) || [];
-			const abs = path.join(OUT, s.file.slice(backendPrefix.length + 1));
+	for (const step of a.steps) {
+		const rel = step.file.slice(PREFIX.length + 1);
+		if (!rel.endsWith('.go')) {
+			// migrations — materialised, but irrelevant to `go build`
+			const abs = path.join(OUT, rel);
 			fs.mkdirSync(path.dirname(abs), { recursive: true });
-			fs.appendFileSync(abs, lines.slice(s.unit.start - 1, s.unit.end).join('\n') + '\n\n');
+			fs.appendFileSync(abs, refLines(rel).slice(step.line - 1, step.line - 1 + step.span).join('\n') + '\n\n');
 			continue;
 		}
-		const st = fileState(s.file);
-		if (s.role === 'symbol' && s.unit) {
-			st.units.push({ start: s.unit.start, end: s.unit.end });
+		const s = st(rel);
+		if (step.role === 'symbol') {
+			s.decls.add(step.line);
 		} else {
-			st.lines.add(s.line);
+			// the accreted line plus the scaffold recorded with it
+			for (const l of scaffoldOf(rel, step)) {
+				s.lines.add(l);
+			}
 		}
-		touched.add(s.file);
+		touched.add(rel);
 	}
-	for (const f of touched) {
-		emitFile(f);
+	for (const rel of touched) {
+		emit(rel);
 	}
 	const tidy = run(`GOFLAGS=-mod=mod ${GO} mod tidy`);
-	results.push({ act: a.act, title: a.title, tidy, build: run(`${GO} build ./...`) });
+	const build = run(`${GO} build ./...`);
+	results.push({ act: a.act, title: a.title, tidy, build });
+	if (a.act % 25 === 0) {
+		console.error(`  … act ${a.act}: ${results.filter((r) => r.build.code !== 0).length} failure(s) so far, ${Math.round((Date.now() - t0) / 1000)}s`);
+	}
 }
 
-fs.writeFileSync(path.join(__dirname, 'option-c-builds.dryrun.json'), JSON.stringify(results, null, '\t') + '\n');
+/** The lines that must be written for an accreted line to stand — scaffold.js. */
+function scaffoldOf(rel, step) {
+	const d = [...declAt.values()].find((x) => x.file === rel && x.line <= step.line && step.line <= x.endLine);
+	return d ? scaffoldFor(refLines(rel), d, step.line) : [step.line];
+}
 
-for (const r of results) {
-	const verdict = r.build.code === 0 ? 'PASS' : `FAIL (exit ${r.build.code})`;
-	console.log(`\n=== Act ${r.act} — ${r.title} — go build ./... → ${verdict} ===`);
+fs.writeFileSync(path.join(__dirname, 'option-d-builds.dryrun.json'), JSON.stringify(results, null, '\t') + '\n');
+
+const failed = results.filter((r) => r.build.code !== 0);
+for (const r of results.filter((r) => r.act <= VERBOSE_TO)) {
+	console.log(`\n=== Act ${r.act} — ${r.title} — go build ./... → ${r.build.code === 0 ? 'PASS' : `FAIL (exit ${r.build.code})`} ===`);
 	console.log(r.build.out || '(no output)');
+}
+console.log(`\n${results.length - failed.length} of ${results.length} acts PASS · ${failed.length} FAIL · ${Math.round((Date.now() - t0) / 1000)}s`);
+if (failed.length) {
+	console.log('failing acts: ' + failed.map((r) => r.act).join(', '));
 }

@@ -1,0 +1,1309 @@
+# Option D — dry run (route as goal, reference closure as content)
+
+From `flows.json` (flowscan rev `714e409+dirty`) and `decls.json` (1939 declarations, 0 reference cycles, 0 load errors), against `/Users/emadinfstones/Projects/merkle`.
+
+## Kill thresholds (R13)
+
+| # | threshold | measured | verdict |
+|---:|---|---:|---|
+| 1 | median act ≤ 10 declarations | 0 | **PASS** |
+| 2 | median act ≤ 150 reference lines | 1 | **PASS** |
+| 3 | ≥ 90% of acts ≤ 300 reference lines | 97.4 | **PASS** |
+| 4 | 236 of 236 acts pass `go build ./...` | see materialise.js | — |
+
+## Totals
+
+acts **236** · steps **3466** (act 0: 6, route: 1364, completion: 214, filler: 1882) · revisit steps **0**
+
+| file | Option D | | today | |
+|---|---:|---:|---:|---:|
+| `backend/main.go` | step 2 | 0.1% | step 606 | 28.9% |
+| `backend/app.go` | step 3 | 0.1% | step 603 | 28.8% |
+| `backend/router.go` | step 4 | 0.1% | step 607 | 29% |
+
+Module `github.com/merk7e-labs/nodewatch` from `backend/go.mod`. Port `8080` from `backend/config.go:241`.
+
+## Act 0 — A server that answers
+
+Hand-authored; the part of the curriculum that is not in the reference.
+
+| # | kind | file / command | fixture | ref lines | why |
+|---:|---|---|---:|---:|---|
+| 1 | generate | `backend/go.mod` | — | 36 | The toolchain writes this file. Typing it teaches nothing but the format of a file you will never edit by hand. |
+| 2 | write | `backend/main.go` *(skeleton)* | 14 | 41 | func main, call serve, exit non-zero on error. It compiles and does nothing, which is the point. |
+| 3 | write | `backend/app.go` *(skeleton)* | 24 | 426 | Bind :8080 and serve. Still no routes — a 404 from your own server is the first real feedback loop. |
+| 4 | write | `backend/router.go` *(skeleton)* | 17 | 600 | A chi mux with GET /healthz returning 200. |
+| 5 | verify | `go build ./...` | — | — | The first green check. |
+| 6 | verify | `curl -s -o /dev/null -w '%{http_code}' localhost:8080/healthz` | — | — | Ends evening one with a running server answering a request. |
+
+## Act 1 — GET /readyz
+
+91 step(s) · 82 fresh declaration(s) · 798 reference line(s) · closure 82 decls / 771 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 7 | type | `backend/alerts/channels/senders.go` | 84–100 | `DestConfig` | 17 |
+| 8 | type | `backend/alerts/channels/slack_dm.go` | 28–31 | `SlackDM` | 4 |
+| 9 | type | `backend/alerts/channels/slack_integration.go` | 39–42 | `SlackStore` | 4 |
+| 10 | type | `backend/alerts/escalation/dispatch.go` | 31–31 | `OnCallResolver` | 1 |
+| 11 | type | `backend/alerts/escalation/dispatch.go` | 35–39 | `Pager` | 5 |
+| 12 | type | `backend/alerts/escalation/dispatch.go` | 44–47 | `TelegramSender` | 4 |
+| 13 | type | `backend/alerts/escalation/dispatch.go` | 53–55 | `SlackDMSender` | 3 |
+| 14 | type | `backend/alerts/escalation/dispatch.go` | 57–67 | `Dispatcher` | 11 |
+| 15 | type | `backend/alerts/escalation/store.go` | 113–116 | `policyDB` | 4 |
+| 16 | type | `backend/alerts/escalation/store.go` | 119–122 | `Store` | 4 |
+| 17 | type | `backend/alerts/escalation/worker.go` | 19–24 | `Engine` | 6 |
+| 18 | type | `backend/alerts/evaluator.go` | 37–43 | `Evaluator` | 7 |
+| 19 | type | `backend/alerts/evaluator.go` | 45–48 | `pendingKey` | 4 |
+| 20 | type | `backend/alerts/notifier.go` | 37–41 | `Notifier` | 5 |
+| 21 | type | `backend/app.go` | 42–71 | `App` | 30 |
+| 22 | type | `backend/cache.go` | 16–20 | `FieldCache` | 5 |
+| 23 | type | `backend/config.go` | 12–185 | `Config` | 174 |
+| 24 | type | `backend/fleet/nodes/rpc_monitor.go` | 20–20 | `Sample` | 1 |
+| 25 | type | `backend/fleet/nodes/rpc_monitor_runner.go` | 21–25 | `runnerStore` | 5 |
+| 26 | type | `backend/fleet/nodes/rpc_monitor_runner.go` | 31–31 | `metricWriter` | 1 |
+| 27 | type | `backend/fleet/nodes/rpc_monitor_runner.go` | 39–49 | `Runner` | 11 |
+| 28 | type | `backend/fleet/nodes/shard.go` | 11–13 | `Sharder` | 3 |
+| 29 | type | `backend/internal/cluster/registry.go` | 43–59 | `Registry` | 17 |
+| 30 | type | `backend/internal/email/smtp.go` | 30–35 | `Sender` | 6 |
+| 31 | type | `backend/internal/telegram/telegram.go` | 32–38 | `Client` | 7 |
+| 32 | type | `backend/internal/ttlcache/ttlcache.go` | 18–24 | `Cache` | 7 |
+| 33 | type | `backend/internal/ttlcache/ttlcache.go` | 26–29 | `entry` | 4 |
+| 34 | type | `backend/internal/twilio/twilio.go` | 33–38 | `Client` | 6 |
+| 35 | type | `backend/middleware/auth.go` | 15–15 | `ctxKey` | 1 |
+| 36 | const | `backend/middleware/auth.go` | 17–17 | `NodeIDKey` | 1 |
+| 37 | type | `backend/middleware/logging.go` | 10–13 | `statusWriter` | 4 |
+| 38 | type | `backend/middleware/metrics.go` | 25–25 | `metricsKey` | 1 |
+| 39 | var | `backend/middleware/metrics.go` | 27–30 | `metricsMu` | 4 |
+| 40 | var | `backend/middleware/metrics.go` | 34–34 | `DurationBuckets` | 1 |
+| 41 | const | `backend/middleware/metrics.go` | 39–39 | `numBuckets` | 1 |
+| 42 | const | `backend/middleware/metrics.go` | 44–44 | `maxRouteKeys` | 1 |
+| 43 | type | `backend/middleware/metrics.go` | 52–55 | `histogram` | 4 |
+| 44 | type | `backend/middleware/metrics.go` | 57–57 | `histKey` | 1 |
+| 45 | var | `backend/middleware/metrics.go` | 59–62 | `durMu` | 4 |
+| 46 | type | `backend/middleware/request_id.go` | 20–20 | `requestIDKeyType` | 1 |
+| 47 | var | `backend/middleware/request_id.go` | 22–22 | `requestIDKey` | 1 |
+| 48 | const | `backend/middleware/request_id.go` | 24–24 | `RequestIDHeader` | 1 |
+| 49 | type | `backend/models/models.go` | 9–12 | `CachedField` | 4 |
+| 50 | type | `backend/models/models.go` | 14–19 | `FieldCacher` | 6 |
+| 51 | type | `backend/ops/backup/dest.go` | 28–33 | `Dest` | 6 |
+| 52 | type | `backend/ops/backup/dest.go` | 37–41 | `Entry` | 5 |
+| 53 | type | `backend/ops/capacity/capacity.go` | 95–103 | `Checker` | 9 |
+| 54 | type | `backend/ops/capacity/capacity.go` | 108–114 | `nodeState` | 7 |
+| 55 | type | `backend/ops/prune/prune.go` | 28–53 | `Pruner` | 26 |
+| 56 | type | `backend/platform/health.go` | 28–30 | `dbQuerier` | 3 |
+| 57 | type | `backend/releases/compliance_snapshot.go` | 25–27 | `ComplianceSnapshot` | 3 |
+| 58 | type | `backend/releases/github.go` | 33–37 | `githubClient` | 5 |
+| 59 | type | `backend/releases/poller.go` | 28–32 | `Poller` | 5 |
+| 60 | type | `backend/releases/store.go` | 83–85 | `PgxStore` | 3 |
+| 61 | type | `backend/validators/chain_head.go` | 46–48 | `ChainHeadProvider` | 3 |
+| 62 | type | `backend/validators/chain_head.go` | 52–58 | `ChainHeadPoller` | 7 |
+| 63 | type | `backend/validators/delegations.go` | 82–86 | `delegationsRecord` | 5 |
+| 64 | type | `backend/validators/keybase.go` | 38–42 | `logoTarget` | 5 |
+| 65 | type | `backend/validators/keybase.go` | 46–52 | `keybaseStore` | 7 |
+| 66 | type | `backend/validators/keybase.go` | 57–59 | `keybaseResolver` | 3 |
+| 67 | type | `backend/validators/keybase.go` | 90–95 | `KeybaseResolveLoop` | 6 |
+| 68 | type | `backend/validators/shard.go` | 11–13 | `Sharder` | 3 |
+| 69 | type | `backend/validators/slashing.go` | 71–76 | `chainSlashingParams` | 6 |
+| 70 | type | `backend/validators/slashing.go` | 134–140 | `signingInfoRecord` | 7 |
+| 71 | type | `backend/validators/tendermint_set.go` | 43–50 | `commitSignature` | 8 |
+| 72 | type | `backend/validators/validator_rollup.go` | 44–48 | `Rollup` | 5 |
+| 73 | type | `backend/validators/validatorset_loop.go` | 43–51 | `ValidatorSetLoop` | 9 |
+| 74 | type | `backend/validators/validatorset_loop.go` | 63–66 | `chainWorker` | 4 |
+| 75 | type | `backend/validators/validatorset_runner.go` | 65–79 | `validatorRecord` | 15 |
+| 76 | type | `backend/validators/validatorset_runner.go` | 83–116 | `validatorIngest` | 34 |
+| 77 | type | `backend/validators/validatorset_runner.go` | 121–124 | `validatorDelegationKey` | 4 |
+| 78 | func | `backend/httpx/respond.go` | 16–22 | `WriteJSON` | 7 |
+| 79 | func | `backend/middleware/logging.go` | 20–43 | `Logging` | 24 |
+| 80 | func | `backend/middleware/metrics.go` | 67–80 | `Metrics` | 14 |
+| 81 | func | `backend/middleware/metrics.go` | 82–97 | `bump` | 16 |
+| 82 | func | `backend/middleware/metrics.go` | 101–116 | `observe` | 16 |
+| 83 | func | `backend/middleware/metrics.go` | 118–142 | `getHist` | 25 |
+| 84 | func | `backend/middleware/request_id.go` | 29–39 | `RequestID` | 11 |
+| 85 | func | `backend/middleware/request_id.go` | 43–46 | `RequestIDFromContext` | 4 |
+| 86 | func | `backend/middleware/request_id.go` | 51–62 | `validRequestID` | 12 |
+| 87 | func | `backend/middleware/request_id.go` | 64–70 | `newRequestID` | 7 |
+| 88 | query | `backend/platform/health.go` | 104–143 | `Ready` | 40 |
+| 89 | mount | `backend/app.go` | 392 | `middleware.RequestID` | 4 *(+3 scaffold)* |
+| 90 | mount | `backend/app.go` | 393 | `middleware.Metrics` | 1 |
+| 91 | mount | `backend/app.go` | 394 | `middleware.Logging` | 1 |
+| 92 | mount | `backend/app.go` | 395 | `chimw.Recoverer` | 1 |
+| 93 | mount | `backend/app.go` | 396 | `chimw.Compress(…)` | 1 |
+| 94 | mount | `backend/app.go` | 399 | `cors.New(…).Handler` | 10 *(+9 scaffold)* |
+| 95 | mount | `backend/app.go` | 411 | `cors.AllowAll(…).Handler` | 2 *(+1 scaffold)* |
+| 96 | mount | `backend/app.go` | 417 | `cors.New(…).Handler` | 4 *(+3 scaffold)* |
+| 97 | register | `backend/router.go` | 35 | `GET /readyz` | 3 *(+2 scaffold)* |
+
+## Act 2 — GET /healthz
+
+4 step(s) · 2 fresh declaration(s) · 69 reference line(s) · closure 83 decls / 792 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 98 | table | `backend/migrations/001_init.sql` | 6 | `nodes` | 7 |
+| 99 | func | `backend/platform/health.go` | 36–42 | `diskUsage` | 7 |
+| 100 | query | `backend/platform/health.go` | 44–97 | `Health` | 54 |
+| 101 | register | `backend/router.go` | 34 | `GET /healthz` | 1 |
+
+## Act 3 — GET /install.sh
+
+17 step(s) · 16 fresh declaration(s) · 549 reference line(s) · closure 95 decls / 1269 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 102 | var | `backend/fleet/install/install_script.go` | 190–190 | `defaultEmitterTemplate` | 1 |
+| 103 | const | `backend/fleet/install/install_sh.go` | 147–183 | `curlEnsure` | 37 |
+| 104 | const | `backend/fleet/install/install_sh.go` | 185–212 | `launchModeProbe` | 28 |
+| 105 | func | `backend/fleet/install/install_endpoints.go` | 46–48 | `installBaseURL` | 3 |
+| 106 | func | `backend/fleet/install/install_sh.go` | 41–56 | `renderInstallSh` | 16 |
+| 107 | func | `backend/fleet/install/install_sh.go` | 77–104 | `osDispatch` | 28 |
+| 108 | func | `backend/fleet/install/install_sh.go` | 111–118 | `injectAPIKeyWrite` | 8 |
+| 109 | func | `backend/fleet/install/install_sh.go` | 223–302 | `installShPreamble` | 80 |
+| 110 | func | `backend/fleet/install/scripts.go` | 51–54 | `scriptVersion` | 4 |
+| 111 | func | `backend/fleet/install/scripts.go` | 62–67 | `LiveScriptVersion` | 6 |
+| 112 | func | `backend/fleet/install/scripts.go` | 73–81 | `renderEmitterBody` | 9 |
+| 113 | func | `backend/fleet/install/scripts.go` | 93–108 | `ingestPeerURLs` | 16 |
+| 114 | func | `backend/fleet/install/scripts.go` | 148–352 | `installSnippetParts` | 205 |
+| 115 | func | `backend/fleet/install/scripts.go` | 379–465 | `renderMacTestSnippet` | 87 |
+| 116 | func | `backend/httpx/helpers.go` | 59–67 | `SchemeFor` | 9 |
+| 117 | handler | `backend/fleet/install/install_sh.go` | 28–38 | `InstallSh` | 11 |
+| 118 | register | `backend/router.go` | 44 | `GET /install.sh` | 1 |
+
+## Act 4 — GET /metrics
+
+25 step(s) · 24 fresh declaration(s) · 312 reference line(s) · closure 103 decls / 1032 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 119 | var | `backend/alerts/metrics.go` | 11–17 | `evaluatorTicksTotal` | 7 |
+| 120 | type | `backend/alerts/metrics.go` | 21–27 | `Stats` | 7 |
+| 121 | type | `backend/internal/resilience/circuit.go` | 32–32 | `State` | 1 |
+| 122 | const | `backend/internal/resilience/circuit.go` | 34–38 | `StateClosed` | 5 |
+| 123 | type | `backend/internal/resilience/circuit.go` | 53–63 | `Breaker` | 11 |
+| 124 | var | `backend/internal/rpcprobe/metrics.go` | 14–14 | `failoversTotal` | 1 |
+| 125 | type | `backend/internal/rpcprobe/metrics.go` | 19–22 | `Stats` | 4 |
+| 126 | var | `backend/internal/rpcprobe/rpcfailover.go` | 86–86 | `rpcBreakers` | 1 |
+| 127 | type | `backend/middleware/metrics.go` | 159–165 | `DurationSnapshot` | 7 |
+| 128 | var | `backend/ops/capacity/metrics.go` | 14–22 | `capacityAlertsFiredTotal` | 9 |
+| 129 | type | `backend/ops/capacity/metrics.go` | 25–31 | `Stats` | 7 |
+| 130 | var | `backend/ops/prune/metrics.go` | 12–24 | `pruneSigsRowsTotal` | 13 |
+| 131 | type | `backend/ops/prune/metrics.go` | 27–34 | `Stats` | 8 |
+| 132 | var | `backend/validators/setpoll_metrics.go` | 14–17 | `validatorTicksTotal` | 4 |
+| 133 | type | `backend/validators/setpoll_metrics.go` | 21–24 | `Stats` | 4 |
+| 134 | func | `backend/alerts/metrics.go` | 31–39 | `SnapshotMetrics` | 9 |
+| 135 | method | `backend/internal/resilience/circuit.go` | 87–91 | `(*Breaker).State` | 5 |
+| 136 | func | `backend/internal/rpcprobe/metrics.go` | 28–40 | `Snapshot` | 13 |
+| 137 | func | `backend/middleware/metrics.go` | 146–154 | `SnapshotRequests` | 9 |
+| 138 | func | `backend/middleware/metrics.go` | 169–189 | `SnapshotDurations` | 21 |
+| 139 | func | `backend/ops/capacity/metrics.go` | 34–42 | `SnapshotMetrics` | 9 |
+| 140 | func | `backend/ops/prune/metrics.go` | 38–47 | `SnapshotMetrics` | 10 |
+| 141 | func | `backend/validators/setpoll_metrics.go` | 28–33 | `SnapshotMetrics` | 6 |
+| 142 | handler | `backend/fleet/ingest/prom_metrics.go` | 48–187 | `PromMetrics` | 140 |
+| 143 | register | `backend/router.go` | 36 | `GET /metrics` | 1 |
+
+## Act 5 — POST /debug/emit/disk-pressure
+
+28 step(s) · 26 fresh declaration(s) · 520 reference line(s) · closure 107 decls / 1248 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 144 | table | `backend/migrations/001_init.sql` | 57 | `node_metrics` | 6 |
+| 145 | const | `backend/alerts/channels/senders.go` | 37–37 | `KindNtfy` | 1 |
+| 146 | const | `backend/alerts/channels/senders.go` | 42–50 | `kindDiscord` | 9 |
+| 147 | const | `backend/alerts/channels/senders.go` | 65–79 | `ntfyDefaultServer` | 15 |
+| 148 | type | `backend/alerts/channels/senders.go` | 116–120 | `destRequest` | 5 |
+| 149 | const | `backend/ops/capacity/capacity.go` | 51–72 | `tickInterval` | 22 |
+| 150 | const | `backend/ops/capacity/capacity.go` | 80–84 | `backstopPercent` | 5 |
+| 151 | type | `backend/ops/capacity/capacity.go` | 152–155 | `sysNode` | 4 |
+| 152 | type | `backend/ops/capacity/capacity.go` | 158–161 | `sample` | 4 |
+| 153 | type | `backend/ops/capacity/capacity.go` | 165–173 | `decision` | 9 |
+| 154 | const | `backend/ops/capacity/debug.go` | 23–23 | `debugNodeName` | 1 |
+| 155 | const | `backend/ops/systemsampler/sampler.go` | 23–23 | `SystemOrgID` | 1 |
+| 156 | func | `backend/alerts/channels/senders.go` | 126–212 | `buildRequest` | 87 |
+| 157 | func | `backend/alerts/channels/senders.go` | 217–243 | `PostMessage` | 27 |
+| 158 | func | `backend/httpx/respond.go` | 57–59 | `WriteError` | 3 |
+| 159 | func | `backend/ops/capacity/capacity.go` | 91–91 | `netDropMin` | 1 |
+| 160 | func | `backend/ops/capacity/capacity.go` | 230–261 | `evaluate` | 32 |
+| 161 | method | `backend/ops/capacity/capacity.go` | 265–325 | `(*Checker).reconcile` | 61 |
+| 162 | method | `backend/ops/capacity/capacity.go` | 329–341 | `(*Checker).page` | 13 |
+| 163 | func | `backend/ops/capacity/capacity.go` | 343–352 | `formatMessage` | 10 |
+| 164 | func | `backend/ops/capacity/capacity.go` | 355–360 | `projectedForLog` | 6 |
+| 165 | func | `backend/ops/capacity/capacity.go` | 366–404 | `olsFit` | 39 |
+| 166 | query | `backend/ops/capacity/capacity.go` | 432–466 | `(*Checker).readWindow` | 35 |
+| 167 | query | `backend/ops/capacity/debug.go` | 81–102 | `(*Checker).seedDebugNode` | 22 |
+| 168 | query | `backend/ops/capacity/debug.go` | 109–145 | `(*Checker).seedDeclineCurve` | 37 |
+| 169 | query | `backend/ops/capacity/debug.go` | 149–158 | `(*Checker).cleanupDebugNode` | 10 |
+| 170 | handler | `backend/ops/capacity/debug.go` | 26–77 | `(*Checker).DebugDiskPressure` | 52 |
+| 171 | register | `backend/router.go` | 60 | `POST /debug/emit/disk-pressure` | 3 *(+2 scaffold)* |
+
+## Act 6 — POST /ingest
+
+48 step(s) · 44 fresh declaration(s) · 673 reference line(s) · closure 125 decls / 1369 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 172 | table | `backend/migrations/001_init.sql` | 15 | `node_field_definitions` | 10 |
+| 173 | table | `backend/migrations/013_install_codes_and_dashboard_nodes.sql` | 83 | `install_codes` | 11 |
+| 174 | const | `backend/fleet/ingest/ingest.go` | 115–115 | `maxClientClockSkew` | 1 |
+| 175 | const | `backend/fleet/ingest/ingest.go` | 193–196 | `sourceProd` | 4 |
+| 176 | type | `backend/fleet/ingest/ingest_store.go` | 21–28 | `CodeState` | 8 |
+| 177 | var | `backend/fleet/ingest/ingest_store.go` | 32–32 | `ErrUnauthorized` | 1 |
+| 178 | var | `backend/fleet/ingest/ingest_store.go` | 36–36 | `ErrAlreadyHandedOff` | 1 |
+| 179 | type | `backend/fleet/ingest/ingest_store.go` | 41–44 | `PendingCommand` | 4 |
+| 180 | type | `backend/fleet/ingest/ingest_store.go` | 48–52 | `ResolvedNode` | 5 |
+| 181 | type | `backend/fleet/ingest/ingest_store.go` | 58–90 | `ingestStore` | 33 |
+| 182 | type | `backend/fleet/ingest/ingest_store.go` | 93–101 | `PgxIngestStore` | 9 |
+| 183 | const | `backend/fleet/ingest/logs.go` | 30–37 | `maxLogLines` | 8 |
+| 184 | type | `backend/fleet/ingest/logs.go` | 63–67 | `logIngestPayload` | 5 |
+| 185 | type | `backend/fleet/ingest/logs.go` | 69–72 | `logSourceBatch` | 4 |
+| 186 | type | `backend/fleet/ingest/logs.go` | 111–114 | `logStore` | 4 |
+| 187 | const | `backend/fleet/ingest/metrics.go` | 23–30 | `maxKeys` | 8 |
+| 188 | var | `backend/httpx/helpers.go` | 25–25 | `ValidKey` | 1 |
+| 189 | const | `backend/httpx/helpers.go` | 33–33 | `MaxBodySize` | 1 |
+| 190 | const | `backend/middleware/org.go` | 17–17 | `OrgIDKey` | 1 |
+| 191 | var | `backend/middleware/org.go` | 21–21 | `uuidRE` | 1 |
+| 192 | type | `backend/middleware/ratelimit.go` | 20–24 | `bucket` | 5 |
+| 193 | const | `backend/models/models.go` | 181–181 | `DefaultOrgID` | 1 |
+| 194 | func | `backend/fleet/ingest/ingest.go` | 64–72 | `detectedFields` | 9 |
+| 195 | func | `backend/fleet/ingest/ingest.go` | 77–82 | `agentVersion` | 6 |
+| 196 | func | `backend/fleet/ingest/ingest.go` | 94–106 | `deriveNodeVersion` | 13 |
+| 197 | func | `backend/fleet/ingest/ingest.go` | 122–132 | `tickTimestamp` | 11 |
+| 198 | func | `backend/fleet/ingest/ingest.go` | 135–149 | `agentPID` | 15 |
+| 199 | func | `backend/fleet/ingest/ingest.go` | 153–174 | `validateMetricsPayload` | 22 |
+| 200 | func | `backend/fleet/ingest/ingest.go` | 202–207 | `sourceOf` | 6 |
+| 201 | func | `backend/fleet/ingest/ingest.go` | 211–220 | `stripReservedKeys` | 10 |
+| 202 | func | `backend/fleet/ingest/ingest.go` | 260–385 | `handleAPIKeyPath` | 126 |
+| 203 | func | `backend/fleet/ingest/ingest.go` | 387–436 | `handleInstallCodePath` | 50 |
+| 204 | func | `backend/fleet/ingest/logs.go` | 44–57 | `truncateLine` | 14 |
+| 205 | method | `backend/fleet/ingest/logs.go` | 75–80 | `(logIngestPayload).batches` | 6 |
+| 206 | func | `backend/fleet/ingest/logs.go` | 85–106 | `validateBatches` | 22 |
+| 207 | func | `backend/fleet/ingest/logs.go` | 122–130 | `newTailLines` | 9 |
+| 208 | func | `backend/fleet/ingest/logs.go` | 132–191 | `IngestLogs` | 60 |
+| 209 | func | `backend/middleware/auth.go` | 19–47 | `APIKey` | 29 |
+| 210 | func | `backend/middleware/org.go` | 26–37 | `OrgContext` | 12 |
+| 211 | func | `backend/middleware/ratelimit.go` | 14–18 | `jsonError` | 5 |
+| 212 | method | `backend/middleware/ratelimit.go` | 26–41 | `(*bucket).allow` | 16 |
+| 213 | func | `backend/middleware/ratelimit.go` | 48–67 | `rateLimitWith` | 20 |
+| 214 | func | `backend/middleware/ratelimit.go` | 71–75 | `RateLimit` | 5 |
+| 215 | func | `backend/middleware/readonly.go` | 16–33 | `ReadOnly` | 18 |
+| 216 | method | `backend/router.go` | 213–225 | `(*App).registerIngestRoutes` | 13 |
+| 217 | handler | `backend/fleet/ingest/ingest.go` | 223–258 | `Ingest` | 36 |
+| 218 | mount | `backend/router.go` | 234 | `middleware.OrgContext(…)` | 7 *(+6 scaffold)* |
+| 219 | mount | `backend/router.go` | 217 | `middleware.RateLimit(…)` | 7 *(+6 scaffold)* |
+
+## Act 7 — POST /ingest/logs
+
+2 step(s) · 0 fresh declaration(s) · 11 reference line(s) · closure 125 decls / 1369 lines · status `traced`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 220 | table | `backend/migrations/011_node_logs.sql` | 19 | `node_logs` | 6 |
+| 221 | mount | `backend/router.go` | 221 | `middleware.APIKey(…)` | 5 *(+4 scaffold)* |
+
+## Act 8 — DELETE /api/account/me
+
+965 step(s) · 960 fresh declaration(s) · 17156 reference line(s) · closure 1102 decls / 18938 lines · status `partial`
+
+| # | kind | file | line | symbol | span |
+|---:|---|---|---:|---|---:|
+| 222 | table | `backend/migrations/023_superadmin_and_totp.sql` | 26 | `superadmin_audit` | 11 |
+| 223 | table | `backend/migrations/007_multi_tenant.sql` | 31 | `organization_members` | 8 |
+| 224 | table | `backend/migrations/007_multi_tenant.sql` | 22 | `users` | 8 |
+| 225 | const | `backend/admin/admin.go` | 32–35 | `maxRestoreBytes` | 4 |
+| 226 | type | `backend/admin/admin.go` | 39–45 | `tableUsage` | 7 |
+| 227 | type | `backend/admin/admin.go` | 47–51 | `usageResp` | 5 |
+| 228 | type | `backend/admin/admin.go` | 115–127 | `settingsBody` | 13 |
+| 229 | type | `backend/admin/admin.go` | 223–227 | `backupFile` | 5 |
+| 230 | type | `backend/admin/admin.go` | 367–374 | `exportReq` | 8 |
+| 231 | const | `backend/admin/admin_reports.go` | 22–22 | `adminReportsWindow` | 1 |
+| 232 | type | `backend/admin/routes.go` | 22–30 | `Deps` | 9 |
+| 233 | const | `backend/alerts/alerts_health.go` | 16–16 | `HealthBucketHours` | 1 |
+| 234 | type | `backend/alerts/alerts_health.go` | 20–23 | `HourCount` | 4 |
+| 235 | type | `backend/alerts/alerts_health.go` | 58–66 | `HealthInputs` | 9 |
+| 236 | const | `backend/alerts/channels/senders.go` | 62–62 | `validKindsMsg` | 1 |
+| 237 | var | `backend/alerts/channels/senders.go` | 103–103 | `telegramTokenRe` | 1 |
+| 238 | var | `backend/alerts/channels/senders.go` | 108–108 | `e164Re` | 1 |
+| 239 | var | `backend/alerts/channels/senders.go` | 111–111 | `phoneNumberIDRe` | 1 |
+| 240 | type | `backend/alerts/channels/slack_integration.go` | 33–36 | `SlackIntegration` | 4 |
+| 241 | var | `backend/alerts/channels/slack_integration.go` | 99–99 | `errBadSlackToken` | 1 |
+| 242 | type | `backend/alerts/channels/slack_integration.go` | 145–149 | `slackIntegrationStore` | 5 |
+| 243 | type | `backend/alerts/contacts/contacts.go` | 29–32 | `SMSSender` | 4 |
+| 244 | type | `backend/alerts/contacts/contacts.go` | 35–38 | `Store` | 4 |
+| 245 | type | `backend/alerts/contacts/contacts.go` | 44–47 | `Phone` | 4 |
+| 246 | var | `backend/alerts/contacts/contacts.go` | 129–132 | `errBadPhone` | 4 |
+| 247 | type | `backend/alerts/contacts/contacts.go` | 139–144 | `phoneStore` | 6 |
+| 248 | type | `backend/alerts/contacts/reachability.go` | 21–29 | `MemberReachability` | 9 |
+| 249 | type | `backend/alerts/contacts/reachability.go` | 32–34 | `ReachabilityStore` | 3 |
+| 250 | type | `backend/alerts/contacts/reachability.go` | 75–77 | `reachabilityLister` | 3 |
+| 251 | type | `backend/alerts/contacts/routes.go` | 14–20 | `Deps` | 7 |
+| 252 | var | `backend/alerts/contacts/rules.go` | 23–26 | `validRuleChannels` | 4 |
+| 253 | const | `backend/alerts/contacts/rules.go` | 28–31 | `maxRules` | 4 |
+| 254 | type | `backend/alerts/contacts/rules.go` | 36–40 | `NotificationRule` | 5 |
+| 255 | type | `backend/alerts/contacts/rules.go` | 44–50 | `Readiness` | 7 |
+| 256 | type | `backend/alerts/contacts/rules.go` | 53–56 | `RulesResponse` | 4 |
+| 257 | type | `backend/alerts/contacts/rules.go` | 60–60 | `SlackChecker` | 1 |
+| 258 | type | `backend/alerts/contacts/rules.go` | 63–67 | `RulesStore` | 5 |
+| 259 | type | `backend/alerts/contacts/rules.go` | 175–178 | `rulesReader` | 4 |
+| 260 | type | `backend/alerts/contacts/rules.go` | 180–183 | `rulesWriter` | 4 |
+| 261 | type | `backend/alerts/contacts/telegram.go` | 26–29 | `TelegramLinker` | 4 |
+| 262 | type | `backend/alerts/contacts/telegram.go` | 32–36 | `TelegramBot` | 5 |
+| 263 | type | `backend/alerts/contacts/telegram.go` | 44–49 | `TelegramStatus` | 6 |
+| 264 | var | `backend/alerts/contacts/telegram.go` | 78–78 | `errTelegramUnavailable` | 1 |
+| 265 | type | `backend/alerts/contacts/telegram.go` | 133–137 | `telegramLinkStore` | 5 |
+| 266 | type | `backend/alerts/contacts/testpage.go` | 24–27 | `TelegramDM` | 4 |
+| 267 | type | `backend/alerts/contacts/testpage.go` | 31–33 | `SlackDM` | 3 |
+| 268 | type | `backend/alerts/contacts/testpage.go` | 37–43 | `TestPager` | 7 |
+| 269 | type | `backend/alerts/contacts/testpage.go` | 51–55 | `ChannelTestResult` | 5 |
+| 270 | type | `backend/alerts/contacts/testpage.go` | 157–159 | `channelTester` | 3 |
+| 271 | type | `backend/alerts/contacts/testpage.go` | 161–163 | `ladderReader` | 3 |
+| 272 | type | `backend/alerts/escalation/inbox.go` | 16–18 | `inAppAcker` | 3 |
+| 273 | const | `backend/alerts/escalation/incidents_store.go` | 15–25 | `incidentSelect` | 11 |
+| 274 | type | `backend/alerts/escalation/incidents_store.go` | 159–173 | `Attempt` | 15 |
+| 275 | type | `backend/alerts/escalation/incidents_store.go` | 205–208 | `AckResult` | 4 |
+| 276 | var | `backend/alerts/escalation/incidents_store.go` | 213–213 | `ErrTokenExpired` | 1 |
+| 277 | var | `backend/alerts/escalation/policies.go` | 19–19 | `ErrInvalidRef` | 1 |
+| 278 | type | `backend/alerts/escalation/policies.go` | 95–100 | `policyStore` | 6 |
+| 279 | var | `backend/alerts/escalation/store.go` | 33–33 | `ErrNotFound` | 1 |
+| 280 | const | `backend/alerts/escalation/store.go` | 36–47 | `KindSchedule` | 12 |
+| 281 | type | `backend/alerts/escalation/store.go` | 50–60 | `Policy` | 11 |
+| 282 | type | `backend/alerts/escalation/store.go` | 63–68 | `Tier` | 6 |
+| 283 | type | `backend/alerts/escalation/store.go` | 73–79 | `Target` | 7 |
+| 284 | type | `backend/alerts/escalation/store.go` | 83–105 | `Incident` | 23 |
+| 285 | type | `backend/alerts/escalation/store.go` | 249–256 | `PolicyInput` | 8 |
+| 286 | type | `backend/alerts/escalation/store.go` | 259–262 | `TierInput` | 4 |
+| 287 | type | `backend/alerts/escalation/store.go` | 267–272 | `TargetInput` | 6 |
+| 288 | var | `backend/alerts/escalation/voice.go` | 23–23 | `xmlEscaper` | 1 |
+| 289 | type | `backend/alerts/oncall/handlers.go` | 21–31 | `scheduleStore` | 11 |
+| 290 | var | `backend/alerts/oncall/store.go` | 14–14 | `ErrNotFound` | 1 |
+| 291 | type | `backend/alerts/oncall/store.go` | 17–25 | `Schedule` | 9 |
+| 292 | type | `backend/alerts/oncall/store.go` | 28–34 | `Layer` | 7 |
+| 293 | type | `backend/alerts/oncall/store.go` | 37–43 | `Override` | 7 |
+| 294 | type | `backend/alerts/oncall/store.go` | 46–48 | `Store` | 3 |
+| 295 | type | `backend/alerts/oncall/store.go` | 168–172 | `LayerInput` | 5 |
+| 296 | type | `backend/alerts/oncall/store.go` | 173–177 | `ScheduleInput` | 5 |
+| 297 | type | `backend/alerts/oncall/store.go` | 325–329 | `Shift` | 5 |
+| 298 | type | `backend/alerts/simulate.go` | 30–33 | `SimSample` | 4 |
+| 299 | var | `backend/alerts/templates.go` | 10–132 | `Templates` | 123 |
+| 300 | type | `backend/alerts/templates.go` | 134–142 | `Template` | 9 |
+| 301 | type | `backend/fleet/clusters/clusters.go` | 26–34 | `ClusterStore` | 9 |
+| 302 | const | `backend/fleet/clusters/clusters.go` | 36–36 | `maxClusterNameLen` | 1 |
+| 303 | type | `backend/fleet/clusters/clusters_store.go` | 25–31 | `Cluster` | 7 |
+| 304 | type | `backend/fleet/clusters/clusters_store.go` | 38–53 | `ClusterMember` | 16 |
+| 305 | type | `backend/fleet/clusters/clusters_store.go` | 56–59 | `ClusterOverview` | 4 |
+| 306 | var | `backend/fleet/clusters/clusters_store.go` | 63–63 | `ErrNameTaken` | 1 |
+| 307 | var | `backend/fleet/clusters/clusters_store.go` | 67–67 | `ErrNotFound` | 1 |
+| 308 | var | `backend/fleet/clusters/clusters_store.go` | 72–72 | `ErrInvalidParent` | 1 |
+| 309 | type | `backend/fleet/clusters/clusters_store.go` | 75–77 | `PgxClusterStore` | 3 |
+| 310 | type | `backend/fleet/dashboard/dashboard_preset.go` | 43–51 | `PresetPanel` | 9 |
+| 311 | var | `backend/fleet/dashboard/dashboard_shares.go` | 31–36 | `ErrShareNotFound` | 6 |
+| 312 | type | `backend/fleet/dashboard/dashboard_shares.go` | 42–68 | `ShareWhitelist` | 27 |
+| 313 | type | `backend/fleet/dashboard/dashboard_shares.go` | 72–85 | `Share` | 14 |
+| 314 | type | `backend/fleet/dashboard/dashboard_shares.go` | 88–94 | `ShareView` | 7 |
+| 315 | type | `backend/fleet/dashboard/dashboard_shares.go` | 97–105 | `CreateShareOptions` | 9 |
+| 316 | type | `backend/fleet/dashboard/dashboard_shares.go` | 109–128 | `ShareStore` | 20 |
+| 317 | type | `backend/fleet/dashboard/dashboard_shares.go` | 133–136 | `ShareEmailSender` | 4 |
+| 318 | const | `backend/fleet/dashboard/dashboard_validator.go` | 34–34 | `validatorTemplateKind` | 1 |
+| 319 | type | `backend/fleet/dashboard/dashboard_validator.go` | 38–40 | `querier` | 3 |
+| 320 | type | `backend/fleet/dashboard/dashboard_validator_link.go` | 34–36 | `rowQuerier` | 3 |
+| 321 | const | `backend/fleet/dashboard/dashboard_validator_link.go` | 38–44 | `validatorSectionName` | 7 |
+| 322 | type | `backend/fleet/dashboard/dashboard_validator_link.go` | 145–152 | `ValidatorDashboardLink` | 8 |
+| 323 | const | `backend/fleet/dashboard/dashboard_validator_write.go` | 33–33 | `scopeThis` | 1 |
+| 324 | type | `backend/fleet/dashboard/dashboard_validator_write.go` | 178–185 | `validatorLayoutItem` | 8 |
+| 325 | type | `backend/fleet/dashboard/dashboard_validator_write.go` | 189–197 | `panelLayoutMeta` | 9 |
+| 326 | const | `backend/fleet/dashboard/dashboards.go` | 219–222 | `panelReturningCols` | 4 |
+| 327 | const | `backend/fleet/dashboard/dashboards.go` | 245–245 | `maxPanelSeries` | 1 |
+| 328 | type | `backend/fleet/dashboard/dashboards.go` | 355–360 | `DeletePanelResult` | 6 |
+| 329 | type | `backend/fleet/dashboard/dashboards.go` | 719–722 | `nullableSection` | 4 |
+| 330 | type | `backend/fleet/dashboard/grid.go` | 11–13 | `rect` | 3 |
+| 331 | type | `backend/fleet/dashboard/share_store.go` | 25–27 | `PgxShareStore` | 3 |
+| 332 | const | `backend/fleet/dashboard/share_store.go` | 29–35 | `shareTokenBytes` | 7 |
+| 333 | const | `backend/fleet/dashboard/share_store.go` | 160–164 | `shareSelectCols` | 5 |
+| 334 | var | `backend/fleet/ingest/log_shipper.go` | 43–43 | `logShipperTemplate` | 1 |
+| 335 | const | `backend/fleet/ingest/log_shipper.go` | 51–60 | `minShipperInterval` | 10 |
+| 336 | type | `backend/fleet/ingest/log_shipper.go` | 63–63 | `logSource` | 1 |
+| 337 | const | `backend/fleet/ingest/log_shipper.go` | 65–70 | `sourceDocker` | 6 |
+| 338 | type | `backend/fleet/ingest/log_shipper.go` | 75–75 | `logVerbosity` | 1 |
+| 339 | const | `backend/fleet/ingest/log_shipper.go` | 77–81 | `verbosityAll` | 5 |
+| 340 | type | `backend/fleet/ingest/log_shipper.go` | 112–116 | `logSourceSpec` | 5 |
+| 341 | type | `backend/fleet/ingest/log_shipper.go` | 119–125 | `LogShipperConfig` | 7 |
+| 342 | var | `backend/fleet/ingest/log_shipper.go` | 130–130 | `errInvalidShipperConfig` | 1 |
+| 343 | var | `backend/fleet/ingest/log_shipper.go` | 138–138 | `safeTarget` | 1 |
+| 344 | var | `backend/fleet/ingest/log_shipper.go` | 146–146 | `safeTildePath` | 1 |
+| 345 | type | `backend/fleet/ingest/logs.go` | 245–250 | `logSourceInfo` | 6 |
+| 346 | type | `backend/fleet/install/clientconfig.go` | 19–28 | `clientConfig` | 10 |
+| 347 | const | `backend/fleet/install/install_endpoints.go` | 37–37 | `installTokenTTL` | 1 |
+| 348 | const | `backend/fleet/install/install_endpoints.go` | 41–41 | `installCodeTTL` | 1 |
+| 349 | var | `backend/fleet/install/install_script.go` | 47–47 | `ErrNodeNotFound` | 1 |
+| 350 | var | `backend/fleet/install/install_script.go` | 52–52 | `ErrDraftConflict` | 1 |
+| 351 | type | `backend/fleet/install/install_script.go` | 58–65 | `NodeInstallContext` | 8 |
+| 352 | type | `backend/fleet/install/install_script.go` | 70–84 | `ScriptStore` | 15 |
+| 353 | type | `backend/fleet/install/install_script.go` | 87–89 | `PgxScriptStore` | 3 |
+| 354 | var | `backend/fleet/install/install_store.go` | 40–40 | `ErrInstallTokenInvalid` | 1 |
+| 355 | var | `backend/fleet/install/install_store.go` | 45–45 | `ErrInstallCodeUnavailable` | 1 |
+| 356 | var | `backend/fleet/install/install_store.go` | 49–49 | `ErrNodeNotOwned` | 1 |
+| 357 | type | `backend/fleet/install/install_store.go` | 54–63 | `installStore` | 10 |
+| 358 | type | `backend/fleet/install/install_store.go` | 66–68 | `PgxInstallStore` | 3 |
+| 359 | type | `backend/fleet/install/install_store.go` | 206–209 | `pgxExecQuerier` | 4 |
+| 360 | const | `backend/fleet/install/scripts.go` | 23–23 | `maxScriptBytes` | 1 |
+| 361 | const | `backend/fleet/install/scripts.go` | 28–28 | `lintTimeout` | 1 |
+| 362 | type | `backend/fleet/install/scripts.go` | 30–34 | `langSpec` | 5 |
+| 363 | var | `backend/fleet/install/scripts.go` | 41–43 | `supportedLangs` | 3 |
+| 364 | const | `backend/fleet/nodes/liveness.go` | 40–40 | `livenessCells` | 1 |
+| 365 | const | `backend/fleet/nodes/liveness.go` | 45–45 | `stallFloor` | 1 |
+| 366 | type | `backend/fleet/nodes/liveness.go` | 268–271 | `heightSample` | 4 |
+| 367 | type | `backend/fleet/nodes/node_member_shares.go` | 29–35 | `NodeShare` | 7 |
+| 368 | type | `backend/fleet/nodes/node_member_shares.go` | 39–45 | `SharedNode` | 7 |
+| 369 | type | `backend/fleet/nodes/node_member_shares.go` | 49–59 | `NodeShareStore` | 11 |
+| 370 | type | `backend/fleet/nodes/node_member_shares.go` | 61–63 | `PgxNodeShareStore` | 3 |
+| 371 | const | `backend/fleet/nodes/nodes.go` | 28–34 | `nodeCols` | 7 |
+| 372 | const | `backend/fleet/nodes/nodes.go` | 60–60 | `fieldDefCols` | 1 |
+| 373 | var | `backend/fleet/nodes/nodes.go` | 139–139 | `ErrNodeQuotaExceeded` | 1 |
+| 374 | var | `backend/fleet/nodes/nodes.go` | 145–145 | `ErrValidatorLinkIncomplete` | 1 |
+| 375 | var | `backend/fleet/nodes/nodes.go` | 152–152 | `ErrValidatorIdentityTaken` | 1 |
+| 376 | var | `backend/fleet/nodes/nodes.go` | 162–162 | `ErrProtocolLocked` | 1 |
+| 377 | type | `backend/fleet/nodes/nodes.go` | 566–568 | `nodeExecer` | 3 |
+| 378 | type | `backend/fleet/nodes/nodes.go` | 695–697 | `txBeginner` | 3 |
+| 379 | type | `backend/fleet/nodes/system_info.go` | 29–32 | `readQuerier` | 4 |
+| 380 | type | `backend/fleet/nodes/system_info.go` | 34–38 | `systemInfo` | 5 |
+| 381 | var | `backend/httpx/helpers.go` | 22–22 | `ErrNotFound` | 1 |
+| 382 | const | `backend/httpx/helpers.go` | 29–29 | `MaxResultRows` | 1 |
+| 383 | var | `backend/httpx/helpers.go` | 41–50 | `BucketIntervals` | 10 |
+| 384 | const | `backend/httpx/helpers.go` | 54–54 | `BucketTokensHelp` | 1 |
+| 385 | type | `backend/httpx/helpers.go` | 96–98 | `RowQuerier` | 3 |
+| 386 | type | `backend/httpx/helpers.go` | 144–148 | `LogLine` | 5 |
+| 387 | type | `backend/httpx/node_access.go` | 24–26 | `NodeQuerier` | 3 |
+| 388 | const | `backend/httpx/node_access.go` | 28–32 | `PermOwner` | 5 |
+| 389 | type | `backend/internal/auth0mgmt/auth0mgmt.go` | 27–32 | `Client` | 6 |
+| 390 | var | `backend/internal/rpcprobe/client.go` | 20–27 | `Client` | 8 |
+| 391 | type | `backend/middleware/jwt.go` | 37–48 | `AuthClaims` | 12 |
+| 392 | const | `backend/middleware/jwt.go` | 50–50 | `AuthClaimsKey` | 1 |
+| 393 | type | `backend/middleware/jwt.go` | 114–114 | `keyLookup` | 1 |
+| 394 | type | `backend/middleware/jwt.go` | 116–128 | `jwtClaims` | 13 |
+| 395 | type | `backend/middleware/jwt.go` | 213–215 | `httpDoer` | 3 |
+| 396 | type | `backend/middleware/jwt.go` | 220–227 | `jwksCache` | 8 |
+| 397 | const | `backend/middleware/provision.go` | 38–38 | `UserIDKey` | 1 |
+| 398 | var | `backend/middleware/provision.go` | 44–44 | `errInviteRequired` | 1 |
+| 399 | var | `backend/middleware/provision.go` | 52–52 | `errEmailUnverified` | 1 |
+| 400 | var | `backend/middleware/provision.go` | 324–324 | `userinfoClient` | 1 |
+| 401 | type | `backend/middleware/provision.go` | 329–333 | `userinfo` | 5 |
+| 402 | const | `backend/middleware/share_session.go` | 19–19 | `ShareCtxKey` | 1 |
+| 403 | const | `backend/middleware/share_session.go` | 20–20 | `ShareCookieName` | 1 |
+| 404 | type | `backend/middleware/share_session.go` | 26–26 | `ShareLookupFunc` | 1 |
+| 405 | const | `backend/middleware/superadmin.go` | 31–38 | `IsSuperadminKey` | 8 |
+| 406 | type | `backend/middleware/superadmin.go` | 43–43 | `SuperadminLookup` | 1 |
+| 407 | type | `backend/models/models.go` | 21–55 | `Node` | 35 |
+| 408 | type | `backend/models/models.go` | 70–82 | `FieldDefinition` | 13 |
+| 409 | type | `backend/models/models.go` | 84–94 | `Dashboard` | 11 |
+| 410 | type | `backend/models/models.go` | 99–106 | `PanelSection` | 8 |
+| 411 | type | `backend/models/models.go` | 108–145 | `Panel` | 38 |
+| 412 | type | `backend/models/models.go` | 151–159 | `PanelSeries` | 9 |
+| 413 | type | `backend/models/models.go` | 161–166 | `MetricPoint` | 6 |
+| 414 | type | `backend/models/models.go` | 171–173 | `MultiMetricResult` | 3 |
+| 415 | type | `backend/models/models.go` | 218–222 | `OrgUsage` | 5 |
+| 416 | type | `backend/models/models.go` | 231–241 | `AlertDestination` | 11 |
+| 417 | type | `backend/models/models.go` | 243–276 | `AlertRule` | 34 |
+| 418 | type | `backend/models/models.go` | 281–290 | `AlertRuleHealth` | 10 |
+| 419 | type | `backend/models/models.go` | 292–306 | `AlertEvent` | 15 |
+| 420 | type | `backend/models/models.go` | 308–325 | `NodeOverview` | 18 |
+| 421 | const | `backend/models/models.go` | 328–336 | `LivenessSigned` | 9 |
+| 422 | type | `backend/models/models.go` | 345–358 | `NodeLiveness` | 14 |
+| 423 | var | `backend/models/nodepurge.go` | 19–22 | `nodeChildDataTables` | 4 |
+| 424 | type | `backend/models/orgpurge.go` | 14–18 | `Querier` | 5 |
+| 425 | type | `backend/models/validator.go` | 14–41 | `ValidatorChain` | 28 |
+| 426 | type | `backend/models/validator.go` | 47–73 | `ValidatorGridRow` | 27 |
+| 427 | var | `backend/models/validator.go` | 78–78 | `ErrBadPeriod` | 1 |
+| 428 | type | `backend/models/validator.go` | 82–82 | `UptimePeriodKind` | 1 |
+| 429 | const | `backend/models/validator.go` | 84–91 | `PeriodDuration` | 8 |
+| 430 | type | `backend/models/validator.go` | 96–102 | `UptimePeriod` | 7 |
+| 431 | var | `backend/models/validator.go` | 107–125 | `periodTable` | 19 |
+| 432 | type | `backend/models/validator.go` | 143–154 | `PeriodUptime` | 12 |
+| 433 | type | `backend/models/validator.go` | 161–167 | `ValidatorMetadata` | 7 |
+| 434 | type | `backend/models/validator.go` | 189–221 | `ValidatorEconomics` | 33 |
+| 435 | type | `backend/models/validator.go` | 249–256 | `ChainPollHealth` | 8 |
+| 436 | type | `backend/models/validator.go` | 258–268 | `ValidatorSlashing` | 11 |
+| 437 | type | `backend/models/validator.go` | 273–277 | `SigningHistoryBucket` | 5 |
+| 438 | type | `backend/models/validator.go` | 284–289 | `SigningHistory` | 6 |
+| 439 | type | `backend/models/validator.go` | 300–306 | `SignatureWindow` | 7 |
+| 440 | const | `backend/ops/backup/local.go` | 15–18 | `LocalPrefix` | 4 |
+| 441 | type | `backend/ops/backup/scheduler.go` | 19–21 | `Dumper` | 3 |
+| 442 | type | `backend/ops/backup/scheduler.go` | 27–27 | `PgDumpFc` | 1 |
+| 443 | const | `backend/ops/prune/lifecycle.go` | 20–20 | `orgPurgeGraceDays` | 1 |
+| 444 | const | `backend/ops/prune/lifecycle.go` | 25–25 | `orgPurgeBatch` | 1 |
+| 445 | const | `backend/ops/prune/prune.go` | 71–80 | `sealCommitTimeout` | 10 |
+| 446 | const | `backend/ops/prune/prune.go` | 228–228 | `archivedNodeRetentionDays` | 1 |
+| 447 | const | `backend/ops/prune/prune.go` | 240–240 | `provisionalNodeRetentionDays` | 1 |
+| 448 | const | `backend/ops/prune/prune.go` | 443–443 | `vacuumAfterRowsThreshold` | 1 |
+| 449 | var | `backend/ops/prune/prune.go` | 451–451 | `sigsDeleteBatch` | 1 |
+| 450 | var | `backend/ops/prune/prune.go` | 458–458 | `sigsMaxBatchesPerTick` | 1 |
+| 451 | const | `backend/ops/prune/prune.go` | 464–464 | `sigsFoldBudget` | 1 |
+| 452 | const | `backend/ops/prune/prune.go` | 480–480 | `uptimeEpochBlocks` | 1 |
+| 453 | const | `backend/ops/prune/prune.go` | 617–620 | `vacuumStmtTimeout` | 4 |
+| 454 | const | `backend/ops/prune/prune.go` | 675–675 | `uptimeSealLag` | 1 |
+| 455 | const | `backend/ops/prune/prune.go` | 679–679 | `uptimeSealEpochsPerTick` | 1 |
+| 456 | const | `backend/ops/prune/prune.go` | 685–685 | `sealerLagWarnBlocks` | 1 |
+| 457 | const | `backend/ops/prune/prune.go` | 911–911 | `validatorSigsHeightWindow` | 1 |
+| 458 | var | `backend/ops/prune/rollups.go` | 17–17 | `hourlyDeleteBatch` | 1 |
+| 459 | const | `backend/ops/prune/rollups.go` | 57–57 | `rollupVerifyInterval` | 1 |
+| 460 | const | `backend/ops/prune/sparse_verify.go` | 36–42 | `sparseVerifyInterval` | 7 |
+| 461 | type | `backend/ops/prune/sparse_verify.go` | 69–74 | `sparseEpoch` | 6 |
+| 462 | type | `backend/ops/prune/sparse_verify.go` | 76–76 | `epochVerdict` | 1 |
+| 463 | const | `backend/ops/prune/sparse_verify.go` | 78–82 | `epochMatch` | 5 |
+| 464 | type | `backend/platform/system.go` | 30–32 | `rowQuerier` | 3 |
+| 465 | type | `backend/platform/system.go` | 35–39 | `UptimeBucket` | 5 |
+| 466 | type | `backend/platform/system.go` | 42–49 | `Incident` | 8 |
+| 467 | const | `backend/platform/system_dashboard.go` | 27–30 | `systemOrgID` | 4 |
+| 468 | type | `backend/platform/system_dashboard.go` | 33–36 | `systemNodeRef` | 4 |
+| 469 | type | `backend/releases/routes.go` | 24–27 | `Deps` | 4 |
+| 470 | type | `backend/releases/routes.go` | 44–46 | `timelineStore` | 3 |
+| 471 | type | `backend/releases/routes.go` | 48–50 | `complianceHistoryStore` | 3 |
+| 472 | var | `backend/releases/store.go` | 18–18 | `ErrNodeNotFound` | 1 |
+| 473 | var | `backend/releases/store.go` | 21–21 | `ErrReleaseNotFound` | 1 |
+| 474 | type | `backend/releases/store.go` | 25–33 | `Release` | 9 |
+| 475 | type | `backend/releases/store.go` | 38–46 | `Project` | 9 |
+| 476 | type | `backend/releases/store.go` | 51–70 | `FleetNode` | 20 |
+| 477 | type | `backend/releases/store.go` | 74–80 | `Store` | 7 |
+| 478 | type | `backend/releases/store.go` | 310–321 | `TimelineEntry` | 12 |
+| 479 | type | `backend/releases/store.go` | 420–425 | `ComplianceHistoryPoint` | 6 |
+| 480 | var | `backend/settings/account/account.go` | 36–36 | `ErrHasAuditRows` | 1 |
+| 481 | var | `backend/settings/account/account.go` | 43–43 | `ErrSoleOwnerSharedOrg` | 1 |
+| 482 | type | `backend/settings/account/account.go` | 48–50 | `accountDeleter` | 3 |
+| 483 | type | `backend/settings/account/account.go` | 54–57 | `auth0Deleter` | 4 |
+| 484 | type | `backend/settings/account/account.go` | 60–60 | `PgxAccountStore` | 1 |
+| 485 | type | `backend/settings/billing/billing.go` | 21–52 | `Config` | 32 |
+| 486 | type | `backend/settings/billing/lemonsqueezy.go` | 34–34 | `lemonSqueezyProvider` | 1 |
+| 487 | type | `backend/settings/billing/paddle.go` | 38–38 | `paddleProvider` | 1 |
+| 488 | type | `backend/settings/billing/plan.go` | 21–26 | `planQuotas` | 6 |
+| 489 | type | `backend/settings/billing/plan.go` | 31–39 | `planResponse` | 9 |
+| 490 | type | `backend/settings/billing/plan.go` | 140–145 | `checkoutStatusResponse` | 6 |
+| 491 | type | `backend/settings/billing/polar.go` | 34–34 | `polarProvider` | 1 |
+| 492 | const | `backend/settings/billing/polar_checkout.go` | 33–36 | `polarAPIProduction` | 4 |
+| 493 | const | `backend/settings/billing/polar_checkout.go` | 50–50 | `checkoutSessionTimeout` | 1 |
+| 494 | type | `backend/settings/billing/polar_checkout.go` | 119–124 | `polarCheckoutStatus` | 6 |
+| 495 | type | `backend/settings/billing/provider.go` | 17–17 | `kind` | 1 |
+| 496 | const | `backend/settings/billing/provider.go` | 19–25 | `kindCreated` | 7 |
+| 497 | type | `backend/settings/billing/provider.go` | 28–46 | `event` | 19 |
+| 498 | type | `backend/settings/billing/provider.go` | 51–56 | `provider` | 6 |
+| 499 | type | `backend/settings/billing/stripe.go` | 24–24 | `stripeProvider` | 1 |
+| 500 | type | `backend/settings/billing/tiers.go` | 23–27 | `tierQuota` | 5 |
+| 501 | const | `backend/settings/billing/tiers.go` | 34–34 | `unlimitedNodes` | 1 |
+| 502 | var | `backend/settings/billing/tiers.go` | 39–44 | `tierQuotas` | 6 |
+| 503 | type | `backend/settings/org/org.go` | 24–27 | `orgQuerier` | 4 |
+| 504 | const | `backend/settings/org/org_export.go` | 27–27 | `orgExportMetricsWindow` | 1 |
+| 505 | type | `backend/settings/org/org_join_links.go` | 40–49 | `JoinLink` | 10 |
+| 506 | type | `backend/settings/org/org_join_links.go` | 53–62 | `OrgJoinLinkStore` | 10 |
+| 507 | type | `backend/settings/org/org_join_links.go` | 65–67 | `PgxOrgJoinLinkStore` | 3 |
+| 508 | var | `backend/settings/org/org_members.go` | 39–39 | `errLastOwner` | 1 |
+| 509 | type | `backend/settings/org/org_members.go` | 41–46 | `OrgMember` | 6 |
+| 510 | type | `backend/settings/org/org_members.go` | 48–56 | `OrgInvite` | 9 |
+| 511 | type | `backend/settings/org/org_members.go` | 60–70 | `OrgMemberStore` | 11 |
+| 512 | type | `backend/settings/org/org_members.go` | 73–75 | `PgxOrgMemberStore` | 3 |
+| 513 | var | `backend/settings/org/org_membership.go` | 23–23 | `orgIDRE` | 1 |
+| 514 | type | `backend/settings/org/org_membership.go` | 25–30 | `orgListItem` | 6 |
+| 515 | type | `backend/settings/org/signup_invites.go` | 25–31 | `InviteRow` | 7 |
+| 516 | type | `backend/settings/org/signup_invites.go` | 34–38 | `InviteStore` | 5 |
+| 517 | type | `backend/settings/org/signup_invites.go` | 40–42 | `PgxInviteStore` | 3 |
+| 518 | const | `backend/settings/usage/feedback.go` | 22–22 | `feedbackMaxMessageBytes` | 1 |
+| 519 | type | `backend/settings/usage/feedback.go` | 26–28 | `FeedbackStore` | 3 |
+| 520 | type | `backend/settings/usage/feedback.go` | 32–41 | `FeedbackInput` | 10 |
+| 521 | type | `backend/settings/usage/feedback.go` | 43–45 | `PgxFeedbackStore` | 3 |
+| 522 | type | `backend/settings/usage/feedback.go` | 171–174 | `perUserLimiter` | 4 |
+| 523 | type | `backend/settings/usage/feedback.go` | 176–180 | `userBucket` | 5 |
+| 524 | type | `backend/settings/usage/footprint.go` | 35–43 | `FootprintRow` | 9 |
+| 525 | type | `backend/settings/usage/footprint.go` | 54–60 | `FootprintEnvelope` | 7 |
+| 526 | type | `backend/settings/usage/footprint_history.go` | 25–30 | `FootprintHistoryPoint` | 6 |
+| 527 | type | `backend/settings/usage/footprint_history.go` | 35–42 | `FootprintHistory` | 8 |
+| 528 | const | `backend/settings/usage/footprint_history.go` | 48–53 | `defaultHistoryDays` | 6 |
+| 529 | type | `backend/settings/usage/quality.go` | 24–26 | `QualityStore` | 3 |
+| 530 | type | `backend/settings/usage/quality.go` | 31–38 | `QualityFunnel` | 8 |
+| 531 | type | `backend/settings/usage/quality.go` | 42–46 | `QualityTTFV` | 5 |
+| 532 | type | `backend/settings/usage/quality.go` | 48–53 | `QualitySnapshot` | 6 |
+| 533 | type | `backend/settings/usage/quality.go` | 55–57 | `PgxQualityStore` | 3 |
+| 534 | type | `backend/settings/usage/reliability.go` | 59–65 | `ReliabilityMetric` | 7 |
+| 535 | type | `backend/settings/usage/reliability.go` | 70–74 | `ReliabilityClock` | 5 |
+| 536 | type | `backend/settings/usage/reliability.go` | 79–86 | `QualityReliability` | 8 |
+| 537 | type | `backend/settings/usage/reliability.go` | 90–92 | `ReliabilitySource` | 3 |
+| 538 | type | `backend/settings/usage/reliability.go` | 94–98 | `promSource` | 5 |
+| 539 | const | `backend/settings/usage/usage.go` | 26–29 | `usageMaxKindLen` | 4 |
+| 540 | type | `backend/settings/usage/usage.go` | 32–35 | `UsageStore` | 4 |
+| 541 | type | `backend/settings/usage/usage.go` | 37–42 | `UsageEventInput` | 6 |
+| 542 | type | `backend/settings/usage/usage.go` | 44–48 | `UsageAggregate` | 5 |
+| 543 | type | `backend/settings/usage/usage.go` | 50–52 | `PgxUsageStore` | 3 |
+| 544 | type | `backend/sharing/share_api.go` | 26–33 | `SnapshotResponse` | 8 |
+| 545 | type | `backend/sharing/share_browser.go` | 43–50 | `ShareLanding` | 8 |
+| 546 | var | `backend/superadmin/superadmin_admin.go` | 32–32 | `ErrHasAuditRows` | 1 |
+| 547 | type | `backend/superadmin/superadmin_admin.go` | 36–49 | `AdminStore` | 14 |
+| 548 | type | `backend/superadmin/superadmin_admin.go` | 52–63 | `FeedbackRow` | 12 |
+| 549 | type | `backend/superadmin/superadmin_admin.go` | 65–73 | `OrgRow` | 9 |
+| 550 | type | `backend/superadmin/superadmin_admin.go` | 79–82 | `OrgQuotaPatch` | 4 |
+| 551 | type | `backend/superadmin/superadmin_admin.go` | 84–90 | `UserRow` | 7 |
+| 552 | type | `backend/superadmin/superadmin_admin.go` | 92–103 | `AuditRow` | 12 |
+| 553 | type | `backend/superadmin/superadmin_admin.go` | 107–115 | `AuditEntry` | 9 |
+| 554 | type | `backend/superadmin/superadmin_admin.go` | 119–121 | `PgxAdminStore` | 3 |
+| 555 | var | `backend/superadmin/superadmin_admin.go` | 329–332 | `errNoQuotaFields` | 4 |
+| 556 | const | `backend/superadmin/superadmin_admin.go` | 518–525 | `defaultLimit` | 8 |
+| 557 | type | `backend/superadmin/superadmin_cluster.go` | 21–24 | `Membership` | 4 |
+| 558 | type | `backend/superadmin/superadmin_cluster.go` | 26–33 | `clusterInstance` | 8 |
+| 559 | type | `backend/superadmin/superadmin_totp.go` | 39–45 | `TOTPStore` | 7 |
+| 560 | type | `backend/superadmin/superadmin_totp.go` | 47–52 | `TOTPState` | 6 |
+| 561 | type | `backend/superadmin/superadmin_totp.go` | 54–56 | `PgxTOTPStore` | 3 |
+| 562 | type | `backend/validators/cosmos_probe.go` | 20–29 | `CosmosProbe` | 10 |
+| 563 | type | `backend/validators/cosmos_probe.go` | 31–35 | `cosmosNodeInfoResp` | 5 |
+| 564 | type | `backend/validators/cosmos_probe.go` | 37–41 | `cosmosValidatorsPageResp` | 5 |
+| 565 | type | `backend/validators/cosmos_probe.go` | 43–47 | `cosmosStakingParamsResp` | 5 |
+| 566 | type | `backend/validators/merkletree/intervals.go` | 16–16 | `Interval` | 1 |
+| 567 | type | `backend/validators/merkletree/intervals.go` | 126–129 | `Miss` | 4 |
+| 568 | type | `backend/validators/merkletree/tree.go` | 13–19 | `Observation` | 7 |
+| 569 | var | `backend/validators/public.go` | 30–30 | `publicProtocols` | 1 |
+| 570 | var | `backend/validators/public.go` | 36–41 | `adapterProtocol` | 6 |
+| 571 | type | `backend/validators/public.go` | 46–51 | `publicChainRow` | 6 |
+| 572 | type | `backend/validators/rpccatalog.go` | 33–33 | `RPCFamily` | 1 |
+| 573 | const | `backend/validators/rpccatalog.go` | 35–39 | `FamilyEVM` | 5 |
+| 574 | type | `backend/validators/rpccatalog.go` | 45–57 | `RPCMethod` | 13 |
+| 575 | type | `backend/validators/rpccatalog.go` | 62–65 | `RPCEndpoint` | 4 |
+| 576 | type | `backend/validators/rpccatalog.go` | 70–77 | `RPCCatalogEntry` | 8 |
+| 577 | var | `backend/validators/rpccatalog.go` | 142–162 | `familyMethods` | 21 |
+| 578 | var | `backend/validators/rpccatalog.go` | 183–211 | `rpcCatalog` | 29 |
+| 579 | const | `backend/validators/rpcconsole.go` | 36–36 | `headCacheTTL` | 1 |
+| 580 | type | `backend/validators/rpcconsole.go` | 43–46 | `rpcCaller` | 4 |
+| 581 | type | `backend/validators/rpcconsole.go` | 53–53 | `rpcprobeCaller` | 1 |
+| 582 | var | `backend/validators/rpcconsole.go` | 64–64 | `defaultCaller` | 1 |
+| 583 | type | `backend/validators/rpcconsole.go` | 68–73 | `rpcCallRequest` | 6 |
+| 584 | type | `backend/validators/rpcconsole.go` | 75–83 | `rpcCallResponse` | 9 |
+| 585 | type | `backend/validators/rpcconsole.go` | 86–90 | `headResult` | 5 |
+| 586 | type | `backend/validators/tendermint_set.go` | 18–29 | `cosmosBlockResp` | 12 |
+| 587 | type | `backend/validators/tendermint_set.go` | 31–35 | `cosmosBlockSignature` | 5 |
+| 588 | type | `backend/validators/validator_baseline.go` | 16–21 | `BaselineBand` | 6 |
+| 589 | type | `backend/validators/validator_baseline.go` | 59–64 | `missTotals` | 6 |
+| 590 | type | `backend/validators/validator_chains_admin.go` | 34–36 | `PgxChainAdminStore` | 3 |
+| 591 | type | `backend/validators/validator_chains_admin.go` | 40–45 | `ChainAdminStore` | 6 |
+| 592 | type | `backend/validators/validator_chains_admin.go` | 49–61 | `ValidatorChainRPCRow` | 13 |
+| 593 | var | `backend/validators/validator_chains_admin.go` | 67–67 | `errEnabledChainsCap` | 1 |
+| 594 | var | `backend/validators/validator_chains_admin.go` | 69–69 | `errNoPrimaryRPC` | 1 |
+| 595 | var | `backend/validators/validator_chains_admin.go` | 73–73 | `errChainExists` | 1 |
+| 596 | var | `backend/validators/validator_chains_admin.go` | 77–77 | `chainSlugRe` | 1 |
+| 597 | type | `backend/validators/validator_chains_admin.go` | 82–82 | `ChainProber` | 1 |
+| 598 | type | `backend/validators/validator_chains_admin.go` | 321–329 | `CreateValidatorChainInput` | 9 |
+| 599 | type | `backend/validators/validator_chains_admin.go` | 412–415 | `validatorChainRPCBody` | 4 |
+| 600 | type | `backend/validators/validator_chains_admin.go` | 462–465 | `setChainEnabledBody` | 4 |
+| 601 | type | `backend/validators/validator_chains_admin.go` | 502–504 | `probeChainBody` | 3 |
+| 602 | type | `backend/validators/validator_chains_admin.go` | 508–512 | `probeChainResponse` | 5 |
+| 603 | type | `backend/validators/validator_chains_admin.go` | 546–554 | `createChainBody` | 9 |
+| 604 | type | `backend/validators/validator_cohort.go` | 26–31 | `cohortStats` | 6 |
+| 605 | type | `backend/validators/validator_cohort.go` | 36–38 | `cohortStore` | 3 |
+| 606 | var | `backend/validators/validator_cohort.go` | 43–48 | `cohortWindows` | 6 |
+| 607 | var | `backend/validators/validator_detail.go` | 26–26 | `ErrValidatorNotFound` | 1 |
+| 608 | type | `backend/validators/validator_detail.go` | 29–33 | `validatorMissRow` | 5 |
+| 609 | type | `backend/validators/validator_detail.go` | 39–56 | `validatorDetailStore` | 18 |
+| 610 | const | `backend/validators/validator_detail.go` | 63–63 | `signedBlocksWindow` | 1 |
+| 611 | var | `backend/validators/validator_detail.go` | 72–72 | `signedWindowOptions` | 1 |
+| 612 | type | `backend/validators/validator_detail.go` | 91–93 | `validatorSignaturesStore` | 3 |
+| 613 | var | `backend/validators/validator_favorites.go` | 37–37 | `ErrFavoriteNotFound` | 1 |
+| 614 | type | `backend/validators/validator_favorites.go` | 44–50 | `ValidatorFavoriteRow` | 7 |
+| 615 | type | `backend/validators/validator_favorites.go` | 56–61 | `validatorFavoritesStore` | 6 |
+| 616 | type | `backend/validators/validator_search.go` | 15–17 | `searchStore` | 3 |
+| 617 | const | `backend/validators/validator_search.go` | 22–22 | `minSearchQueryLen` | 1 |
+| 618 | type | `backend/validators/validator_search.go` | 29–37 | `validatorSearchRow` | 9 |
+| 619 | var | `backend/validators/validator_signing_history.go` | 29–37 | `signingHistoryWindows` | 9 |
+| 620 | const | `backend/validators/validator_signing_history.go` | 40–40 | `defaultSigningHistoryWindow` | 1 |
+| 621 | type | `backend/validators/validator_signing_history.go` | 43–45 | `validatorSigningHistoryStore` | 3 |
+| 622 | type | `backend/validators/validators.go` | 31–37 | `validatorStore` | 7 |
+| 623 | type | `backend/validators/validators.go` | 59–62 | `gridPublic` | 4 |
+| 624 | const | `backend/validators/validators.go` | 68–68 | `defaultPublicCacheMS` | 1 |
+| 625 | type | `backend/validators/validators_store.go` | 24–26 | `PgxValidatorStore` | 3 |
+| 626 | func | `backend/admin/admin.go` | 58–91 | `CollectDBUsage` | 34 |
+| 627 | func | `backend/admin/admin.go` | 93–102 | `GetDBUsage` | 10 |
+| 628 | func | `backend/admin/admin.go` | 129–148 | `GetSettings` | 20 |
+| 629 | func | `backend/admin/admin.go` | 150–184 | `UpdateSettings` | 35 |
+| 630 | func | `backend/admin/admin.go` | 186–219 | `validateSettings` | 34 |
+| 631 | func | `backend/admin/admin.go` | 232–250 | `ListBackups` | 19 |
+| 632 | func | `backend/admin/admin.go` | 262–279 | `CreateBackup` | 18 |
+| 633 | func | `backend/admin/admin.go` | 285–300 | `DownloadBackup` | 16 |
+| 634 | func | `backend/admin/admin.go` | 306–363 | `RestoreBackup` | 58 |
+| 635 | func | `backend/admin/admin.go` | 376–489 | `ExportCSV` | 114 |
+| 636 | func | `backend/admin/admin.go` | 491–512 | `formatCell` | 22 |
+| 637 | func | `backend/admin/admin.go` | 519–524 | `RunPruneNow` | 6 |
+| 638 | func | `backend/admin/admin_reports.go` | 24–45 | `ReportAlertHistory` | 22 |
+| 639 | func | `backend/admin/admin_reports.go` | 47–50 | `writeCSVHeaders` | 4 |
+| 640 | func | `backend/admin/routes.go` | 37–51 | `RegisterRoutes` | 15 |
+| 641 | func | `backend/alerts/alerts.go` | 33–35 | `ListAlertTemplates` | 3 |
+| 642 | func | `backend/alerts/alerts.go` | 42–187 | `ListAlertRules` | 146 |
+| 643 | func | `backend/alerts/alerts.go` | 197–270 | `ListAlertEvents` | 74 |
+| 644 | func | `backend/alerts/alerts.go` | 276–375 | `CreateAlertRule` | 100 |
+| 645 | func | `backend/alerts/alerts.go` | 383–399 | `validatorRuleTargetOK` | 17 |
+| 646 | func | `backend/alerts/alerts.go` | 401–407 | `validOp` | 7 |
+| 647 | func | `backend/alerts/alerts.go` | 409–415 | `validSeverity` | 7 |
+| 648 | func | `backend/alerts/alerts.go` | 421–432 | `resolveEscalationPolicy` | 12 |
+| 649 | func | `backend/alerts/alerts.go` | 440–485 | `SetAlertRuleEscalationPolicy` | 46 |
+| 650 | func | `backend/alerts/alerts.go` | 490–587 | `UpdateAlertRule` | 98 |
+| 651 | func | `backend/alerts/alerts.go` | 596–636 | `SetAlertRuleMute` | 41 |
+| 652 | func | `backend/alerts/alerts.go` | 653–746 | `PreviewAlertRule` | 94 |
+| 653 | func | `backend/alerts/alerts.go` | 750–767 | `DeleteAlertRule` | 18 |
+| 654 | func | `backend/alerts/alerts_health.go` | 37–53 | `FoldEventBuckets` | 17 |
+| 655 | func | `backend/alerts/alerts_health.go` | 80–108 | `ClassifyHealth` | 29 |
+| 656 | func | `backend/alerts/alerts_health.go` | 113–122 | `AttachHealth` | 10 |
+| 657 | func | `backend/alerts/channels/destinations.go` | 27–73 | `ListAlertDestinations` | 47 |
+| 658 | func | `backend/alerts/channels/destinations.go` | 79–130 | `CreateAlertDestination` | 52 |
+| 659 | func | `backend/alerts/channels/destinations.go` | 135–213 | `UpdateAlertDestination` | 79 |
+| 660 | func | `backend/alerts/channels/destinations.go` | 219–250 | `DeleteAlertDestination` | 32 |
+| 661 | func | `backend/alerts/channels/destinations.go` | 256–306 | `TestAlertDestination` | 51 |
+| 662 | func | `backend/alerts/channels/routes.go` | 16–30 | `RegisterRoutes` | 15 |
+| 663 | func | `backend/alerts/channels/senders.go` | 247–304 | `ValidateConfig` | 58 |
+| 664 | func | `backend/alerts/channels/senders.go` | 309–315 | `ValidDestinationKind` | 7 |
+| 665 | func | `backend/alerts/channels/senders.go` | 321–327 | `ValidateDestinationConfig` | 7 |
+| 666 | func | `backend/alerts/channels/senders.go` | 352–361 | `SendTest` | 10 |
+| 667 | func | `backend/alerts/channels/senders.go` | 364–382 | `decodeConfig` | 19 |
+| 668 | method | `backend/alerts/channels/senders.go` | 386–413 | `(DestConfig).normalize` | 28 |
+| 669 | method | `backend/alerts/channels/slack_dm.go` | 43–43 | `(*SlackDM).Store` | 1 |
+| 670 | func | `backend/alerts/channels/slack_integration.go` | 45–47 | `NewSlackStore` | 3 |
+| 671 | method | `backend/alerts/channels/slack_integration.go` | 50–61 | `(*SlackStore).Get` | 12 |
+| 672 | method | `backend/alerts/channels/slack_integration.go` | 64–67 | `(*SlackStore).Connected` | 4 |
+| 673 | func | `backend/alerts/channels/slack_integration.go` | 152–161 | `GetSlackIntegration` | 10 |
+| 674 | func | `backend/alerts/channels/slack_integration.go` | 164–187 | `PutSlackIntegration` | 24 |
+| 675 | func | `backend/alerts/channels/slack_integration.go` | 190–198 | `DeleteSlackIntegration` | 9 |
+| 676 | func | `backend/alerts/contacts/contacts.go` | 41–41 | `NewStore` | 1 |
+| 677 | func | `backend/alerts/contacts/contacts.go` | 147–156 | `GetMyPhone` | 10 |
+| 678 | func | `backend/alerts/contacts/contacts.go` | 159–180 | `SetMyPhone` | 22 |
+| 679 | func | `backend/alerts/contacts/contacts.go` | 183–204 | `VerifyMyPhone` | 22 |
+| 680 | func | `backend/alerts/contacts/contacts.go` | 207–215 | `DeleteMyPhone` | 9 |
+| 681 | func | `backend/alerts/contacts/reachability.go` | 37–39 | `NewReachabilityStore` | 3 |
+| 682 | func | `backend/alerts/contacts/reachability.go` | 80–90 | `GetMemberReachability` | 11 |
+| 683 | func | `backend/alerts/contacts/routes.go` | 25–46 | `RegisterRoutes` | 22 |
+| 684 | func | `backend/alerts/contacts/rules.go` | 71–73 | `NewRulesStore` | 3 |
+| 685 | func | `backend/alerts/contacts/rules.go` | 145–169 | `validateRules` | 25 |
+| 686 | func | `backend/alerts/contacts/rules.go` | 186–197 | `GetMyNotificationRules` | 12 |
+| 687 | func | `backend/alerts/contacts/rules.go` | 200–232 | `PutMyNotificationRules` | 33 |
+| 688 | func | `backend/alerts/contacts/rules.go` | 234–244 | `loadRules` | 11 |
+| 689 | func | `backend/alerts/contacts/telegram.go` | 39–41 | `NewTelegramLinker` | 3 |
+| 690 | func | `backend/alerts/contacts/telegram.go` | 140–149 | `GetMyTelegram` | 10 |
+| 691 | func | `backend/alerts/contacts/telegram.go` | 152–165 | `LinkMyTelegram` | 14 |
+| 692 | func | `backend/alerts/contacts/telegram.go` | 168–176 | `UnlinkMyTelegram` | 9 |
+| 693 | func | `backend/alerts/contacts/testpage.go` | 46–48 | `NewTestPager` | 3 |
+| 694 | func | `backend/alerts/contacts/testpage.go` | 168–198 | `TestMyNotificationRules` | 31 |
+| 695 | func | `backend/alerts/escalation/inbox.go` | 24–46 | `ListIncidents` | 23 |
+| 696 | func | `backend/alerts/escalation/inbox.go` | 49–63 | `GetIncident` | 15 |
+| 697 | func | `backend/alerts/escalation/inbox.go` | 68–86 | `ListIncidentAttempts` | 19 |
+| 698 | func | `backend/alerts/escalation/inbox.go` | 89–100 | `IncidentBadge` | 12 |
+| 699 | func | `backend/alerts/escalation/inbox.go` | 103–113 | `MarkIncidentSeen` | 11 |
+| 700 | func | `backend/alerts/escalation/inbox.go` | 118–133 | `AckIncident` | 16 |
+| 701 | func | `backend/alerts/escalation/inbox.go` | 136–150 | `ResolveIncident` | 15 |
+| 702 | func | `backend/alerts/escalation/inbox.go` | 155–173 | `AckTokenInfo` | 19 |
+| 703 | func | `backend/alerts/escalation/inbox.go` | 179–196 | `AckByToken` | 18 |
+| 704 | func | `backend/alerts/escalation/incidents_store.go` | 27–36 | `scanIncident` | 10 |
+| 705 | func | `backend/alerts/escalation/incidents_store.go` | 39–48 | `statusClause` | 10 |
+| 706 | method | `backend/alerts/escalation/incidents_store.go` | 53–77 | `(*Store).ListIncidents` | 25 |
+| 707 | method | `backend/alerts/escalation/incidents_store.go` | 80–86 | `(*Store).GetIncident` | 7 |
+| 708 | method | `backend/alerts/escalation/incidents_store.go` | 90–101 | `(*Store).BadgeCount` | 12 |
+| 709 | method | `backend/alerts/escalation/incidents_store.go` | 104–111 | `(*Store).MarkSeen` | 8 |
+| 710 | method | `backend/alerts/escalation/incidents_store.go` | 134–139 | `(*Store).stopMemberLadders` | 6 |
+| 711 | method | `backend/alerts/escalation/incidents_store.go` | 144–155 | `(*Store).ResolveIncident` | 12 |
+| 712 | method | `backend/alerts/escalation/incidents_store.go` | 178–202 | `(*Store).ListAttempts` | 25 |
+| 713 | method | `backend/alerts/escalation/incidents_store.go` | 218–271 | `(*Store).AckByToken` | 54 |
+| 714 | method | `backend/alerts/escalation/incidents_store.go` | 276–294 | `(*Store).IncidentByToken` | 19 |
+| 715 | func | `backend/alerts/escalation/policies.go` | 23–57 | `validatePolicyInput` | 35 |
+| 716 | method | `backend/alerts/escalation/policies.go` | 61–89 | `(*Store).validateRefs` | 29 |
+| 717 | func | `backend/alerts/escalation/policies.go` | 103–113 | `ListPolicies` | 11 |
+| 718 | func | `backend/alerts/escalation/policies.go` | 116–130 | `GetPolicy` | 15 |
+| 719 | func | `backend/alerts/escalation/policies.go` | 133–152 | `GetDefaultPolicy` | 20 |
+| 720 | func | `backend/alerts/escalation/policies.go` | 155–183 | `CreatePolicy` | 29 |
+| 721 | func | `backend/alerts/escalation/policies.go` | 186–217 | `UpdatePolicy` | 32 |
+| 722 | func | `backend/alerts/escalation/policies.go` | 220–234 | `DeletePolicy` | 15 |
+| 723 | func | `backend/alerts/escalation/routes.go` | 14–37 | `RegisterRoutes` | 24 |
+| 724 | func | `backend/alerts/escalation/routes.go` | 44–48 | `RegisterPublicAckRoutes` | 5 |
+| 725 | func | `backend/alerts/escalation/routes.go` | 53–57 | `RegisterVoiceRoutes` | 5 |
+| 726 | func | `backend/alerts/escalation/store.go` | 126–126 | `NewStore` | 1 |
+| 727 | method | `backend/alerts/escalation/store.go` | 168–189 | `(*Store).GetPolicy` | 22 |
+| 728 | method | `backend/alerts/escalation/store.go` | 192–246 | `(*Store).loadTiers` | 55 |
+| 729 | method | `backend/alerts/escalation/store.go` | 277–310 | `(*Store).CreatePolicy` | 34 |
+| 730 | method | `backend/alerts/escalation/store.go` | 313–352 | `(*Store).UpdatePolicy` | 40 |
+| 731 | func | `backend/alerts/escalation/store.go` | 355–378 | `insertTiers` | 24 |
+| 732 | func | `backend/alerts/escalation/voice.go` | 25–35 | `sayLine` | 11 |
+| 733 | func | `backend/alerts/escalation/voice.go` | 37–40 | `writeTwiML` | 4 |
+| 734 | func | `backend/alerts/escalation/voice.go` | 43–64 | `VoiceTwiML` | 22 |
+| 735 | func | `backend/alerts/escalation/voice.go` | 67–84 | `VoiceAck` | 18 |
+| 736 | func | `backend/alerts/escalation/voice.go` | 90–117 | `validTwilioSignature` | 28 |
+| 737 | func | `backend/alerts/evaluator.go` | 276–288 | `compare` | 13 |
+| 738 | func | `backend/alerts/oncall/handlers.go` | 33–46 | `validateInput` | 14 |
+| 739 | func | `backend/alerts/oncall/handlers.go` | 48–57 | `ListSchedules` | 10 |
+| 740 | func | `backend/alerts/oncall/handlers.go` | 59–72 | `GetSchedule` | 14 |
+| 741 | func | `backend/alerts/oncall/handlers.go` | 74–92 | `CreateSchedule` | 19 |
+| 742 | func | `backend/alerts/oncall/handlers.go` | 94–116 | `UpdateSchedule` | 23 |
+| 743 | func | `backend/alerts/oncall/handlers.go` | 118–131 | `DeleteSchedule` | 14 |
+| 744 | func | `backend/alerts/oncall/handlers.go` | 134–140 | `WhoIsOnCall` | 7 |
+| 745 | func | `backend/alerts/oncall/handlers.go` | 142–147 | `nilIfEmpty` | 6 |
+| 746 | func | `backend/alerts/oncall/handlers.go` | 150–169 | `Preview` | 20 |
+| 747 | func | `backend/alerts/oncall/handlers.go` | 171–199 | `AddOverride` | 29 |
+| 748 | func | `backend/alerts/oncall/handlers.go` | 201–214 | `DeleteOverride` | 14 |
+| 749 | func | `backend/alerts/oncall/routes.go` | 14–30 | `RegisterRoutes` | 17 |
+| 750 | func | `backend/alerts/oncall/store.go` | 51–51 | `NewStore` | 1 |
+| 751 | func | `backend/alerts/routes.go` | 14–24 | `RegisterRoutes` | 11 |
+| 752 | func | `backend/alerts/simulate.go` | 38–65 | `Simulate` | 28 |
+| 753 | func | `backend/fleet/clusters/clusters.go` | 41–48 | `requireUser` | 8 |
+| 754 | func | `backend/fleet/clusters/clusters.go` | 51–60 | `cleanName` | 10 |
+| 755 | func | `backend/fleet/clusters/clusters.go` | 64–81 | `ListClusters` | 18 |
+| 756 | func | `backend/fleet/clusters/clusters.go` | 84–115 | `CreateCluster` | 32 |
+| 757 | func | `backend/fleet/clusters/clusters.go` | 118–148 | `RenameCluster` | 31 |
+| 758 | func | `backend/fleet/clusters/clusters.go` | 151–167 | `DeleteCluster` | 17 |
+| 759 | func | `backend/fleet/clusters/clusters.go` | 172–196 | `AddNodes` | 25 |
+| 760 | func | `backend/fleet/clusters/clusters.go` | 199–215 | `RemoveNode` | 17 |
+| 761 | func | `backend/fleet/clusters/clusters.go` | 220–238 | `ClusterOverviewHandler` | 19 |
+| 762 | func | `backend/fleet/dashboard/dashboard_preset.go` | 57–70 | `summaryPanels` | 14 |
+| 763 | func | `backend/fleet/dashboard/dashboard_preset.go` | 77–81 | `genericSummaryPanels` | 5 |
+| 764 | func | `backend/fleet/dashboard/dashboard_preset.go` | 86–88 | `isGenericProtocol` | 3 |
+| 765 | func | `backend/fleet/dashboard/dashboard_preset.go` | 92–99 | `hardwarePanels` | 8 |
+| 766 | func | `backend/fleet/dashboard/dashboard_preset.go` | 114–234 | `chainMetricsPanels` | 121 |
+| 767 | func | `backend/fleet/dashboard/dashboard_preset.go` | 242–251 | `validatorOnChainPanels` | 10 |
+| 768 | func | `backend/fleet/dashboard/dashboard_preset.go` | 260–279 | `ApplyValidatorPresetTx` | 20 |
+| 769 | func | `backend/fleet/dashboard/dashboard_preset.go` | 290–332 | `ApplyPerNodePresetTx` | 43 |
+| 770 | func | `backend/fleet/dashboard/dashboard_preset.go` | 334–373 | `insertPresetSection` | 40 |
+| 771 | func | `backend/fleet/dashboard/dashboard_preset.go` | 381–416 | `ApplyPerNodePreset` | 36 |
+| 772 | func | `backend/fleet/dashboard/dashboard_shares.go` | 143–150 | `shareLink` | 8 |
+| 773 | func | `backend/fleet/dashboard/dashboard_shares.go` | 164–237 | `CreateShare` | 74 |
+| 774 | func | `backend/fleet/dashboard/dashboard_shares.go` | 240–254 | `ListShares` | 15 |
+| 775 | func | `backend/fleet/dashboard/dashboard_shares.go` | 258–273 | `RevokeShare` | 16 |
+| 776 | func | `backend/fleet/dashboard/dashboard_shares.go` | 277–292 | `RegenerateShareAPIToken` | 16 |
+| 777 | func | `backend/fleet/dashboard/dashboard_shares.go` | 296–315 | `ListShareViews` | 20 |
+| 778 | func | `backend/fleet/dashboard/dashboard_shares.go` | 320–339 | `ListSharedWithMe` | 20 |
+| 779 | func | `backend/fleet/dashboard/dashboard_shares.go` | 344–349 | `userIDFromContext` | 6 |
+| 780 | func | `backend/fleet/dashboard/dashboard_shares.go` | 353–372 | `scanShareRow` | 20 |
+| 781 | func | `backend/fleet/dashboard/dashboard_validator.go` | 46–54 | `validatorParams` | 9 |
+| 782 | func | `backend/fleet/dashboard/dashboard_validator.go` | 60–99 | `findOrCreateValidatorTemplate` | 40 |
+| 783 | func | `backend/fleet/dashboard/dashboard_validator.go` | 106–139 | `loadValidatorDashboardPanels` | 34 |
+| 784 | func | `backend/fleet/dashboard/dashboard_validator.go` | 143–176 | `GetValidatorDashboard` | 34 |
+| 785 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 53–118 | `LinkValidator` | 66 |
+| 786 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 123–140 | `UnlinkValidator` | 18 |
+| 787 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 160–202 | `ListValidatorDashboards` | 43 |
+| 788 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 207–228 | `ensureValidatorSection` | 22 |
+| 789 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 232–243 | `validatorPanelTitle` | 12 |
+| 790 | func | `backend/fleet/dashboard/dashboard_validator_link.go` | 251–267 | `SeedValidatorPanelTx` | 17 |
+| 791 | func | `backend/fleet/dashboard/dashboard_validator_preset.go` | 25–29 | `ApplyValidatorTemplateTx` | 5 |
+| 792 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 38–109 | `AddValidatorPanel` | 72 |
+| 793 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 115–174 | `RemoveValidatorPanel` | 60 |
+| 794 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 201–237 | `SaveValidatorLayout` | 37 |
+| 795 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 241–263 | `saveValidatorLayoutAll` | 23 |
+| 796 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 269–331 | `saveValidatorLayoutThis` | 63 |
+| 797 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 333–355 | `loadPanelLayoutMeta` | 23 |
+| 798 | func | `backend/fleet/dashboard/dashboard_validator_write.go` | 357–362 | `sameSection` | 6 |
+| 799 | func | `backend/fleet/dashboard/dashboards.go` | 24–30 | `dashboardInOrg` | 7 |
+| 800 | func | `backend/fleet/dashboard/dashboards.go` | 32–41 | `panelInOrg` | 10 |
+| 801 | func | `backend/fleet/dashboard/dashboards.go` | 43–52 | `sectionInOrg` | 10 |
+| 802 | func | `backend/fleet/dashboard/dashboards.go` | 54–86 | `ListDashboards` | 33 |
+| 803 | func | `backend/fleet/dashboard/dashboards.go` | 88–129 | `loadDashboardPanels` | 42 |
+| 804 | func | `backend/fleet/dashboard/dashboards.go` | 131–151 | `loadDashboardSections` | 21 |
+| 805 | func | `backend/fleet/dashboard/dashboards.go` | 155–160 | `LoadDashboardContents` | 6 |
+| 806 | func | `backend/fleet/dashboard/dashboards.go` | 162–190 | `GetNodeDashboard` | 29 |
+| 807 | func | `backend/fleet/dashboard/dashboards.go` | 192–211 | `GetDashboard` | 20 |
+| 808 | func | `backend/fleet/dashboard/dashboards.go` | 226–240 | `scanPanelRow` | 15 |
+| 809 | func | `backend/fleet/dashboard/dashboards.go` | 250–272 | `validateSeries` | 23 |
+| 810 | func | `backend/fleet/dashboard/dashboards.go` | 277–283 | `seriesParams` | 7 |
+| 811 | func | `backend/fleet/dashboard/dashboards.go` | 285–350 | `AddPanel` | 66 |
+| 812 | func | `backend/fleet/dashboard/dashboards.go` | 362–394 | `DeletePanel` | 33 |
+| 813 | func | `backend/fleet/dashboard/dashboards.go` | 401–443 | `deletePanelCascadeOnTx` | 43 |
+| 814 | func | `backend/fleet/dashboard/dashboards.go` | 456–575 | `UpdatePanel` | 120 |
+| 815 | func | `backend/fleet/dashboard/dashboards.go` | 577–714 | `SaveLayout` | 138 |
+| 816 | func | `backend/fleet/dashboard/grid.go` | 15–17 | `rectsOverlap` | 3 |
+| 817 | func | `backend/fleet/dashboard/grid.go` | 19–28 | `hasOverlap` | 10 |
+| 818 | func | `backend/fleet/dashboard/grid.go` | 36–66 | `loadPanelRects` | 31 |
+| 819 | func | `backend/fleet/dashboard/grid.go` | 68–84 | `findOpenSlot` | 17 |
+| 820 | func | `backend/fleet/dashboard/sections.go` | 23–74 | `CreateSection` | 52 |
+| 821 | func | `backend/fleet/dashboard/sections.go` | 78–117 | `UpdateSection` | 40 |
+| 822 | func | `backend/fleet/dashboard/sections.go` | 125–185 | `DeleteSection` | 61 |
+| 823 | func | `backend/fleet/dashboard/share_store.go` | 45–52 | `splitAPIToken` | 8 |
+| 824 | method | `backend/fleet/dashboard/share_store.go` | 437–462 | `(*PgxShareStore).LookupShareBySessionCookie` | 26 |
+| 825 | method | `backend/fleet/dashboard/share_store.go` | 482–527 | `(*PgxShareStore).LookupShareByAPIToken` | 46 |
+| 826 | method | `backend/fleet/ingest/log_shipper.go` | 86–95 | `(logVerbosity).filterCmd` | 10 |
+| 827 | method | `backend/fleet/ingest/log_shipper.go` | 98–107 | `(logVerbosity).label` | 10 |
+| 828 | func | `backend/fleet/ingest/log_shipper.go` | 152–160 | `targetValid` | 9 |
+| 829 | func | `backend/fleet/ingest/log_shipper.go` | 164–175 | `clampInt` | 12 |
+| 830 | func | `backend/fleet/ingest/log_shipper.go` | 181–206 | `parseSourceSpec` | 26 |
+| 831 | func | `backend/fleet/ingest/log_shipper.go` | 211–253 | `parseSourceSpecs` | 43 |
+| 832 | func | `backend/fleet/ingest/log_shipper.go` | 257–288 | `parseLogShipperConfig` | 32 |
+| 833 | method | `backend/fleet/ingest/log_shipper.go` | 293–315 | `(logSourceSpec).fetchCmd` | 23 |
+| 834 | func | `backend/fleet/ingest/log_shipper.go` | 321–329 | `quoteFilePath` | 9 |
+| 835 | method | `backend/fleet/ingest/log_shipper.go` | 334–347 | `(logSourceSpec).label` | 14 |
+| 836 | method | `backend/fleet/ingest/log_shipper.go` | 350–356 | `(LogShipperConfig).sourceLabels` | 7 |
+| 837 | func | `backend/fleet/ingest/log_shipper.go` | 360–381 | `renderLogShipperBody` | 22 |
+| 838 | func | `backend/fleet/ingest/log_shipper.go` | 386–413 | `GetLogShipperScript` | 28 |
+| 839 | func | `backend/fleet/ingest/logs.go` | 193–240 | `GetNodeLogs` | 48 |
+| 840 | func | `backend/fleet/ingest/logs.go` | 256–292 | `GetNodeLogSources` | 37 |
+| 841 | func | `backend/fleet/ingest/metrics.go` | 37–51 | `parseFromTo` | 15 |
+| 842 | func | `backend/fleet/ingest/metrics.go` | 59–75 | `resolveBucket` | 17 |
+| 843 | func | `backend/fleet/ingest/metrics.go` | 81–126 | `querySeries` | 46 |
+| 844 | func | `backend/fleet/ingest/metrics.go` | 130–138 | `trimSeries` | 9 |
+| 845 | func | `backend/fleet/ingest/metrics.go` | 140–176 | `QueryMetrics` | 37 |
+| 846 | func | `backend/fleet/ingest/metrics.go` | 184–236 | `QueryMetricsMulti` | 53 |
+| 847 | func | `backend/fleet/ingest/metrics.go` | 240–252 | `splitMetrics` | 13 |
+| 848 | func | `backend/fleet/install/clientconfig.go` | 33–45 | `GetClientConfig` | 13 |
+| 849 | func | `backend/fleet/install/install_endpoints.go` | 53–76 | `MintInstallToken` | 24 |
+| 850 | func | `backend/fleet/install/install_endpoints.go` | 82–112 | `ExchangeInstallToken` | 31 |
+| 851 | func | `backend/fleet/install/install_endpoints.go` | 117–130 | `MintInstallCode` | 14 |
+| 852 | func | `backend/fleet/install/install_endpoints.go` | 137–203 | `ClaimInstallCode` | 67 |
+| 853 | func | `backend/fleet/install/install_endpoints.go` | 205–214 | `writeInstallClaimError` | 10 |
+| 854 | func | `backend/fleet/install/install_endpoints.go` | 219–232 | `InstallCodeStatus` | 14 |
+| 855 | func | `backend/fleet/install/install_script.go` | 201–246 | `GetInstallScript` | 46 |
+| 856 | func | `backend/fleet/install/install_script.go` | 255–297 | `SaveInstallScript` | 43 |
+| 857 | func | `backend/fleet/install/install_script.go` | 307–358 | `DeployInstallScript` | 52 |
+| 858 | func | `backend/fleet/install/install_script.go` | 363–380 | `LintScript` | 18 |
+| 859 | func | `backend/fleet/install/install_store.go` | 216–244 | `claimInstallCodeTx` | 29 |
+| 860 | func | `backend/fleet/install/scripts.go` | 124–137 | `renderInstallSnippet` | 14 |
+| 861 | func | `backend/fleet/install/scripts.go` | 360–360 | `renderUninstallSnippet` | 1 |
+| 862 | func | `backend/fleet/install/scripts.go` | 477–543 | `renderWindowsTestSnippet` | 67 |
+| 863 | func | `backend/fleet/install/scripts.go` | 550–606 | `lintScript` | 57 |
+| 864 | func | `backend/fleet/install/scripts.go` | 612–628 | `lintScriptPOSIX` | 17 |
+| 865 | func | `backend/fleet/nodes/liveness.go` | 48–123 | `NodesLiveness` | 76 |
+| 866 | func | `backend/fleet/nodes/liveness.go` | 132–189 | `readValidatorCells` | 58 |
+| 867 | func | `backend/fleet/nodes/liveness.go` | 194–205 | `signatureCell` | 12 |
+| 868 | func | `backend/fleet/nodes/liveness.go` | 213–265 | `readRPCCells` | 53 |
+| 869 | func | `backend/fleet/nodes/liveness.go` | 282–327 | `advanceCells` | 46 |
+| 870 | func | `backend/fleet/nodes/liveness.go` | 329–336 | `medianDuration` | 8 |
+| 871 | func | `backend/fleet/nodes/liveness.go` | 342–353 | `padCells` | 12 |
+| 872 | func | `backend/fleet/nodes/node_member_shares.go` | 170–187 | `requireNodeEdit` | 18 |
+| 873 | func | `backend/fleet/nodes/node_member_shares.go` | 190–230 | `ShareNodeWithMember` | 41 |
+| 874 | func | `backend/fleet/nodes/node_member_shares.go` | 233–246 | `ListNodeMemberShares` | 14 |
+| 875 | func | `backend/fleet/nodes/node_member_shares.go` | 251–276 | `RevokeNodeMemberShare` | 26 |
+| 876 | func | `backend/fleet/nodes/node_member_shares.go` | 279–293 | `ListNodesSharedWithMe` | 15 |
+| 877 | func | `backend/fleet/nodes/nodes.go` | 37–58 | `scanNode` | 22 |
+| 878 | func | `backend/fleet/nodes/nodes.go` | 62–66 | `scanFieldDef` | 5 |
+| 879 | func | `backend/fleet/nodes/nodes.go` | 68–135 | `ListNodes` | 68 |
+| 880 | func | `backend/fleet/nodes/nodes.go` | 166–171 | `isValidatorIdentityConflict` | 6 |
+| 881 | func | `backend/fleet/nodes/nodes.go` | 185–287 | `CreateNodeTx` | 103 |
+| 882 | func | `backend/fleet/nodes/nodes.go` | 291–296 | `emptyToNil` | 6 |
+| 883 | func | `backend/fleet/nodes/nodes.go` | 300–358 | `CreateNode` | 59 |
+| 884 | func | `backend/fleet/nodes/nodes.go` | 374–454 | `UpdateNodeTx` | 81 |
+| 885 | func | `backend/fleet/nodes/nodes.go` | 458–517 | `UpdateNode` | 60 |
+| 886 | func | `backend/fleet/nodes/nodes.go` | 519–561 | `GetNode` | 43 |
+| 887 | func | `backend/fleet/nodes/nodes.go` | 576–606 | `DeleteNode` | 31 |
+| 888 | func | `backend/fleet/nodes/nodes.go` | 616–648 | `DeleteNodePermanent` | 33 |
+| 889 | func | `backend/fleet/nodes/nodes.go` | 653–690 | `ListDeletedNodes` | 38 |
+| 890 | func | `backend/fleet/nodes/nodes.go` | 703–794 | `RestoreNode` | 92 |
+| 891 | func | `backend/fleet/nodes/nodes.go` | 796–832 | `UpdateField` | 37 |
+| 892 | func | `backend/fleet/nodes/overview.go` | 15–238 | `NodesOverview` | 224 |
+| 893 | func | `backend/fleet/nodes/system_info.go` | 40–89 | `GetSystemInfo` | 50 |
+| 894 | func | `backend/httpx/helpers.go` | 70–78 | `RemoteIP` | 9 |
+| 895 | func | `backend/httpx/helpers.go` | 102–123 | `StreamCSV` | 22 |
+| 896 | func | `backend/httpx/helpers.go` | 125–141 | `scanRowAsStrings` | 17 |
+| 897 | func | `backend/httpx/node_access.go` | 49–85 | `NodeReadOrg` | 37 |
+| 898 | func | `backend/httpx/node_access.go` | 88–90 | `CanEditNode` | 3 |
+| 899 | func | `backend/httpx/node_access.go` | 97–110 | `AuthorizeNodeRead` | 14 |
+| 900 | func | `backend/httpx/respond.go` | 32–54 | `WriteJSONETag` | 23 |
+| 901 | func | `backend/httpx/tokens.go` | 27–48 | `GenerateNumericCode` | 22 |
+| 902 | func | `backend/internal/auth0mgmt/auth0mgmt.go` | 36–43 | `New` | 8 |
+| 903 | func | `backend/internal/cluster/rendezvous.go` | 14–24 | `Owner` | 11 |
+| 904 | func | `backend/internal/cluster/rendezvous.go` | 26–32 | `score` | 7 |
+| 905 | func | `backend/internal/cluster/rendezvous.go` | 40–47 | `fmix64` | 8 |
+| 906 | func | `backend/internal/rpcprobe/client.go` | 33–36 | `GetJSONOnce` | 4 |
+| 907 | func | `backend/internal/rpcprobe/client.go` | 43–61 | `GetJSONStatus` | 19 |
+| 908 | func | `backend/internal/rpcprobe/hex.go` | 10–21 | `ParseHexUint` | 12 |
+| 909 | func | `backend/internal/ttlcache/ttlcache.go` | 33–35 | `New` | 3 |
+| 910 | method | `backend/internal/ttlcache/ttlcache.go` | 42–69 | `(*Cache[V]).Get` | 28 |
+| 911 | method | `backend/internal/ttlcache/ttlcache.go` | 74–84 | `(*Cache[V]).purgeExpiredLocked` | 11 |
+| 912 | method | `backend/internal/twilio/twilio.go` | 58–58 | `(*Client).AuthToken` | 1 |
+| 913 | func | `backend/middleware/jwt.go` | 52–55 | `AuthClaimsFromContext` | 4 |
+| 914 | func | `backend/middleware/jwt.go` | 63–77 | `JWT` | 15 |
+| 915 | func | `backend/middleware/jwt.go` | 82–110 | `jwtWithLookup` | 29 |
+| 916 | func | `backend/middleware/jwt.go` | 130–195 | `verifyToken` | 66 |
+| 917 | func | `backend/middleware/jwt.go` | 197–209 | `audienceMatches` | 13 |
+| 918 | func | `backend/middleware/jwt.go` | 229–236 | `newJWKSCache` | 8 |
+| 919 | method | `backend/middleware/jwt.go` | 238–261 | `(*jwksCache).lookup` | 24 |
+| 920 | method | `backend/middleware/jwt.go` | 263–312 | `(*jwksCache).refresh` | 50 |
+| 921 | func | `backend/middleware/org.go` | 42–47 | `OrgFromContext` | 6 |
+| 922 | func | `backend/middleware/orgrole.go` | 14–42 | `RequireOrgRole` | 29 |
+| 923 | func | `backend/middleware/provision.go` | 54–81 | `ProvisionOrg` | 28 |
+| 924 | func | `backend/middleware/provision.go` | 85–90 | `UserIDFromContext` | 6 |
+| 925 | func | `backend/middleware/provision.go` | 97–99 | `signupOpen` | 3 |
+| 926 | func | `backend/middleware/provision.go` | 101–103 | `inviteRequiredResponse` | 3 |
+| 927 | func | `backend/middleware/provision.go` | 107–115 | `forbiddenCodeResponse` | 9 |
+| 928 | func | `backend/middleware/provision.go` | 117–319 | `getOrCreateUserOrg` | 203 |
+| 929 | func | `backend/middleware/provision.go` | 341–362 | `fetchUserinfo` | 22 |
+| 930 | func | `backend/middleware/provision.go` | 368–385 | `ResolveVerifiedEmail` | 18 |
+| 931 | func | `backend/middleware/provision.go` | 393–416 | `resolveActiveOrg` | 24 |
+| 932 | func | `backend/middleware/provision.go` | 425–436 | `backfillNodeShares` | 12 |
+| 933 | func | `backend/middleware/provision.go` | 443–453 | `orgNameForClaims` | 11 |
+| 934 | func | `backend/middleware/ratelimit.go` | 82–90 | `RateLimitBearer` | 9 |
+| 935 | func | `backend/middleware/ratelimit.go` | 96–100 | `RateLimitOrg` | 5 |
+| 936 | func | `backend/middleware/ratelimit.go` | 109–111 | `RateLimitIP` | 3 |
+| 937 | func | `backend/middleware/ratelimit.go` | 117–130 | `clientIP` | 14 |
+| 938 | func | `backend/middleware/share_session.go` | 32–49 | `RequireShareCookie` | 18 |
+| 939 | func | `backend/middleware/share_session.go` | 54–72 | `RequireShareAPIToken` | 19 |
+| 940 | func | `backend/middleware/share_session.go` | 74–78 | `writeShareErr` | 5 |
+| 941 | func | `backend/middleware/superadmin.go` | 46–52 | `PgxSuperadminLookup` | 7 |
+| 942 | func | `backend/middleware/superadmin.go` | 57–78 | `RequireSuperadmin` | 22 |
+| 943 | func | `backend/middleware/superadmin.go` | 82–108 | `RequireFreshTOTP` | 27 |
+| 944 | func | `backend/middleware/superadmin.go` | 113–121 | `MintStepUpCookie` | 9 |
+| 945 | func | `backend/middleware/superadmin.go` | 125–153 | `VerifyStepUpCookie` | 29 |
+| 946 | func | `backend/middleware/superadmin.go` | 157–163 | `stepUpBody` | 7 |
+| 947 | func | `backend/middleware/superadmin.go` | 165–176 | `parseStepUpBody` | 12 |
+| 948 | func | `backend/models/validator.go` | 129–135 | `ParsePeriod` | 7 |
+| 949 | func | `backend/ops/backup/scheduler.go` | 82–119 | `RunOnce` | 38 |
+| 950 | method | `backend/ops/prune/hygiene.go` | 19–41 | `(*Pruner).runHygiene` | 23 |
+| 951 | method | `backend/ops/prune/hygiene.go` | 45–60 | `(*Pruner).pruneArchivedFeedback` | 16 |
+| 952 | method | `backend/ops/prune/lifecycle.go` | 31–44 | `(*Pruner).runLifecycle` | 14 |
+| 953 | method | `backend/ops/prune/lifecycle.go` | 62–111 | `(*Pruner).purgeDeletedOrgs` | 50 |
+| 954 | method | `backend/ops/prune/lifecycle.go` | 115–125 | `(*Pruner).purgeOrgTx` | 11 |
+| 955 | method | `backend/ops/prune/lifecycle.go` | 132–148 | `(*Pruner).pruneSettledOrgInvites` | 17 |
+| 956 | method | `backend/ops/prune/lifecycle.go` | 153–169 | `(*Pruner).pruneConsumedSignupInvites` | 17 |
+| 957 | method | `backend/ops/prune/prune.go` | 83–87 | `(*Pruner).sealBreakerOpen` | 5 |
+| 958 | method | `backend/ops/prune/prune.go` | 90–97 | `(*Pruner).openSealBreaker` | 8 |
+| 959 | method | `backend/ops/prune/prune.go` | 100–107 | `(*Pruner).clearSealBreaker` | 8 |
+| 960 | method | `backend/ops/prune/prune.go` | 128–170 | `(*Pruner).Run` | 43 |
+| 961 | method | `backend/ops/prune/prune.go` | 176–186 | `(*Pruner).pruneStaleInstances` | 11 |
+| 962 | method | `backend/ops/prune/prune.go` | 193–205 | `(*Pruner).pruneExpiredInstallCodes` | 13 |
+| 963 | method | `backend/ops/prune/prune.go` | 210–222 | `(*Pruner).pruneExpiredInstallTokens` | 13 |
+| 964 | method | `backend/ops/prune/prune.go` | 257–302 | `(*Pruner).pruneProvisionalNodes` | 46 |
+| 965 | method | `backend/ops/prune/prune.go` | 311–349 | `(*Pruner).pruneArchivedNodes` | 39 |
+| 966 | method | `backend/ops/prune/prune.go` | 354–372 | `(*Pruner).pruneByOrgAge` | 19 |
+| 967 | method | `backend/ops/prune/prune.go` | 385–399 | `(*Pruner).transitionToColumnar` | 15 |
+| 968 | method | `backend/ops/prune/prune.go` | 405–415 | `(*Pruner).pruneByAge` | 11 |
+| 969 | func | `backend/ops/prune/prune.go` | 468–475 | `envInt` | 8 |
+| 970 | method | `backend/ops/prune/prune.go` | 498–575 | `(*Pruner).foldAndPrune` | 78 |
+| 971 | method | `backend/ops/prune/prune.go` | 593–611 | `(*Pruner).vacuumOnDedicatedConn` | 19 |
+| 972 | method | `backend/ops/prune/prune.go` | 624–626 | `(*Pruner).vacuumSignatures` | 3 |
+| 973 | method | `backend/ops/prune/prune.go` | 632–667 | `(*Pruner).foldBatch` | 36 |
+| 974 | method | `backend/ops/prune/prune.go` | 697–873 | `(*Pruner).sealEpochs` | 177 |
+| 975 | method | `backend/ops/prune/prune.go` | 883–896 | `(*Pruner).sealOneEpochTx` | 14 |
+| 976 | func | `backend/ops/prune/prune.go` | 901–901 | `itoa` | 1 |
+| 977 | method | `backend/ops/prune/prune.go` | 919–925 | `(*Pruner).pruneValidatorSignaturesByHeight` | 7 |
+| 978 | method | `backend/ops/prune/prune.go` | 927–931 | `(*Pruner).pruneValidatorSignatures` | 5 |
+| 979 | method | `backend/ops/prune/prune.go` | 943–948 | `(*Pruner).pruneValidatorSignaturesDisabledChains` | 6 |
+| 980 | method | `backend/ops/prune/prune.go` | 964–979 | `(*Pruner).bytesPerRow` | 16 |
+| 981 | method | `backend/ops/prune/prune.go` | 987–996 | `(*Pruner).bytesPerRowOrZero` | 10 |
+| 982 | method | `backend/ops/prune/prune.go` | 999–1030 | `(*Pruner).pruneByOrgStorage` | 32 |
+| 983 | method | `backend/ops/prune/prune.go` | 1036–1110 | `(*Pruner).enforceOrgStorageCap` | 75 |
+| 984 | method | `backend/ops/prune/prune.go` | 1112–1138 | `(*Pruner).pruneLogsCap` | 27 |
+| 985 | method | `backend/ops/prune/rollups.go` | 25–52 | `(*Pruner).pruneValidatorHourly` | 28 |
+| 986 | method | `backend/ops/prune/rollups.go` | 62–72 | `(*Pruner).maybeVerifyRollups` | 11 |
+| 987 | method | `backend/ops/prune/rollups.go` | 88–146 | `(*Pruner).verifyRollups` | 59 |
+| 988 | method | `backend/ops/prune/sparse_verify.go` | 49–67 | `(*Pruner).maybeVerifySparseRoots` | 19 |
+| 989 | method | `backend/ops/prune/sparse_verify.go` | 90–150 | `(*Pruner).verifySparseRoots` | 61 |
+| 990 | method | `backend/ops/prune/sparse_verify.go` | 152–188 | `(*Pruner).verifyOneEpoch` | 37 |
+| 991 | func | `backend/ops/prune/sparse_verify.go` | 202–216 | `contentCommit` | 15 |
+| 992 | func | `backend/ops/prune/sparse_verify.go` | 218–236 | `bandMisses` | 19 |
+| 993 | func | `backend/platform/system.go` | 52–88 | `SystemUptime` | 37 |
+| 994 | func | `backend/platform/system.go` | 91–120 | `SystemIncidents` | 30 |
+| 995 | func | `backend/platform/system_dashboard.go` | 40–57 | `listSystemNodes` | 18 |
+| 996 | func | `backend/platform/system_dashboard.go` | 64–105 | `applySystemPresetTx` | 42 |
+| 997 | func | `backend/platform/system_dashboard.go` | 110–141 | `insertSystemSection` | 32 |
+| 998 | func | `backend/platform/system_dashboard.go` | 146–162 | `EnsureSystemDashboard` | 17 |
+| 999 | func | `backend/platform/system_dashboard.go` | 166–187 | `SystemDashboard` | 22 |
+| 1000 | func | `backend/platform/system_dashboard.go` | 191–199 | `SeedSystemDashboard` | 9 |
+| 1001 | func | `backend/platform/system_dashboard.go` | 204–300 | `SystemMetrics` | 97 |
+| 1002 | func | `backend/releases/routes.go` | 30–40 | `RegisterRoutes` | 11 |
+| 1003 | func | `backend/releases/routes.go` | 55–66 | `GetTimeline` | 12 |
+| 1004 | func | `backend/releases/routes.go` | 71–82 | `GetComplianceHistory` | 12 |
+| 1005 | func | `backend/releases/routes.go` | 86–100 | `clampDays` | 15 |
+| 1006 | func | `backend/releases/routes.go` | 104–113 | `ListProjects` | 10 |
+| 1007 | func | `backend/releases/routes.go` | 116–125 | `GetProjectReleases` | 10 |
+| 1008 | func | `backend/releases/routes.go` | 128–141 | `GetRelease` | 14 |
+| 1009 | func | `backend/releases/routes.go` | 145–155 | `GetOrgFleet` | 11 |
+| 1010 | func | `backend/releases/routes.go` | 159–181 | `SetNodeProject` | 23 |
+| 1011 | method | `backend/router.go` | 106–128 | `(*App).registerPublicValidatorRoutes` | 23 |
+| 1012 | method | `backend/router.go` | 139–148 | `(*App).registerPublicReleaseRoutes` | 10 |
+| 1013 | method | `backend/router.go` | 156–163 | `(*App).registerPublicInstallRoutes` | 8 |
+| 1014 | method | `backend/router.go` | 165–204 | `(*App).registerShareRoutes` | 40 |
+| 1015 | method | `backend/router.go` | 240–327 | `(*App).registerAuthenticatedRoutes` | 88 |
+| 1016 | method | `backend/router.go` | 329–384 | `(*App).registerNodeRoutes` | 56 |
+| 1017 | method | `backend/router.go` | 386–439 | `(*App).registerValidatorRoutes` | 54 |
+| 1018 | method | `backend/router.go` | 441–455 | `(*App).registerDashboardRoutes` | 15 |
+| 1019 | method | `backend/router.go` | 463–473 | `(*App).registerClusterRoutes` | 11 |
+| 1020 | method | `backend/router.go` | 480–482 | `(*App).registerReleaseRoutes` | 3 |
+| 1021 | method | `backend/router.go` | 484–496 | `(*App).registerAlertRoutes` | 13 |
+| 1022 | method | `backend/router.go` | 501–520 | `(*App).billingConfig` | 20 |
+| 1023 | method | `backend/router.go` | 522–532 | `(*App).registerAdminRoutes` | 11 |
+| 1024 | method | `backend/router.go` | 534–599 | `(*App).registerSuperAdminRoutes` | 66 |
+| 1025 | method | `backend/settings/billing/billing.go` | 58–68 | `(Config).usesPolarAPI` | 11 |
+| 1026 | method | `backend/settings/billing/billing.go` | 72–75 | `(Config).Enabled` | 4 |
+| 1027 | method | `backend/settings/billing/billing.go` | 82–95 | `(Config).purchasableTiers` | 14 |
+| 1028 | func | `backend/settings/billing/plan.go` | 43–83 | `GetPlan` | 41 |
+| 1029 | func | `backend/settings/billing/plan.go` | 89–134 | `CreateCheckout` | 46 |
+| 1030 | func | `backend/settings/billing/plan.go` | 151–162 | `normalizeCheckoutStatus` | 12 |
+| 1031 | func | `backend/settings/billing/plan.go` | 169–192 | `GetCheckout` | 24 |
+| 1032 | func | `backend/settings/billing/polar_checkout.go` | 41–46 | `polarAPIBase` | 6 |
+| 1033 | func | `backend/settings/billing/polar_checkout.go` | 56–114 | `createPolarCheckoutSession` | 59 |
+| 1034 | func | `backend/settings/billing/polar_checkout.go` | 131–171 | `fetchPolarCheckoutSession` | 41 |
+| 1035 | func | `backend/settings/billing/polar_checkout.go` | 174–180 | `truncate` | 7 |
+| 1036 | func | `backend/settings/billing/provider.go` | 60–72 | `providerFor` | 13 |
+| 1037 | func | `backend/settings/billing/tiers.go` | 49–54 | `resolveTier` | 6 |
+| 1038 | func | `backend/settings/billing/tiers.go` | 59–84 | `applyTier` | 26 |
+| 1039 | func | `backend/settings/billing/tiers.go` | 90–101 | `markSubscriptionStatus` | 12 |
+| 1040 | func | `backend/settings/billing/webhook.go` | 25–84 | `Webhook` | 60 |
+| 1041 | func | `backend/settings/billing/webhook.go` | 92–105 | `resolveOrg` | 14 |
+| 1042 | func | `backend/settings/billing/webhook.go` | 112–125 | `saveExternalCustomerID` | 14 |
+| 1043 | func | `backend/settings/org/org.go` | 29–48 | `GetOrgUsage` | 20 |
+| 1044 | func | `backend/settings/org/org.go` | 62–81 | `DeleteOrgMe` | 20 |
+| 1045 | func | `backend/settings/org/org_export.go` | 29–106 | `OrgExportZip` | 78 |
+| 1046 | func | `backend/settings/org/org_join_links.go` | 184–228 | `CreateJoinLink` | 45 |
+| 1047 | func | `backend/settings/org/org_join_links.go` | 230–240 | `ListJoinLinks` | 11 |
+| 1048 | func | `backend/settings/org/org_join_links.go` | 242–255 | `RevokeJoinLink` | 14 |
+| 1049 | func | `backend/settings/org/org_join_links.go` | 260–297 | `AcceptJoinLink` | 38 |
+| 1050 | func | `backend/settings/org/org_join_links.go` | 304–322 | `ensureEmailVerified` | 19 |
+| 1051 | func | `backend/settings/org/org_members.go` | 290–296 | `newInviteToken` | 7 |
+| 1052 | func | `backend/settings/org/org_members.go` | 300–310 | `ListOrgMembers` | 11 |
+| 1053 | func | `backend/settings/org/org_members.go` | 312–338 | `ChangeMemberRole` | 27 |
+| 1054 | func | `backend/settings/org/org_members.go` | 340–355 | `RemoveOrgMember` | 16 |
+| 1055 | func | `backend/settings/org/org_members.go` | 357–367 | `ListOrgInvites` | 11 |
+| 1056 | func | `backend/settings/org/org_members.go` | 369–411 | `CreateOrgInvite` | 43 |
+| 1057 | func | `backend/settings/org/org_members.go` | 413–426 | `RevokeOrgInvite` | 14 |
+| 1058 | func | `backend/settings/org/org_members.go` | 431–484 | `AcceptOrgInvite` | 54 |
+| 1059 | func | `backend/settings/org/org_membership.go` | 34–70 | `OrgList` | 37 |
+| 1060 | func | `backend/settings/org/org_membership.go` | 75–113 | `SetActiveOrg` | 39 |
+| 1061 | func | `backend/settings/org/signup_invites.go` | 95–104 | `ListInvitesHandler` | 10 |
+| 1062 | func | `backend/settings/org/signup_invites.go` | 108–130 | `CreateInviteHandler` | 23 |
+| 1063 | func | `backend/settings/org/signup_invites.go` | 134–151 | `RevokeInviteHandler` | 18 |
+| 1064 | func | `backend/settings/usage/feedback.go` | 64–160 | `SubmitFeedback` | 97 |
+| 1065 | func | `backend/settings/usage/feedback.go` | 162–167 | `truncate` | 6 |
+| 1066 | func | `backend/settings/usage/feedback.go` | 182–184 | `newPerUserLimiter` | 3 |
+| 1067 | method | `backend/settings/usage/feedback.go` | 186–202 | `(*perUserLimiter).allow` | 17 |
+| 1068 | func | `backend/settings/usage/footprint.go` | 66–76 | `latestSnapshotAt` | 11 |
+| 1069 | func | `backend/settings/usage/footprint.go` | 79–81 | `emptyEnvelope` | 3 |
+| 1070 | func | `backend/settings/usage/footprint.go` | 85–125 | `loadRows` | 41 |
+| 1071 | func | `backend/settings/usage/footprint.go` | 131–153 | `addGrowthRate` | 23 |
+| 1072 | func | `backend/settings/usage/footprint.go` | 158–167 | `scopedTableTotal` | 10 |
+| 1073 | func | `backend/settings/usage/footprint.go` | 175–190 | `GetMyFootprint` | 16 |
+| 1074 | func | `backend/settings/usage/footprint.go` | 196–211 | `GetOrgFootprint` | 16 |
+| 1075 | func | `backend/settings/usage/footprint.go` | 217–226 | `GetSuperadminFootprint` | 10 |
+| 1076 | func | `backend/settings/usage/footprint_history.go` | 60–70 | `GetSuperadminFootprintHistory` | 11 |
+| 1077 | func | `backend/settings/usage/footprint_history.go` | 80–95 | `GetOrgFootprintHistory` | 16 |
+| 1078 | func | `backend/settings/usage/footprint_history.go` | 102–117 | `windowHours` | 16 |
+| 1079 | func | `backend/settings/usage/footprint_history.go` | 125–227 | `loadFootprintHistory` | 103 |
+| 1080 | func | `backend/settings/usage/quality.go` | 132–145 | `GetQualitySnapshot` | 14 |
+| 1081 | func | `backend/settings/usage/reliability.go` | 103–109 | `NewReliabilitySource` | 7 |
+| 1082 | func | `backend/settings/usage/usage.go` | 97–149 | `SubmitUsageEvent` | 53 |
+| 1083 | func | `backend/settings/usage/usage.go` | 154–174 | `ListUsageEvents` | 21 |
+| 1084 | func | `backend/settings/usage/usage.go` | 176–194 | `validUsageKind` | 19 |
+| 1085 | func | `backend/sharing/share_api.go` | 38–99 | `ShareAPISnapshot` | 62 |
+| 1086 | func | `backend/sharing/share_api.go` | 103–143 | `ShareAPIMetrics` | 41 |
+| 1087 | func | `backend/sharing/share_api.go` | 148–188 | `ShareAPIHealth` | 41 |
+| 1088 | func | `backend/sharing/share_api.go` | 193–237 | `ShareAPIConfigChanges` | 45 |
+| 1089 | func | `backend/sharing/share_api.go` | 242–293 | `ShareAPIEvents` | 52 |
+| 1090 | func | `backend/sharing/share_browser.go` | 55–88 | `ShareLandingHandler` | 34 |
+| 1091 | func | `backend/sharing/share_browser.go` | 94–151 | `RequestShareCode` | 58 |
+| 1092 | func | `backend/sharing/share_browser.go` | 157–202 | `VerifyShareCodeHandler` | 46 |
+| 1093 | func | `backend/sharing/share_browser.go` | 207–234 | `ShareDashboard` | 28 |
+| 1094 | func | `backend/sharing/share_browser.go` | 239–280 | `ShareMetrics` | 42 |
+| 1095 | func | `backend/sharing/share_browser.go` | 285–348 | `ShareLogs` | 64 |
+| 1096 | func | `backend/sharing/share_browser.go` | 354–366 | `shareFromContext` | 13 |
+| 1097 | func | `backend/sharing/share_browser.go` | 374–379 | `whitelistAllows` | 6 |
+| 1098 | func | `backend/sharing/share_browser.go` | 384–400 | `applyWhitelist` | 17 |
+| 1099 | func | `backend/sharing/share_browser.go` | 406–463 | `queryMetricSeries` | 58 |
+| 1100 | func | `backend/sharing/share_browser.go` | 468–474 | `maskEmail` | 7 |
+| 1101 | func | `backend/sharing/share_browser.go` | 478–490 | `clientIP` | 13 |
+| 1102 | func | `backend/superadmin/superadmin_admin.go` | 527–536 | `parsePaging` | 10 |
+| 1103 | func | `backend/superadmin/superadmin_admin.go` | 539–557 | `ListFeedback` | 19 |
+| 1104 | func | `backend/superadmin/superadmin_admin.go` | 560–587 | `PatchFeedback` | 28 |
+| 1105 | func | `backend/superadmin/superadmin_admin.go` | 590–604 | `DeleteFeedbackHandler` | 15 |
+| 1106 | func | `backend/superadmin/superadmin_admin.go` | 606–616 | `ListOrgs` | 11 |
+| 1107 | func | `backend/superadmin/superadmin_admin.go` | 623–659 | `PatchOrgQuotas` | 37 |
+| 1108 | func | `backend/superadmin/superadmin_admin.go` | 661–675 | `DeleteOrgHandler` | 15 |
+| 1109 | func | `backend/superadmin/superadmin_admin.go` | 677–687 | `ListUsers` | 11 |
+| 1110 | func | `backend/superadmin/superadmin_admin.go` | 689–720 | `DeleteUserHandler` | 32 |
+| 1111 | func | `backend/superadmin/superadmin_admin.go` | 722–732 | `ListAudit` | 11 |
+| 1112 | func | `backend/superadmin/superadmin_admin.go` | 734–743 | `BuildAudit` | 10 |
+| 1113 | func | `backend/superadmin/superadmin_cluster.go` | 38–87 | `ClusterStatus` | 50 |
+| 1114 | func | `backend/superadmin/superadmin_cluster.go` | 89–109 | `listInstances` | 21 |
+| 1115 | func | `backend/superadmin/superadmin_cluster.go` | 111–126 | `queryStrings` | 16 |
+| 1116 | func | `backend/superadmin/superadmin_totp.go` | 113–126 | `SuperadminMe` | 14 |
+| 1117 | func | `backend/superadmin/superadmin_totp.go` | 131–173 | `SetupTOTP` | 43 |
+| 1118 | func | `backend/superadmin/superadmin_totp.go` | 178–217 | `ActivateTOTP` | 40 |
+| 1119 | func | `backend/superadmin/superadmin_totp.go` | 221–282 | `StepUpTOTP` | 62 |
+| 1120 | func | `backend/superadmin/superadmin_totp.go` | 287–304 | `DisableTOTP` | 18 |
+| 1121 | func | `backend/superadmin/superadmin_totp.go` | 310–328 | `encryptSecret` | 19 |
+| 1122 | func | `backend/superadmin/superadmin_totp.go` | 330–355 | `decryptSecret` | 26 |
+| 1123 | func | `backend/superadmin/superadmin_totp.go` | 360–378 | `generateRecoveryCodes` | 19 |
+| 1124 | func | `backend/superadmin/superadmin_totp.go` | 383–393 | `consumeRecoveryCode` | 11 |
+| 1125 | func | `backend/validators/cosmos_probe.go` | 68–104 | `ProbeCosmosLCD` | 37 |
+| 1126 | func | `backend/validators/cosmos_probe.go` | 111–125 | `suggestDisplayDenom` | 15 |
+| 1127 | func | `backend/validators/merkletree/intervals.go` | 36–50 | `DecodeIntervals` | 15 |
+| 1128 | func | `backend/validators/merkletree/intervals.go` | 108–111 | `Contains` | 4 |
+| 1129 | func | `backend/validators/merkletree/intervals.go` | 115–121 | `ObservedCount` | 7 |
+| 1130 | func | `backend/validators/merkletree/intervals.go` | 145–165 | `SynthesizeObservations` | 21 |
+| 1131 | func | `backend/validators/merkletree/intervals.go` | 170–186 | `ClipIntervals` | 17 |
+| 1132 | func | `backend/validators/public.go` | 59–91 | `PublicChains` | 33 |
+| 1133 | func | `backend/validators/public.go` | 98–121 | `PublicValidatorGrid` | 24 |
+| 1134 | func | `backend/validators/public.go` | 126–132 | `PublicValidatorSignatures` | 7 |
+| 1135 | func | `backend/validators/rpccatalog.go` | 80–80 | `raw` | 1 |
+| 1136 | func | `backend/validators/rpccatalog.go` | 85–91 | `extractEVMHex` | 7 |
+| 1137 | func | `backend/validators/rpccatalog.go` | 94–100 | `extractSolanaSlot` | 7 |
+| 1138 | func | `backend/validators/rpccatalog.go` | 106–134 | `extractTendermintStatus` | 29 |
+| 1139 | func | `backend/validators/rpccatalog.go` | 168–170 | `tendermintEntry` | 3 |
+| 1140 | func | `backend/validators/rpccatalog.go` | 175–177 | `polkachu` | 3 |
+| 1141 | func | `backend/validators/rpccatalog.go` | 214–220 | `buildCatalog` | 7 |
+| 1142 | func | `backend/validators/rpccatalog.go` | 225–228 | `CatalogForChain` | 4 |
+| 1143 | func | `backend/validators/rpccatalog.go` | 232–239 | `catalogEntries` | 8 |
+| 1144 | func | `backend/validators/rpccatalog.go` | 242–249 | `headMethod` | 8 |
+| 1145 | func | `backend/validators/rpccatalog.go` | 253–260 | `methodByName` | 8 |
+| 1146 | func | `backend/validators/rpcconsole.go` | 94–98 | `RPCCatalog` | 5 |
+| 1147 | func | `backend/validators/rpcconsole.go` | 101–101 | `RPCCall` | 1 |
+| 1148 | func | `backend/validators/rpcconsole.go` | 103–146 | `rpcCallHandler` | 44 |
+| 1149 | func | `backend/validators/rpcconsole.go` | 152–159 | `writeUpstreamError` | 8 |
+| 1150 | func | `backend/validators/rpcconsole.go` | 164–166 | `RPCChainHead` | 3 |
+| 1151 | func | `backend/validators/rpcconsole.go` | 168–190 | `rpcChainHeadHandler` | 23 |
+| 1152 | func | `backend/validators/rpcconsole.go` | 195–211 | `fetchHead` | 17 |
+| 1153 | func | `backend/validators/rpcconsole.go` | 217–236 | `runMethod` | 20 |
+| 1154 | func | `backend/validators/rpcconsole.go` | 241–249 | `callParams` | 9 |
+| 1155 | func | `backend/validators/ssrf.go` | 34–46 | `parseHTTPURL` | 13 |
+| 1156 | func | `backend/validators/validator_baseline.go` | 23–52 | `computeBaselineBand` | 30 |
+| 1157 | func | `backend/validators/validator_baseline.go` | 73–88 | `sumMissTotals` | 16 |
+| 1158 | func | `backend/validators/validator_baseline.go` | 94–99 | `anomalyScore` | 6 |
+| 1159 | func | `backend/validators/validator_chains_admin.go` | 87–104 | `slugify` | 18 |
+| 1160 | func | `backend/validators/validator_chains_admin.go` | 110–113 | `validateRPCURL` | 4 |
+| 1161 | func | `backend/validators/validator_chains_admin.go` | 401–410 | `ListValidatorChainRPC` | 10 |
+| 1162 | func | `backend/validators/validator_chains_admin.go` | 419–460 | `SetValidatorChainRPC` | 42 |
+| 1163 | func | `backend/validators/validator_chains_admin.go` | 471–500 | `SetValidatorChainEnabled` | 30 |
+| 1164 | func | `backend/validators/validator_chains_admin.go` | 517–544 | `ProbeValidatorChain` | 28 |
+| 1165 | func | `backend/validators/validator_chains_admin.go` | 560–634 | `CreateValidatorChain` | 75 |
+| 1166 | func | `backend/validators/validator_cohort.go` | 54–80 | `ValidatorCohort` | 27 |
+| 1167 | func | `backend/validators/validator_detail.go` | 76–87 | `clampSignedWindow` | 12 |
+| 1168 | func | `backend/validators/validator_detail.go` | 104–126 | `ValidatorSignatures` | 23 |
+| 1169 | func | `backend/validators/validator_detail.go` | 135–394 | `ValidatorDetail` | 260 |
+| 1170 | func | `backend/validators/validator_favorites.go` | 67–84 | `ListValidatorFavorites` | 18 |
+| 1171 | func | `backend/validators/validator_favorites.go` | 88–106 | `AddValidatorFavorite` | 19 |
+| 1172 | func | `backend/validators/validator_favorites.go` | 110–127 | `RemoveValidatorFavorite` | 18 |
+| 1173 | func | `backend/validators/validator_favorites.go` | 133–172 | `SetValidatorFavoriteWatching` | 40 |
+| 1174 | func | `backend/validators/validator_favorites.go` | 174–192 | `decodeFavoriteBody` | 19 |
+| 1175 | func | `backend/validators/validator_search.go` | 50–78 | `ValidatorSearch` | 29 |
+| 1176 | func | `backend/validators/validator_signing_history.go` | 51–79 | `ValidatorSigningHistory` | 29 |
+| 1177 | func | `backend/validators/validators.go` | 41–53 | `ListValidatorChains` | 13 |
+| 1178 | func | `backend/validators/validators.go` | 73–86 | `gridCacheTTL` | 14 |
+| 1179 | func | `backend/validators/validators.go` | 97–151 | `newGridLoader` | 55 |
+| 1180 | func | `backend/validators/validators.go` | 156–191 | `parseGridQuery` | 36 |
+| 1181 | func | `backend/validators/validators.go` | 198–269 | `ValidatorGrid` | 72 |
+| 1182 | query | `backend/models/nodepurge.go` | 28–35 | `PurgeNodeChildData` | 8 |
+| 1183 | query | `backend/models/orgpurge.go` | 30–72 | `PurgeOrgData` | 43 |
+| 1184 | handler | `backend/settings/account/account.go` | 135–168 | `DeleteMe` | 34 |
+| 1185 | mount | `backend/router.go` | 65 | `middleware.OrgContext(…)` | 33 *(+32 scaffold)* |
+| 1186 | mount | `backend/router.go` | 242 | `middleware.JWT(…)` | 88 *(+87 scaffold)* |
+
+## Fresh work per act
+
+| | mean | median | p90 | max |
+|---|---:|---:|---:|---:|
+| declarations | 4.9 | 0 | 0 | 960 |
+| reference lines | 89.2 | 1 | 14 | 17156 |
+
+Full closure against an empty world (the ordering key, not the act content): decls median 1102, max 1102; lines median 18938, max 18938.
+
+## Completion
+
+214 file(s) incomplete after the last act; **20975** unaccounted reference lines.
+
+| file | ref lines | written | remaining |
+|---|---:|---:|---:|
+| `backend/validators/validators_store.go` | 792 | 3 | 789 |
+| `backend/alerts/escalation/worker.go` | 471 | 6 | 465 |
+| `backend/superadmin/superadmin_admin.go` | 744 | 282 | 462 |
+| `backend/alerts/escalation/dispatch.go` | 473 | 24 | 449 |
+| `backend/fleet/dashboard/share_store.go` | 544 | 95 | 449 |
+| `backend/releases/store.go` | 472 | 68 | 404 |
+| `backend/app.go` | 426 | 54 | 372 |
+| `backend/validators/validator_chains_admin.go` | 635 | 268 | 367 |
+| `backend/fleet/ingest/ingest_store.go` | 411 | 61 | 350 |
+| `backend/ops/prune/prune.go` | 1139 | 796 | 343 |
+| `backend/validators/validatorset_runner.go` | 388 | 53 | 335 |
+| `backend/validators/validator_rollup.go` | 335 | 5 | 330 |
+| `backend/alerts/oncall/store.go` | 366 | 43 | 323 |
+| `backend/validators/validatorset_loop.go` | 308 | 13 | 295 |
+| `backend/fleet/clusters/clusters_store.go` | 315 | 33 | 282 |
+| `backend/alerts/notifier.go` | 286 | 5 | 281 |
+| `backend/settings/org/org_members.go` | 485 | 213 | 272 |
+| `backend/validators/chain_head.go` | 277 | 10 | 267 |
+| `backend/alerts/evaluator.go` | 289 | 24 | 265 |
+| `backend/fleet/nodes/rpc_monitor_runner.go` | 281 | 17 | 264 |
