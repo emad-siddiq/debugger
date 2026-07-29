@@ -3304,7 +3304,10 @@ class EditorInlayHints extends BaseEditorOption<EditorOption.inlayHints, IEditor
 class EditorLineDecorationsWidth extends BaseEditorOption<EditorOption.lineDecorationsWidth, number | string, number> {
 
 	constructor() {
-		super(EditorOption.lineDecorationsWidth, 'lineDecorationsWidth', 10);
+		// BURROW patch 0010: compact gutter — shrink the line-decorations reserve
+		// (upstream default 10) so the margin hugs the text. Glyph margin (breakpoints)
+		// and folding are untouched.
+		super(EditorOption.lineDecorationsWidth, 'lineDecorationsWidth', 3);
 	}
 
 	public validate(input: unknown): number {
@@ -6376,9 +6379,11 @@ export const EditorOptions = {
 	lineDecorationsWidth: register(new EditorLineDecorationsWidth()),
 	lineHeight: register(new EditorLineHeight()),
 	lineNumbers: register(new EditorRenderLineNumbersOption()),
+	// BURROW patch 0010: compact gutter — reserve 3 digit-widths for line
+	// numbers instead of upstream's 5 (auto-grows past 999 lines).
 	lineNumbersMinChars: register(new EditorIntOption(
 		EditorOption.lineNumbersMinChars, 'lineNumbersMinChars',
-		5, 1, 300
+		3, 1, 300
 	)),
 	linkedEditing: register(new EditorBooleanOption(
 		EditorOption.linkedEditing, 'linkedEditing', false,
