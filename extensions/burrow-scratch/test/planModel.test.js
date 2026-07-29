@@ -13,7 +13,7 @@
 const assert = require('node:assert');
 const {
 	buildPlan, dependents, goDeclares, goImports, isIgnored, kindOf,
-	leadingComment, pairTests, topoSort, tsDeclares, tsImports,
+	leadingComment, orderViolations, pairTests, topoSort, tsDeclares, tsImports,
 } = require('../out/planModel');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
@@ -210,6 +210,38 @@ const cases = {
 		const b = JSON.stringify(buildPlan(project().reverse(), { name: 'app', reference: '/ref' }));
 		assert.strictEqual(a, b);
 	},
+	// --- the invariant --------------------------------------------------------
+	// This is the assertion the whole feature rests on, and it is checked against
+	// the EMITTED plan, not against topoSort: an ordering policy can be wrong in
+	// ways the sort cannot see.
+	'the emitted plan is a valid topological order': () => {
+		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
+		const real = orderViolations(plan).filter((v) => !v.cyclic);
+		assert.deepStrictEqual(real, [], real.map((v) => `${v.step} @${v.at} needs ${v.dep} @${v.depAt}`).join('\n'));
+	},
+	'the invariant catches a step moved ahead of what it imports': () => {
+		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
+		// Swap the two web stages so Badge.tsx precedes the module it imports.
+		const stages = plan.stages.slice();
+		const lib = stages.findIndex((s) => s.id === 'web/src/lib');
+		const ui = stages.findIndex((s) => s.id === 'web/src/ui');
+		[stages[lib], stages[ui]] = [stages[ui], stages[lib]];
+		const broken = orderViolations({ ...plan, stages }).filter((v) => !v.cyclic);
+		assert.ok(broken.length, 'a deliberately mis-ordered plan must be reported');
+		assert.ok(broken.some((v) => v.step === 'web/src/ui/Badge.tsx' && v.dep === 'web/src/lib/format.ts'));
+	},
+	'a genuine import cycle is reported as cyclic, not as a defect': () => {
+		const cyclic = [
+			file('web/package.json', '{"name":"web"}'),
+			file('web/src/a/one.ts', "import { two } from '../b/two';\nexport const one = two;\n"),
+			file('web/src/b/two.ts', "import { one } from '../a/one';\nexport const two = one;\n"),
+		];
+		const plan = buildPlan(cyclic, { name: 'web', reference: '/ref' });
+		const all = orderViolations(plan);
+		assert.ok(all.length, 'the cycle does produce an out-of-order pair');
+		assert.deepStrictEqual(all.filter((v) => !v.cyclic), [], 'but none of it is a defect');
+	},
+
 	'an empty project plans nothing rather than crashing': () => {
 		const plan = buildPlan([], { name: 'nothing', reference: '/ref' });
 		assert.deepStrictEqual([plan.stages.length, plan.counts.steps], [0, 0]);

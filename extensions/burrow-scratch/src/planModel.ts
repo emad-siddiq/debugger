@@ -799,6 +799,112 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 	};
 }
 
+// ---------------------------------------------------------------------------
+// The invariant
+// ---------------------------------------------------------------------------
+
+/** One step that is planned before something it needs. */
+export interface OrderViolation {
+	readonly step: string;
+	readonly dep: string;
+	readonly at: number;
+	readonly depAt: number;
+	/**
+	 * The two are mutually reachable, so NO order satisfies both. TypeScript
+	 * permits import cycles and merkle's frontend has several; reporting those as
+	 * ordering errors would make the invariant unprovable rather than false.
+	 * Only `cyclic: false` is a defect.
+	 */
+	readonly cyclic: boolean;
+}
+
+/**
+ * Walk the emitted plan and report every step that comes before something it
+ * depends on. The whole feature rests on this being empty, so it is checked
+ * against the plan that actually ships rather than against the algorithm that
+ * produced it — a reordering policy can be wrong in ways topoSort cannot see.
+ */
+export function orderViolations(plan: ScratchPlan): OrderViolation[] {
+	const order = plan.stages.flatMap((s) => s.steps);
+	const at = new Map(order.map((id, i) => [id, i]));
+	const stageAt = new Map(plan.stages.map((s, i) => [s.id, i]));
+
+	// Step-level edges, so "before what it imports" is one relation: a file's own
+	// resolved imports, plus every step of every stage it names.
+	const edges = new Map<string, string[]>();
+	for (const id of order) {
+		const step = plan.steps[id];
+		const out = new Set(step.deps.filter((d) => at.has(d)));
+		for (const stage of step.depStages) {
+			for (const other of plan.stages[stageAt.get(stage) ?? -1]?.steps ?? []) {
+				if (other !== id) {
+					out.add(other);
+				}
+			}
+		}
+		edges.set(id, [...out]);
+	}
+
+	// Tarjan, iterative: 2,000-odd nodes is past the depth a recursive walk is
+	// comfortable with, and a plan is not a place to risk a stack overflow.
+	const index = new Map<string, number>(), low = new Map<string, number>(), comp = new Map<string, number>();
+	const onStack = new Set<string>();
+	const stack: string[] = [];
+	let next = 0, components = 0;
+	for (const root of order) {
+		if (index.has(root)) {
+			continue;
+		}
+		const work: Array<{ v: string; i: number }> = [{ v: root, i: 0 }];
+		while (work.length) {
+			const frame = work[work.length - 1];
+			if (frame.i === 0) {
+				index.set(frame.v, next);
+				low.set(frame.v, next++);
+				stack.push(frame.v);
+				onStack.add(frame.v);
+			}
+			const kids = edges.get(frame.v) ?? [];
+			if (frame.i < kids.length) {
+				const w = kids[frame.i++];
+				if (!index.has(w)) {
+					work.push({ v: w, i: 0 });
+				} else if (onStack.has(w)) {
+					low.set(frame.v, Math.min(low.get(frame.v)!, index.get(w)!));
+				}
+				continue;
+			}
+			work.pop();
+			if (low.get(frame.v) === index.get(frame.v)) {
+				for (;;) {
+					const w = stack.pop()!;
+					onStack.delete(w);
+					comp.set(w, components);
+					if (w === frame.v) {
+						break;
+					}
+				}
+				components++;
+			}
+			const parent = work[work.length - 1];
+			if (parent) {
+				low.set(parent.v, Math.min(low.get(parent.v)!, low.get(frame.v)!));
+			}
+		}
+	}
+
+	const out: OrderViolation[] = [];
+	for (const id of order) {
+		for (const dep of edges.get(id) ?? []) {
+			const [a, b] = [at.get(id)!, at.get(dep)!];
+			if (b > a) {
+				out.push({ step: id, dep, at: a, depAt: b, cyclic: comp.get(id) === comp.get(dep) });
+			}
+		}
+	}
+	return out;
+}
+
 /** Reverse edges: which steps name this one as a dependency. Computed rather
  *  than stored so the plan file stays a tree and cannot disagree with itself. */
 export function dependents(plan: ScratchPlan, stepId: string): string[] {
