@@ -191,6 +191,20 @@ const cases = {
 		const tools = plan.stages.find((s) => s.id === 'backend').tools.map((t) => t.command);
 		assert.ok(tools.includes('burrow.flow.refresh'));
 	},
+	'a stage whose only router match is in a test file offers no API hint': () => {
+		// A middleware test spins up a chi router to exercise the middleware. That
+		// is not a stage that registers routes, and treating it as one fired the
+		// hint four stages before there was anything to trace.
+		const plan = buildPlan([
+			file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+			file('backend/mw/mw.go', 'package mw\n\nfunc Auth() {}\n'),
+			file('backend/mw/mw_test.go', 'package mw\n\nimport "github.com/go-chi/chi/v5"\n\nfunc TestAuth(t *testing.T) {\n\tr := chi.NewRouter()\n\tr.Route("/x", nil)\n}\n'),
+		], { name: 'app', reference: '/ref' });
+		const stage = plan.stages.find((s) => s.id === 'backend/mw');
+		assert.ok(stage.steps.includes('backend/mw/mw_test.go'), 'the test file is still a step');
+		assert.ok(!stage.tools.some((t) => t.command === 'burrow.flow.refresh'), 'but it does not register routes');
+		assert.ok(stage.tools.some((t) => t.command === 'burrow.test.runAll'), 'the Test Lab hint is unaffected');
+	},
 	'a stage with a test file offers the Test Lab': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
 		const tools = plan.stages.find((s) => s.id === 'backend/store').tools.map((t) => t.command);

@@ -404,7 +404,7 @@ function shapeRank(path: string): number {
 
 /** Put each test immediately after the file it tests. Write it, then prove it. */
 export function pairTests(paths: readonly string[]): string[] {
-	const isTest = (p: string) => /(_test\.go|\.test\.(ts|tsx|js)|\.spec\.(ts|tsx|js))$/.test(p);
+	const isTest = isTestPath;
 	const subjectOf = (p: string) => p.replace(/_test\.go$/, '.go').replace(/\.(test|spec)\.(ts|tsx|js)$/, '.$2');
 	const subjects = paths.filter((p) => !isTest(p));
 	const tests = paths.filter(isTest);
@@ -565,10 +565,19 @@ function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?:
 	return checks;
 }
 
+/** `_test.go`, `foo.test.ts`, `foo.spec.tsx` — the files that exercise code
+ *  rather than being it. Shared by pairTests and by registration detection. */
+function isTestPath(p: string): boolean {
+	return /(_test\.go|\.test\.(ts|tsx|js)|\.spec\.(ts|tsx|js))$/.test(p);
+}
+
 function stageTools(paths: readonly string[], text: (p: string) => string): ToolHint[] {
 	const tools: ToolHint[] = [];
-	const any = (re: RegExp) => paths.some((p) => re.test(text(p)));
-	if (any(/chi\.NewRouter\(|http\.NewServeMux\(|\.(Route|Mount)\(/)) {
+	// A test that spins up a router to exercise middleware is not a stage that
+	// registers routes. Matching it fired the API-view hint four stages before
+	// anything was there to trace, on merkle's `backend/middleware`.
+	const registers = (re: RegExp) => paths.some((p) => !isTestPath(p) && re.test(text(p)));
+	if (registers(/chi\.NewRouter\(|http\.NewServeMux\(|\.(Route|Mount)\(/)) {
 		tools.push({
 			label: 'Scan the routes', command: 'burrow.flow.refresh',
 			why: 'This stage registers HTTP routes, so the API view can trace them end to end for the first time.',
