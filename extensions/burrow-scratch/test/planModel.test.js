@@ -205,6 +205,34 @@ const cases = {
 		assert.ok(!stage.tools.some((t) => t.command === 'burrow.flow.refresh'), 'but it does not register routes');
 		assert.ok(stage.tools.some((t) => t.command === 'burrow.test.runAll'), 'the Test Lab hint is unaffected');
 	},
+	'a stage that mounts routes on a router it was handed offers no API hint': () => {
+		// Six of merkle's eight registration sites look exactly like this: they
+		// take a chi.Router and hang routes off it. flowscan seeds at NewRouter()
+		// and can trace none of them until whatever calls it exists, so a stage
+		// full of them is a stage where the API view still shows nothing.
+		const plan = buildPlan([
+			file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+			file('backend/admin/routes.go', 'package admin\n\nimport "github.com/go-chi/chi/v5"\n\nfunc RegisterRoutes(r chi.Router) {\n\tr.Route("/admin", func(r chi.Router) {\n\t\tr.Get("/usage", nil)\n\t})\n}\n'),
+		], { name: 'app', reference: '/ref' });
+		assert.ok(plan.stages.length, 'the package is still planned');
+		assert.deepStrictEqual(
+			plan.stages.filter((s) => s.tools.some((t) => t.command === 'burrow.flow.refresh')).map((s) => s.id),
+			[], 'no stage offers the API view when nothing creates a router');
+	},
+	'the API hint waits for the file that creates the router': () => {
+		const plan = buildPlan([
+			...project(),
+			// Registers routes on a router it is handed — earlier than backend/,
+			// which is the package that actually calls chi.NewRouter().
+			file('backend/admin/routes.go', 'package admin\n\nimport "github.com/go-chi/chi/v5"\n\nfunc RegisterRoutes(r chi.Router) {\n\tr.Route("/admin", nil)\n}\n'),
+		], { name: 'app', reference: '/ref' });
+		const hinted = plan.stages.filter((s) => s.tools.some((t) => t.command === 'burrow.flow.refresh')).map((s) => s.id);
+		assert.ok(hinted.includes('backend'), 'the stage holding chi.NewRouter() offers it');
+		assert.ok(!hinted.includes('backend/admin'), 'the stage that only mounts does not');
+		assert.ok(stageIndex(plan, 'backend/admin/routes.go') < plan.stages.findIndex((s) => s.id === 'backend'),
+			'and it really did come first, so this is a gate and not an ordering accident');
+	},
+
 	'a stage with a test file offers the Test Lab': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
 		const tools = plan.stages.find((s) => s.id === 'backend/store').tools.map((t) => t.command);

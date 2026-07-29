@@ -571,30 +571,72 @@ function isTestPath(p: string): boolean {
 	return /(_test\.go|\.test\.(ts|tsx|js)|\.spec\.(ts|tsx|js))$/.test(p);
 }
 
-function stageTools(paths: readonly string[], text: (p: string) => string): ToolHint[] {
+/**
+ * A file that CREATES a router. flowscan's route walk seeds at exactly these —
+ * `NewRouter()`/`NewMux()` call sites — and reaches a `RegisterRoutes(r
+ * chi.Router, …)` only by following one out from a seed.
+ *
+ * This distinction is the whole reason the hint was wrong. merkle has ONE
+ * non-test file in its entire backend that creates a router, and until it is
+ * written the API view traces nothing: a folder holding a registration site and
+ * its complete import closure still scans to zero routes, and adding the root
+ * file alone takes it to 174.
+ */
+const ROUTER_SEED = /\b(?:NewRouter|NewMux|NewServeMux)\s*\(/;
+
+/** A file that hangs routes off a router something else made. Only ever worth
+ *  pointing at once a seed exists — before that there is nothing to walk from. */
+const ROUTE_MOUNT = /\.(?:Route|Mount)\s*\(|\bchi\.Router\b|\*chi\.Mux\b|\*http\.ServeMux\b/;
+
+/**
+ * Preconditions a tool needs, accumulated as the plan is emitted. Stages are
+ * pushed in the order they are worked, and a precondition met at stage 20 is
+ * still met at stage 21 — so this is carried forward rather than re-derived.
+ */
+interface ToolReadiness {
+	/** Something has created a router: flowscan has a seed to walk from. */
+	router: boolean;
+}
+
+/**
+ * A tool is offered when it can function, not when a regex matches. Three of
+ * the four hints used to fire on the mere presence of a file kind, which put the
+ * API view 22 stages and the Data grid 18 stages before their tools had anything
+ * to show.
+ */
+function stageTools(
+	paths: readonly string[],
+	text: (p: string) => string,
+	ready: ToolReadiness,
+): ToolHint[] {
 	const tools: ToolHint[] = [];
 	// A test that spins up a router to exercise middleware is not a stage that
-	// registers routes. Matching it fired the API-view hint four stages before
-	// anything was there to trace, on merkle's `backend/middleware`.
-	const registers = (re: RegExp) => paths.some((p) => !isTestPath(p) && re.test(text(p)));
-	if (registers(/chi\.NewRouter\(|http\.NewServeMux\(|\.(Route|Mount)\(/)) {
+	// registers routes, and never was.
+	const code = paths.filter((p) => !isTestPath(p) && p.endsWith('.go'));
+
+	const seeds = code.some((p) => ROUTER_SEED.test(text(p)));
+	ready.router ||= seeds;
+	if (ready.router && (seeds || code.some((p) => ROUTE_MOUNT.test(text(p))))) {
 		tools.push({
 			label: 'Scan the routes', command: 'burrow.flow.refresh',
-			why: 'This stage registers HTTP routes, so the API view can trace them end to end for the first time.',
+			why: 'The router the API view traces from now exists, so it can follow these registrations end to end.',
 		});
 	}
+
 	if (paths.some((p) => p.endsWith('_test.go'))) {
 		tools.push({
 			label: 'Run the Go tests', command: 'burrow.test.runAll',
 			why: 'You wrote tests in this stage — the Test Lab shows failures first.',
 		});
 	}
+
 	if (paths.some((p) => p.endsWith('.sql'))) {
 		tools.push({
 			label: 'Open the database', command: 'burrow.db.refresh',
 			why: 'These migrations define the tables; the Data view reads the live schema back.',
 		});
 	}
+
 	if (paths.some((p) => p.endsWith('.tsx'))) {
 		tools.push({
 			label: 'Open the component gallery', command: 'burrow.frontendDebugger.open',
@@ -625,6 +667,8 @@ export function buildPlan(
 	const claimed = new Set<string>();
 
 	const textOf = (p: string) => analysed.get(p)?.file.text ?? '';
+	// Carried across stages, in the order they are emitted: see ToolReadiness.
+	const ready: ToolReadiness = { router: false };
 	// Enrichment, not structure: nothing below reads this, and a plan built
 	// without it differs only in the sentence the page prints.
 	const routesFor = (p: string): { routes?: readonly string[]; routeCount?: number } => {
@@ -659,7 +703,7 @@ export function buildPlan(
 			};
 			claimed.add(p);
 		}
-		stages.push({ ...stage, steps: paths, tools: stage.tools.length ? stage.tools : stageTools(paths, textOf) });
+		stages.push({ ...stage, steps: paths, tools: stage.tools.length ? stage.tools : stageTools(paths, textOf, ready) });
 	};
 
 	// 1 — Foundations. Every manifest and lockfile in the project, roots first.
