@@ -16,8 +16,7 @@ import {
 	languages,
 	window,
 } from 'vscode';
-import { claimSurface } from './toolSurface';
-import { DOCS_VIEW_TYPE, DocViewer } from './viewer';
+import { DocViewer } from './viewer';
 import { parseDocTarget } from './godoc';
 
 // burrow-go-docs — offline Go docs + hover → fullscreen viewer (architecture
@@ -45,11 +44,19 @@ export function activate(context: ExtensionContext): void {
 	const viewer = new DocViewer();
 	context.subscriptions.push(
 		viewer,
-		// Tool-surface isolation (docs/plans/02 §6): Go Docs is a Files-tool
-		// surface — it has no rail view of its own, so it only claims its tab,
-		// which is enough for the registry to tidy it when another tool takes
-		// over the editor area.
-		claimSurface('files', { viewType: DOCS_VIEW_TYPE }),
+		// NO `claimSurface` here, and the claim it used to make was `files`.
+		//
+		// The claim predates patch 0014. Its job — tidy this tab when another tool
+		// takes over the editor area — is now the per-rail editor sets', and two
+		// mechanisms on one tab do not compose: the viewer has no rail of its own,
+		// so it lives in the set of whichever rail was active when you opened it,
+		// while the claim closed it 300 ms after ANY switch to a rail that is not
+		// "files". Returning to its own rail revived it and the sweep shot it
+		// again. Measured by P2-12, 2026-07-29: three failures, all this.
+		//
+		// burrow-scratch's step page reached the same conclusion for the same
+		// reason (see the comment beside its own missing claim).
+		//
 		// Panel persistence (WO-60): the viewer comes back at the symbol you were
 		// reading, with its back stack, and re-renders offline.
 		viewer.register(),
