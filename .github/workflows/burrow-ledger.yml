@@ -1,0 +1,50 @@
+name: Burrow core patch ledger
+
+# Layer 3 discipline (patches/README.md): a change to upstream core source under
+# src/ or build/ must be described by a patches/NNNN-*.md entry that NAMES the
+# file. build/burrow/check-ledger.js is the gate; this is what holds it.
+#
+# It was unheld until WO-61. The gate existed, `make ledger-check` ran it, and
+# nothing in .github/workflows/ ever invoked it — so for the whole life of the
+# fork the only automated check on the fork's central rule was a command someone
+# had to remember to type. A gate nobody runs is a comment.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: burrow-ledger-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ledger:
+    name: every core change is ledgered
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # FULL history, not the default depth-1. The gate diffs against the
+          # fork point recorded in patches/UPSTREAM_BASE; on a shallow clone that
+          # commit is absent, the gate finds no usable baseline and exits 1. That
+          # is the correct behaviour and a useless CI failure, so fetch the lot.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      # --committed, not the default: a CI checkout has no working tree of
+      # uncommitted edits, and the local default (HEAD + working tree) would
+      # report a file count that no one can reproduce from the commit.
+      - name: check-ledger
+        run: make ledger-check-ci
