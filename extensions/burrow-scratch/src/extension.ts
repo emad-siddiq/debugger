@@ -138,9 +138,20 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	// already tidies it: patch 0014's per-rail editor sets hide it when you go
 	// to Data and bring the set back when you return. Claiming it as well would
 	// mean two mechanisms closing the same tab.
-	context.subscriptions.push(view, page, announceOnVisible(TOOL_ID, view));
-
 	const currentId = (): string | undefined => progress.current ?? resumeAt(plan, progress);
+
+	context.subscriptions.push(
+		view,
+		page,
+		announceOnVisible(TOOL_ID, view),
+		// Panel persistence (WO-60): the step page comes back on the step it was
+		// on. Registered here rather than in `activate`, so a window that is not a
+		// scratch has no reviver and the workbench never persists the tab at all.
+		page.register((savedStepId) => {
+			const id = savedStepId && plan.steps[savedStepId] ? savedStepId : currentId();
+			return id ? { plan, progress, stepId: id, checks: undefined, running: false } : undefined;
+		}),
+	);
 
 	const save = (next: Progress, redraw = true): void => {
 		progress = next;
@@ -309,7 +320,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			return;
 		}
 		const step = plan.steps[id];
-		if (step.mode === 'write') {
+		if (step.mode !== 'copy') {
 			const ok = await vscode.window.showWarningMessage(
 				`Copy ${step.title} in from the reference? It will count as copied, not written.`,
 				'Copy it in', 'Cancel',

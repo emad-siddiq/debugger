@@ -24,9 +24,17 @@
 
 export type StepKind = 'go' | 'gotest' | 'ts' | 'tsx' | 'style' | 'sql' | 'manifest' | 'lock' | 'doc' | 'other';
 
-/** `write` — you type this one. `copy` — a lockfile or generated artifact that
- *  nobody types; copying it is the honest move and the plan says so. */
-export type StepMode = 'write' | 'copy';
+/**
+ * `write` — you type this one.
+ * `copy` — prose or a diagram: real project content, but not something typing
+ *   teaches you anything about.
+ * `generate` — a toolchain writes it. The step carries the COMMAND rather than
+ *   the content, and is done when the command exits 0 and the file it produces
+ *   exists. `go.mod` is the case that made this necessary: the plan asked you to
+ *   type out a file whose only correct way to come into existence is
+ *   `go mod init`.
+ */
+export type StepMode = 'write' | 'copy' | 'generate';
 
 export interface Check {
 	readonly kind: 'exists' | 'shell';
@@ -56,6 +64,9 @@ export interface ScratchStep {
 	readonly mode: StepMode;
 	readonly lines: number;
 	readonly bytes: number;
+	/** `generate` only: what to run, relative to {@link ScratchStep.commandCwd}. */
+	readonly command?: string;
+	readonly commandCwd?: string;
 	/** The file's own leading comment, or a derived sentence when it has none. */
 	readonly summary: string;
 	/** Top-level exported declarations, in source order. */
@@ -174,10 +185,42 @@ export function kindOf(relPath: string): StepKind {
 	if (base.endsWith('.sql')) {
 		return 'sql';
 	}
-	if (/\.(md|txt)$/.test(base)) {
+	// `.puml` joins the doc kind rather than falling to `other`. That widens what
+	// `doc` means — from "prose" to "prose and diagrams", i.e. project content
+	// that is read rather than typed — and it is the only change to kindOf's
+	// contract here. Everything a `doc` names is now a `copy` step.
+	if (/\.(md|txt|puml)$/.test(base)) {
 		return 'doc';
 	}
 	return 'other';
+}
+
+/**
+ * The command that produces a file, for files no one should type.
+ *
+ * `go.sum` is deliberately absent: `go mod tidy` writes it as a side effect of
+ * the `go.mod` step, so giving it a step of its own would ask the developer to
+ * run a command that has already run.
+ */
+export function generatedBy(relPath: string, modulePath: string | undefined): { cmd: string; cwd: string } | undefined {
+	const base = baseName(relPath);
+	const cwd = dirName(relPath);
+	if (base === 'go.mod') {
+		// No module path means no go.mod to read it from, which cannot happen for
+		// a file that IS a go.mod — but a corrupt one should not emit `go mod init`
+		// with an empty argument.
+		return modulePath ? { cmd: `go mod init ${modulePath} && go mod tidy`, cwd } : undefined;
+	}
+	if (base === 'package-lock.json') {
+		return { cmd: 'npm install', cwd };
+	}
+	if (base === 'pnpm-lock.yaml') {
+		return { cmd: 'pnpm install', cwd };
+	}
+	if (base === 'yarn.lock') {
+		return { cmd: 'yarn install', cwd };
+	}
+	return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +535,15 @@ function analyse(files: readonly SourceFile[]): Map<string, Analysed> {
 	return out;
 }
 
-function checksFor(step: { id: string; kind: StepKind; mode: StepMode }, goModuleDir: string | undefined): Check[] {
+function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string }, goModuleDir: string | undefined): Check[] {
+	if (step.mode === 'generate') {
+		// Run it, then prove it produced something. Both, in that order: a command
+		// that exits 0 without writing the file is the failure worth catching.
+		return [
+			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: step.command, cwd: step.commandCwd },
+			{ kind: 'exists', label: 'the file exists and is not empty' },
+		];
+	}
 	const checks: Check[] = [{ kind: 'exists', label: 'the file exists and is not empty' }];
 	if (step.mode === 'copy') {
 		return checks;
@@ -540,7 +591,10 @@ function stageTools(paths: readonly string[], text: (p: string) => string): Tool
 }
 
 export function buildPlan(files: readonly SourceFile[], options: { name: string; reference: string }): ScratchPlan {
-	const source = files.filter((f) => !isIgnored(f.path) && f.bytes <= MAX_BYTES);
+	// go.sum is project content but never a step: `go mod tidy`, which the go.mod
+	// step runs, writes it. Dropped from the step universe rather than from
+	// isIgnored — it is not noise, it just has no step to call its own.
+	const source = files.filter((f) => !isIgnored(f.path) && f.bytes <= MAX_BYTES && baseName(f.path) !== 'go.sum');
 	const analysed = analyse(source);
 	const modules = new Map<string, string>();
 	for (const f of source) {
@@ -560,8 +614,10 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 		}
 		for (const p of paths) {
 			const a = analysed.get(p)!;
-			const mode: StepMode = a.kind === 'lock' ? 'copy' : 'write';
-			const moduleDir = goModuleOf(p, modules)?.[0];
+			const owner = goModuleOf(p, modules);
+			const gen = generatedBy(p, baseName(p) === 'go.mod' ? modules.get(dirName(p)) : owner?.[1]);
+			const mode: StepMode = gen ? 'generate' : a.kind === 'doc' ? 'copy' : a.kind === 'lock' ? 'copy' : 'write';
+			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd };
 			steps[p] = {
 				id: p,
 				stage: stage.id,
@@ -570,11 +626,12 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 				mode,
 				lines: a.lines,
 				bytes: a.file.bytes,
+				...(gen ? { command: gen.cmd, commandCwd: gen.cwd } : {}),
 				summary: a.summary,
 				declares: a.declares,
 				deps: a.deps,
 				depStages: a.depDirs,
-				checks: checksFor({ id: p, kind: a.kind, mode }, moduleDir),
+				checks: checksFor(shape, owner?.[0]),
 			};
 			claimed.add(p);
 		}
@@ -598,7 +655,7 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 		id: '@foundations',
 		title: 'Foundations',
 		blurb: 'The manifests: what the project is called, what it depends on, how it is built. '
-			+ 'Type the two you actually author (go.mod, package.json) and copy the lockfiles — nobody writes a lockfile.',
+			+ 'You type package.json and the configs; go.mod and the lockfiles are generated — the step runs the command.',
 		cls: 'foundations',
 		setup: [
 			...[...modules.keys()].map((d) => `cd ${d || '.'} && go mod download`),
