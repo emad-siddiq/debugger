@@ -3,7 +3,6 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
-import * as net from 'net';
 import * as vscode from 'vscode';
 
 // The Run view's **Full Stack** section (docs/plans/02 §3.4): three rows that
@@ -102,21 +101,13 @@ export class FullStackProvider implements vscode.TreeDataProvider<Node>, vscode.
 
 /** Is anything listening there? One short connect, no protocol handshake — the
  *  question is "is the tier up", not "is it healthy", and a health check that
- *  runs every four seconds would be its own problem. */
-export function portOpen(host: string, port: number, timeoutMs = 400): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = new net.Socket();
-		const done = (open: boolean) => {
-			socket.destroy();
-			resolve(open);
-		};
-		socket.setTimeout(timeoutMs);
-		socket.once('connect', () => done(true));
-		socket.once('timeout', () => done(false));
-		socket.once('error', () => done(false));
-		socket.connect(port, host);
-	});
-}
+ *  runs every four seconds would be its own problem.
+ *
+ *  Lives in `ownership.ts` since WO-61 and is re-exported here for the callers
+ *  that already had it: that module must not import `vscode` (its decision table
+ *  is unit-tested from plain node), so it is the one that can own a helper both
+ *  sides need. */
+export { portOpen } from './ownership';
 
 /** `postgres://user@host:5432/db` → the host and port to probe. Defaults are
  *  Postgres's own, so a DSN without them still resolves. */

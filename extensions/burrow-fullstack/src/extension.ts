@@ -21,6 +21,7 @@ import { DebugConfigProvider } from './configView';
 import { FullStackProvider, Tier, hostPortOf, portOpen } from './statusView';
 import { announceOnVisible } from './toolSurface';
 import { composeUpArgs, resolveComposeFile } from './db';
+import { describeListener, foreignPortMessage, hostPortOfUrl, listenerOn, noListenerMessage, ownershipOf, sameOrigin } from './ownership';
 import { SeedRunner } from './seed';
 import { DEFAULT_MANIFEST, ToggleManifest, activeProcesses, effectiveState, envPatch, parseManifest } from './toggles';
 
@@ -272,6 +273,19 @@ async function debugFullStack(out: vscode.OutputChannel, afterBackendUp?: () => 
 
 			progress.report({ message: 'backend (dlv)…' });
 			const backendUp = await attempt('backend', async () => {
+				// Who has the port BEFORE we launch anything. This is the whole of the
+				// ownership claim (ownership.ts): a health check answers "is something
+				// there", and the compound has to answer "is the thing I started
+				// there". Skipped for an attach configuration, where a listener that
+				// is already up is the entire point.
+				const where = hostPortOfUrl(healthUrl());
+				const attaching = isAttachConfig(folder, backendConfig);
+				const before = where && !attaching ? await listenerOn(where.host, where.port) : { open: false };
+				if (before.open && where) {
+					out.appendLine(`[fullstack] backend: :${where.port} already held by ${describeListener(before)} — refusing to launch`);
+					throw new Error(foreignPortMessage(healthUrl(), where.port, before));
+				}
+
 				const started = await vscode.debug.startDebugging(folder, backendConfig);
 				if (!started) {
 					throw new Error(`the "${backendConfig}" configuration did not start — check .vscode/launch.json, that dlv is installed, and (on macOS) that Developer Mode is enabled: sudo DevToolsSecurity -enable`);
@@ -281,6 +295,19 @@ async function debugFullStack(out: vscode.OutputChannel, afterBackendUp?: () => 
 				// "backend up" there is a promise the tier has not made: the developer
 				// opens the app and gets connection-refused. Wait for it to answer.
 				await waitForBackend();
+
+				if (where && !attaching) {
+					const after = await listenerOn(where.host, where.port);
+					const owner = ownershipOf(before, after);
+					out.appendLine(`[fullstack] backend: :${where.port} ${owner} (${describeListener(after)})`);
+					if (owner !== 'ours') {
+						// `unknown` is a legitimate tier state on this fork and it beats a
+						// green we cannot stand behind. It reaches here only if the health
+						// URL answered and then the port went quiet — worth saying, not
+						// worth pretending about.
+						throw new Error(`${healthUrl()} answered, but this compound could not establish that the process it started owns :${where.port} (${owner}). Treating the backend tier as not up rather than reporting a green it cannot stand behind.`);
+					}
+				}
 				return true;
 			});
 			if (backendUp) {
@@ -328,12 +355,37 @@ async function debugFullStack(out: vscode.OutputChannel, afterBackendUp?: () => 
  */
 async function startBrowserDebug(out: vscode.OutputChannel, folder: vscode.WorkspaceFolder | undefined): Promise<boolean> {
 	const named = cfg('chromeConfig', 'Frontend: debug in Chrome (:5173)');
+	const url = await sidecarTargetUrl();
 	try {
 		if (named && folder && hasLaunchConfig(folder, named)) {
+			const base = launchConfig(folder, named);
+			// THE URL IS OURS; EVERYTHING ELSE IS THE PROJECT'S (WO-61 §2).
+			//
+			// This used to start the named configuration verbatim, on the principle
+			// that a workspace's launch.json is the invariant contract. The
+			// principle is right and the conclusion was wrong, because the compound
+			// does not serve the app where the workspace expects it to be: the
+			// frontend tier runs the app on the frontend-debugger sidecar's Vite,
+			// whose port defaults to 5180 precisely so it does NOT collide with the
+			// project's own dev server on 5173 — and merkle's config hard-codes
+			// `http://localhost:5173/watch/app/`.
+			//
+			// So Chrome opened a dead port, every time. The app was running and
+			// answering (its requests reach the Go backend from the panel's iframe,
+			// which is why the backend breakpoint still hit and the join looked
+			// half-alive), but the DEBUGGED browser had no app in it at all, and no
+			// breakpoint in any frontend file could bind. Measured 2026-07-29.
+			//
+			// webRoot and sourceMapPathOverrides stay the project's business — they
+			// describe its source layout, which we have not changed. The url does
+			// not: we moved the app, so we say where it went.
+			if (base && url && !sameOrigin(base.url as string | undefined, url)) {
+				out.appendLine(`[fullstack] browser: starting "${named}" with url ${url} (its own ${String(base.url)} is not where this compound serves the app)`);
+				return await vscode.debug.startDebugging(folder, { ...base, url } as unknown as vscode.DebugConfiguration);
+			}
 			out.appendLine(`[fullstack] browser: starting "${named}" from the workspace launch.json`);
 			return await vscode.debug.startDebugging(folder, named);
 		}
-		const url = await sidecarTargetUrl();
 		if (!url) {
 			out.appendLine('[fullstack] browser: no chrome launch config and the sidecar reported no URL — skipped');
 			return false;
@@ -356,8 +408,39 @@ async function startBrowserDebug(out: vscode.OutputChannel, folder: vscode.Works
  *  workspace configuration API, so a multi-root or settings-level `launch`
  *  block counts too. */
 function hasLaunchConfig(folder: vscode.WorkspaceFolder, name: string): boolean {
-	const configs = vscode.workspace.getConfiguration('launch', folder.uri).get<{ name?: string }[]>('configurations') ?? [];
-	return configs.some((c) => c?.name === name);
+	return !!launchConfig(folder, name);
+}
+
+/** The named launch configuration itself, so a caller can start it with one
+ *  field replaced instead of all-or-nothing. */
+function launchConfig(folder: vscode.WorkspaceFolder, name: string): Record<string, unknown> | undefined {
+	const configs = vscode.workspace.getConfiguration('launch', folder.uri)
+		.get<Record<string, unknown>[]>('configurations') ?? [];
+	return configs.find((c) => c?.name === name);
+}
+
+
+/**
+ * Is the backend configuration an `attach` rather than a `launch`?
+ *
+ * It decides whether a listener already on the port is a fatal collision or the
+ * thing we are here for. merkle ships `Backend: attach to dlv :2345` beside its
+ * launch configs, and someone who points `burrow.fullstack.backendConfig` at an
+ * attach config means it — refusing to start because the backend is running
+ * would be refusing the request.
+ */
+function isAttachConfig(folder: vscode.WorkspaceFolder | undefined, name: string): boolean {
+	if (!folder) {
+		return false;
+	}
+	const configs = vscode.workspace.getConfiguration('launch', folder.uri)
+		.get<{ name?: string; request?: string }[]>('configurations') ?? [];
+	return configs.some((c) => c?.name === name && c?.request === 'attach');
+}
+
+/** The health URL the backend tier probes, or '' when the check is switched off. */
+function healthUrl(): string {
+	return cfg('backendHealthUrl', 'http://127.0.0.1:8080/healthz');
 }
 
 /** Where the frontend-debugger is actually serving the app. */
@@ -453,7 +536,7 @@ async function waitForApp(timeoutMs = 60000): Promise<void> {
  * before the listener, so the message says so.
  */
 async function waitForBackend(): Promise<void> {
-	const url = cfg('backendHealthUrl', 'http://127.0.0.1:8080/healthz');
+	const url = healthUrl();
 	if (!url) {
 		return;
 	}
@@ -469,7 +552,7 @@ async function waitForBackend(): Promise<void> {
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
-	throw new Error(`the debug session started but ${url} never answered within ${Math.round(timeoutMs / 1000)}s — the program is most likely halted at a breakpoint that runs before it listens (or set burrow.fullstack.backendHealthUrl to '' to skip this check)`);
+	throw new Error(noListenerMessage(url, Math.round(timeoutMs / 1000)));
 }
 
 /** The running sidecar's UI port, via the frontend-debugger's read-only API. */

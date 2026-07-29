@@ -28,7 +28,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-fullstack",
 		"watch": "gulp watch-extension:burrow-fullstack",
-		"test": "node test/db.test.js && node test/toggles.test.js"
+		"test": "node test/db.test.js && node test/toggles.test.js && node test/ownership.test.js"
 	},
 	"contributes": {
 		"commands": [
