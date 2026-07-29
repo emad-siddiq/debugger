@@ -5,7 +5,7 @@
 
 import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
 import { CheckRun } from './checks';
-import { ScratchPlan, ScratchStage, ScratchStep, dependents } from './planModel';
+import { ScratchPlan, ScratchStage, ScratchStep, dependents, forwardDeps } from './planModel';
 import { Progress, StepState, overallTally, percent, stageTally, stateOf } from './progressModel';
 
 // The **step page**: one file's worth of context, in an editor tab beside the
@@ -196,11 +196,21 @@ export function routeNote(step: ScratchStep): string {
 	return `<p class="quiet">Serves ${named}${rest > 0 ? ` and ${rest} more route${rest === 1 ? '' : 's'}` : ''}.</p>`;
 }
 
-/** A step's place in the plan, for spotting a dependency that comes later. */
-function position(plan: ScratchPlan, stepId: string): number {
-	const stage = plan.stages.findIndex((s) => s.id === plan.steps[stepId]?.stage);
-	return stage < 0 ? Number.MAX_SAFE_INTEGER : stage * 10_000 + plan.stages[stage].steps.indexOf(stepId);
-}
+/**
+ * An import cycle means SOMETHING has to come first: the plan picked one, and
+ * no other plan could have done better. Say so, and say it only when it is true.
+ */
+export const CYCLE_NOTE = 'comes later — an import cycle, so one of the two has to be first either way';
+
+/**
+ * Not a cycle: the plan could have put this dependency first and did not. The
+ * reader is the one who has to act on that, so the note says what to do rather
+ * than blaming a graph.
+ */
+export const DEFECT_NOTE = 'comes later, and it did not have to — write it first, or expect this file\'s checks to fail until you do';
+
+/** How many ordinary entries a list shows before it starts counting. */
+const LINK_CAP = 12;
 
 const KIND_LABEL: Record<string, string> = {
 	go: 'Go', gotest: 'Go test', ts: 'TypeScript', tsx: 'React component',
@@ -224,18 +234,25 @@ function checksBlock(state: PageState, step: ScratchStep): string {
 	return `<section><h2>When it is done</h2><ul class="checks">${rows}</ul></section>`;
 }
 
-function linkList(plan: ScratchPlan, ids: readonly string[], empty: string, later?: (id: string) => boolean): string {
+/**
+ * A list of steps you can click through to. `ofStep`, when given, is the step
+ * whose list this is: its dependencies are classified against the plan's own
+ * invariant pass, so anything ordered after it is labelled with the reason.
+ */
+export function linkList(plan: ScratchPlan, ids: readonly string[], empty: string, ofStep?: string): string {
 	if (!ids.length) {
 		return `<p class="quiet">${empty}</p>`;
 	}
-	return `<ul class="links">${ids.slice(0, 12).map((id) => {
+	const forward = ofStep === undefined ? undefined : forwardDeps(plan).get(ofStep);
+	const shown = ids.slice(0, LINK_CAP);
+	const rows = shown.map((id) => {
 		const step = plan.steps[id];
-		// An import cycle means SOMETHING has to come first. Say which way the
-		// plan chose rather than letting the file look already-written.
-		const note = later?.(id) ? '<span class="quiet"> — comes later (import cycle)</span>'
+		const note = forward?.has(id) ? `<span class="quiet"> — ${forward.get(id) ? CYCLE_NOTE : DEFECT_NOTE}</span>`
 			: step?.declares.length ? `<span class="quiet"> — ${escape(step.declares.slice(0, 2).join(', '))}</span>` : '';
 		return `<li><a data-goto="${escape(id)}">${escape(step ? step.id : id)}</a>${note}</li>`;
-	}).join('')}${ids.length > 12 ? `<li class="quiet">…and ${ids.length - 12} more</li>` : ''}</ul>`;
+	}).join('');
+	const hidden = ids.length - shown.length;
+	return `<ul class="links">${rows}${hidden ? `<li class="quiet">…and ${hidden} more</li>` : ''}</ul>`;
 }
 
 function html(state: PageState): string {
@@ -323,7 +340,7 @@ function html(state: PageState): string {
 		${linkList(plan, step.deps, step.depStages.length
 		? `Nothing file-by-file. It imports ${step.depStages.slice(0, 4).map((d) => `<code>${escape(d)}</code>`).join(', ')} — packages you have already written.`
 		: 'Nothing in this project. This is a leaf: it can be written first and on its own.',
-		(id) => position(plan, id) > position(plan, stepId))}
+		stepId)}
 	</section>
 
 	${step.declares.length ? `<section><h2>What it declares</h2><div class="decl">${step.declares.map((d) => `<span>${escape(d)}</span>`).join('')}</div></section>` : ''}

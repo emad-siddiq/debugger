@@ -995,6 +995,34 @@ export function orderViolations(plan: ScratchPlan): OrderViolation[] {
 	return out;
 }
 
+/** One Tarjan pass per plan object. The step page re-renders on every click and
+ *  the walk covers every step and every dependency edge in the project. */
+const FORWARD_DEPS = new WeakMap<ScratchPlan, Map<string, Map<string, boolean>>>();
+
+/**
+ * `orderViolations` regrouped for the step page: per step, the dependencies that
+ * come later, and whether each one is a genuine cycle.
+ *
+ * The page used to call every forward dependency an import cycle, which on
+ * merkle was true of 2 out of 25 — it told a reader an avoidable ordering defect
+ * was unavoidable. Both now read the SAME classification, so a label cannot
+ * claim a cycle where the invariant counts a defect.
+ */
+export function forwardDeps(plan: ScratchPlan): ReadonlyMap<string, ReadonlyMap<string, boolean>> {
+	const cached = FORWARD_DEPS.get(plan);
+	if (cached) {
+		return cached;
+	}
+	const out = new Map<string, Map<string, boolean>>();
+	for (const violation of orderViolations(plan)) {
+		const deps = out.get(violation.step) ?? new Map<string, boolean>();
+		deps.set(violation.dep, violation.cyclic);
+		out.set(violation.step, deps);
+	}
+	FORWARD_DEPS.set(plan, out);
+	return out;
+}
+
 /** Reverse edges: which steps name this one as a dependency. Computed rather
  *  than stored so the plan file stays a tree and cannot disagree with itself. */
 export function dependents(plan: ScratchPlan, stepId: string): string[] {
