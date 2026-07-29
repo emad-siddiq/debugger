@@ -175,7 +175,7 @@
 		"viewsWelcome": [
 			{
 				"view": "burrowFlowRoutes",
-				"contents": "No routes indexed yet. Burrow reads the Go backend's router to list every endpoint merkle serves.\n[Scan the backend](command:burrow.flow.refresh)"
+				"contents": "No routes indexed yet. Burrow starts at the file that creates the backend's router and follows every registration out from there.\n[Scan the backend](command:burrow.flow.refresh)"
 			}
 		]
 	}
