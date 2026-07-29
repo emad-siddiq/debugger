@@ -53,6 +53,18 @@ re-runs `go doc`. Deriving is cheaper than storing, and it cannot go stale.
    connection strings, no tokens. The grid persists its SQL and the connection's
    `user@host:port/db` label; it never persists a row. The HTTP workbench
    persists which request was picked; it never persists what came back.
+
+   The API view's **Recent** list is the case where this rule cost something and
+   was kept anyway (ruled in WO-60b). Ten sends with their statuses would be
+   genuinely useful across a reload, and they are not persisted, because a record
+   holds the *resolved* URL and a `.http` variable routinely puts an API key in a
+   query string — persisting it writes a credential to workspace storage. Showing
+   last session's statuses under a heading that reads "Recent" is also a small
+   lie. So the list is session-scoped, and what survives is one boolean saying a
+   send happened in this workspace — never what it was — so the empty list can
+   say `Cleared on reload · a sent URL can carry a key, so it is never saved`
+   instead of being silently empty. Grey-with-a-reason applies to a list that
+   comes back empty exactly as it applies to a panel that comes back partial.
 4. **Bounded.** Every blob has a ceiling and states what it dropped: SQL over
    32 KB, doc history over 50 hops, isolation props over 16 KB, a stored test run
    over 48 KB (failures' output goes first, then all output, and the panel says
@@ -77,6 +89,13 @@ Both still run, and neither fights this:
 - **Per-rail editor sets (patch `0014`)** save the outgoing rail's visible
   editors *before* the sweep runs, so the tool's panel is in the set it belongs
   to and `applyWorkingSet` revives it on the way back.
+
+  0014 needed one fix of its own for any of that to be visible: it registered at
+  `AfterRestored` and treated the user's first rail click after a window restore
+  as a baseline rather than a switch, so the panel came back into the right set
+  and was then not shown. A restored panel nobody can see is indistinguishable
+  from a lost one. Fixed in WO-60b (0014 seeds itself from
+  `getLastActivePaneCompositeId`); asserted by `P2-13`.
 - **The tool-surface sweep (WO-23, `burrow-core/src/tools.ts`)** closes another
   tool's claimed surfaces 300 ms after a rail switch. By then the working set has
   already been applied, so it finds nothing of the *active* tool's to close.

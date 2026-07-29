@@ -7,8 +7,18 @@ built-in extension or a config change.
 ## The rule
 
 - Every commit that edits files under `src/`, `build/`, or other upstream
-  source **must** have a ledger entry here. CI rejects core-source diffs
-  without one (see `../build/burrow/check-ledger.js`, task 01).
+  source **must** have a ledger entry here, and that entry **must name the
+  file**. `../build/burrow/check-ledger.js` fails on any core file no entry
+  mentions — by path, basename or stem, so prose counts and a bullet list is
+  not required, but silence is not an option.
+- The baseline every diff is measured against is the SHA in `UPSTREAM_BASE`,
+  not a branch name. It was a branch name until WO-60b, the branch was refetched
+  past the fork commit, `git diff` began answering `no merge base`, and the gate
+  stopped checking anything for weeks. **If you re-base the fork, update that
+  file in the same commit.**
+- `make ledger-check` reads HEAD *and* the working tree, so it catches an
+  unledgered edit before you commit it. `make ledger-check-ci` reads HEAD only —
+  what CI sees on a clean checkout.
 - Budget: **< 15 patches total, each < 300 lines.** Bigger ⇒ move the logic to
   a built-in extension (`extensions/burrow-*`, layer 4).
 - Config-only changes (`product.json`, build flags) are **layer 1** — tracked

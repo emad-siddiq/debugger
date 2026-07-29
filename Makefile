@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 ARCH  := $(shell uname -m)
 
-.PHONY: help node-check deps dev dist stage-tools install ledger-check clean
+.PHONY: help node-check deps dev dist stage-tools install ledger-check ledger-check-ci clean
 
 # Where `gulp vscode-darwin-<arch>` leaves the packaged app, and where macOS
 # needs it for Launchpad to pick it up. Note the output is a SIBLING of the
@@ -26,7 +26,8 @@ help:
 	@echo "  make dist         packaged .app (gulp vscode-darwin-$(ARCH)) + tools/"
 	@echo "  make stage-tools  put tools/ inside an already-packaged .app"
 	@echo "  make install      copy the packaged .app to $(INSTALL) for Launchpad"
-	@echo "  make ledger-check  fail if core-source diffs lack a patch ledger entry"
+	@echo "  make ledger-check  fail if a core-source change is named by no patch ledger entry"
+	@echo "                     (HEAD + working tree; 'make ledger-check-ci' for HEAD only)"
 
 node-check:
 	@want=$$(cat .nvmrc); have=$$(node -v | sed 's/^v//'); \
@@ -71,6 +72,10 @@ install:
 
 ledger-check:
 	node build/burrow/check-ledger.js
+
+# What CI sees on a clean checkout — no working tree to read.
+ledger-check-ci:
+	node build/burrow/check-ledger.js --committed
 
 clean:
 	rm -rf out out-* .build node_modules/.cache

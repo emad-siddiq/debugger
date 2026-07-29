@@ -6,6 +6,7 @@
 - **New Burrow-owned files:** `src/vs/workbench/contrib/burrowRailSets/browser/railEditorSets.{contribution.ts,md}`
 - **Size:** 1 line in the upstream file
 - **Last verified against:** upstream 1.128.0
+- **Amended:** WO-60b, 2026-07-29 — see *Amendment* below
 
 ## Why
 
@@ -51,7 +52,17 @@ of which alone is enough to make a feature look like it does not exist:
 
 This entry covers the standalone rewrite for the standard workbench. The
 sessions-flavour twin is left in place, inert, and named in `railEditorSets.md`
-so the next reader does not have to rediscover which of the two runs.
+so the next reader does not have to rediscover which of the two runs. It is
+three files, all Burrow-owned and all dead code in this product:
+
+- `src/vs/sessions/contrib/layout/browser/compositeEditorSetsController.ts`
+- `src/vs/sessions/contrib/layout/browser/compositeEditorSetsController.md`
+- `src/vs/sessions/contrib/layout/test/browser/compositeEditorSetsController.test.ts`
+- plus its registration in `src/vs/sessions/contrib/layout/browser/sessions.layout.contribution.ts`
+
+They are listed here because they are core-source files and the ledger is the
+only place that says so. WO-60b's rebuilt gate caught the test file as
+unmentioned, which is the gate working: the paths above are now the record.
 
 ## Interaction with WO-23's tool-surface sweep
 
@@ -60,7 +71,48 @@ editor area first, so the sweep 300ms later finds nothing of another tool's to
 close. `burrow.workbench.tidyToolTabs` stays on — it is the fallback when a user
 turns the editor sets off.
 
-## Known edge — webview panels do not come back
+## Amendment — WO-60b, 2026-07-29: the first rail click after a restore was swallowed
+
+**Authorised deviation from the run protocol's line budget.** The patch *count*
+is unchanged — this is an edit to 0014, not a new entry — but the line count in
+`railEditorSets.contribution.ts` moves by **+19/−8** (7 of them code, the rest
+comment). WO-60b authorised it explicitly, and the reason is that without it
+WO-60's ten serializers are invisible on the one click that matters: the panel
+comes back into the rail's set correctly and then is not shown, which reads to
+the user as the panel having been lost.
+
+**The fault.** `RailEditorSetsContribution` registers at
+`WorkbenchPhase.AfterRestored`, by which time the restored sidebar composite is
+already open — so `onDidPaneCompositeOpen` never fires for it. The first event
+the contribution could ever observe was therefore the user's first click, and
+`_pendingRebaseline` consumed it without saving the outgoing set or applying the
+incoming one. Measured in the packaged app, both directions: reload on
+Components then click Data left the Components editors in place; reload on Data
+then click Explorer left the Data editors in place.
+
+**The fix.** `_pendingRebaseline` is deleted. The constructor seeds
+`_currentKey` from
+`paneCompositePartService.getLastActivePaneCompositeId(ViewContainerLocation.Sidebar)`.
+
+Chosen over the alternative (apply on the first event whose key differs from the
+restored one) because it is the one that survives **a rail being closed entirely
+at restore time**: `getLastActivePaneCompositeId` reads the pane composite
+part's persisted id — `compositePart.ts` seeds `lastActiveCompositeId` from
+storage in its own constructor — so it answers with the rail the window was left
+on even when the sidebar is hidden and there is no live composite to compare
+anything against. The alternative has nothing to work with in that case and
+degrades back to swallowing the click.
+
+Where the seed does not participate (Search, Source Control, or a part with no
+persisted id), `_currentKey` stays `undefined` and the existing
+`!this._currentKey` branch baselines without swapping — deliberately: there is
+no outgoing set to save, and applying a set over editors that belong to no rail
+would close tabs that are in no set and cannot be brought back.
+
+**Regression cover:** `docs/plans/scripts/pass2/P2-13.mjs`, which drives both
+directions in a real window and names the rail in the failure message.
+
+## Known edge — webview panels do not come back (closed by WO-60)
 
 `applyWorkingSet` restores editors the workbench can serialize. A webview panel
 is serializable only if its extension registers a `WebviewPanelSerializer`, and
@@ -68,7 +120,13 @@ no Burrow tool does. So the Data grid, Wire Diagram, Test Lab, HTTP workbench an
 the isolation preview **close on leaving their rail and do not return with it** —
 their files do. This is not silent data loss (each is one click to reopen, and
 the isolation trio tears down as a unit by its own rule), but it is a visible
-asymmetry: file tabs restore, tool panels reopen. Tracked as WO-60.
+asymmetry: file tabs restore, tool panels reopen.
+
+**Closed by WO-60** (2026-07-29, layer 4 only, no core change): ten surfaces
+register a serializer and come back with their rail, their window and their
+state. Nothing in this patch changed for it. The dependency runs one way — a new
+tool surface without a serializer silently drops out of every set its rail
+saves. See `docs/architecture/17-panel-persistence.md`.
 
 ## Rebase notes
 

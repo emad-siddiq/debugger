@@ -1,8 +1,14 @@
 # Burrow run protocol — integration + optimization run
 
 _Operating contract for the prompt/report loop between the chat-side architect
-and the IDE-side agent. Save at `.claude/docs/burrow-run-protocol.md`. Binding
-for every work order (WO) in this run. 2026-07-13._
+and the IDE-side agent. Binding for every work order (WO) in this run.
+2026-07-13; standing rule 5 added 2026-07-29 (WO-60b)._
+
+> **Where this lives.** Work orders cite it as `.claude/docs/burrow-run-protocol.md`
+> — the path the header asked for on day one. It has never been at that path;
+> `.claude/docs/` holds `convos/` and `plans/` only. The file is here, in the
+> burrow repo, under version control, which is the better home for a document
+> that binds commits. Cite it as `burrow/docs/legacy-reports/burrow-run-protocol.md`.
 
 ## The run
 
@@ -46,7 +52,32 @@ the deferred chat excision.
    positions live. Zero non-user-initiated network. No marketplace.
    `defaultChatAgent` stays (load-bearing) until the chat-excision task.
    The NodeWatch debug-env contract is preserved verbatim.
-5. **Knowledge lands in files, not just chat:** durable gotchas →
+5. **One session owns the working tree.** Added WO-60b, 2026-07-29, after a
+   second session committed three times mid-WO and swept part of another
+   session's `burrow-scratch` change into a commit of its own. Nothing was lost
+   that time; nothing guarantees that twice. The rule:
+
+   - **The session running the active WO owns `burrow/`.** It is the only one
+     that commits there, and it stages **by explicit path** — never `git add -A`,
+     `git add .`, or `git commit -a`, all three of which silently adopt whatever
+     a concurrent session has left in the tree.
+   - **A second session that finds the tree claimed does not write to it.**
+     Read, search, compile, run tests, drive the packaged app — all fine. What it
+     must not do is edit tracked files, commit, or `git checkout`/`stash`/`reset`.
+     Either wait for the owner's report, or take a branch of its own
+     (`git worktree add ../burrow-<wo> -b wo-<nn>`) and work there, which costs
+     one command and removes the question entirely.
+   - **How to tell it is claimed.** The tree is claimed while any WO is open —
+     i.e. from the first edit of a WO until its report is filed. There is no lock
+     file; `git log --since=1.hour` and `git status` are the check. If in doubt,
+     assume claimed: the cost of asking is a message, the cost of guessing wrong
+     is someone else's commit containing your half-finished work.
+   - **On finding your own edits inside someone else's commit:** do not rewrite
+     their history. Verify your change is intact at HEAD (by symbol, not by
+     diff), say so in the report naming their SHA, and carry on. WO-60 §Changed
+     is the worked example.
+
+6. **Knowledge lands in files, not just chat:** durable gotchas →
    `.claude/memory/burrow-go-ide-fork.md`; design decisions → the owning
    `burrow/docs/architecture/*.md` (FD gets `15-frontend-debugger.md` in house
    style once its architecture is fixed); upstream surprises → the relevant

@@ -59,12 +59,6 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 	private readonly _setsByKey = new Map<string, IEditorWorkingSet | 'empty'>();
 
 	private _currentKey: string | undefined;
-	/**
-	 * True until the first composite event after startup: the editors on screen
-	 * were put there by the workbench's own restore, not by a rail click, so that
-	 * event only re-baselines `_currentKey` instead of saving and applying.
-	 */
-	private _pendingRebaseline = true;
 	private _applying = false;
 	private readonly _sequencer = new Sequencer();
 
@@ -78,6 +72,20 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 		super();
 
 		this._loadState();
+
+		// Seed the current rail from the one the workbench has ALREADY restored.
+		// This contribution runs at `AfterRestored`, by which time the restored
+		// sidebar composite is open and its `onDidPaneCompositeOpen` has been and
+		// gone — so the first event we would otherwise see is the user's own first
+		// click, and treating that as the baseline swallows it (WO-60b).
+		// `getLastActivePaneCompositeId` reads the part's persisted id rather than
+		// the live composite, so it also answers when the sidebar is hidden at
+		// restore: the editors on screen still belong to the rail we were left on.
+		const restoredKey = paneCompositePartService.getLastActivePaneCompositeId(ViewContainerLocation.Sidebar);
+		if (participates(restoredKey)) {
+			this._currentKey = restoredKey;
+		}
+
 		this._register(this._storageService.onWillSaveState(() => this._saveState()));
 
 		this._register(paneCompositePartService.onDidPaneCompositeOpen(({ composite, viewContainerLocation }) => {
@@ -96,9 +104,12 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 		if (!participates(compositeId) || this._applying || !this._enabled()) {
 			return;
 		}
-		if (this._pendingRebaseline || !this._currentKey) {
+		if (!this._currentKey) {
+			// Restored onto a rail that owns no editor set (Search, Source Control,
+			// or a fresh part with no persisted id). There is no outgoing set to
+			// save, and the visible editors belong to no rail — applying over them
+			// would close tabs nothing could bring back. Baseline and swap nothing.
 			this._currentKey = compositeId;
-			this._pendingRebaseline = false;
 			return;
 		}
 		if (compositeId === this._currentKey) {

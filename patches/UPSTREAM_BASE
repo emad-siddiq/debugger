@@ -1,0 +1,14 @@
+# The commit this fork branched from — the baseline every core diff is measured
+# against. A SHA, not a branch name, on purpose: `upstream-v1.128` was refetched
+# past this commit at some point during the run, `git diff upstream-v1.128...HEAD`
+# started answering `no merge base`, and the ledger gate stopped running at all
+# without anyone noticing. A recorded SHA cannot move underneath us.
+#
+# Read by build/burrow/check-ledger.js. First non-comment, non-blank line wins.
+# If the fork is ever re-based onto a newer upstream, update this line in the
+# same commit that does it.
+
+ab3aaf49eb36fc2afa20e9e0b80ea272e603e2a0
+
+# was: v1.128.0 · [Cherry-pick] Remove last-used session type and agent logic
+#      (#323484) (#324826) · 2026-07-07

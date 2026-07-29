@@ -6,7 +6,7 @@
 import { ExtensionContext, TextDocument, Uri, commands, languages, window, workspace } from 'vscode';
 import { HttpCodeLensProvider } from './codelens';
 import { convertPostmanCollection } from './postman';
-import { RequestsProvider } from './requestsTree';
+import { RequestsProvider, rememberWorkspace } from './requestsTree';
 import { announceOnVisible, claimSurface } from './toolSurface';
 import { HTTP_WORKBENCH_VIEW_TYPE, HttpWorkbench } from './workbench';
 
@@ -28,7 +28,10 @@ function isHttpDocument(document: TextDocument): boolean {
 export function activate(context: ExtensionContext): void {
 	const workbench = new HttpWorkbench();
 	// The API view's Requests section (docs/plans/02 §3.5) — an index of the
-	// workspace's .http files and what the last sends answered.
+	// workspace's .http files and what the last sends answered. Sends are NOT
+	// persisted (WO-60b ruling; a resolved URL can carry a key) — the memento
+	// carries one boolean so the empty list after a reload says why it is empty.
+	rememberWorkspace(context.workspaceState);
 	const requests = new RequestsProvider();
 	// Tool-surface isolation (docs/plans/02 §6).
 	const requestsView = window.createTreeView(RequestsProvider.viewId, { treeDataProvider: requests });
