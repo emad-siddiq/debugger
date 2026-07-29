@@ -39,10 +39,26 @@ type Inbound =
 	| { readonly type: 'navigate'; readonly input: string }
 	| { readonly type: 'back' }
 	| { readonly type: 'close' }
+	| { readonly type: 'retry' }
 	| { readonly type: 'focus' };
 
 /** The command that maximizes / restores the active editor group ("fullscreen"). */
 const MAXIMIZE_COMMAND = 'workbench.action.toggleMaximizeEditorGroup';
+
+export const DOCS_VIEW_TYPE = 'burrowGoDocs';
+
+/** How many hops of back-history are persisted. A `DocTarget` is ~60 bytes, so
+ *  fifty of them is ~3 KB — comfortably inside the per-panel budget, and deeper
+ *  than anyone reads back through in one sitting. */
+const HISTORY_CAP = 50;
+
+/** The viewer's state (WO-60): where you had navigated to, not what it showed.
+ *  `go doc` re-renders a package in milliseconds from the module cache, so the
+ *  rendered text would be a cache of a cache — and a large one. */
+interface DocViewerState {
+	readonly history?: readonly DocTarget[];
+	readonly cursor?: number;
+}
 
 export class DocViewer implements Disposable {
 
@@ -52,6 +68,12 @@ export class DocViewer implements Disposable {
 	/** Visited targets; navigation truncates the forward tail then appends. */
 	private history: DocTarget[] = [];
 	private cursor = -1;
+
+	/**
+	 * True until the first render after a revive. That render runs the toolchain
+	 * OFFLINE: reviving a tab is not a request to download a module.
+	 */
+	private restoring = false;
 
 	/** Where to return focus on close; captured only when a real editor is active. */
 	private savedEditor: SavedEditor | undefined;
@@ -86,6 +108,36 @@ export class DocViewer implements Disposable {
 		this.disposables.length = 0;
 	}
 
+	/**
+	 * Come back with the rail, a reload and a relaunch (WO-60), at the symbol you
+	 * had navigated to and with the back stack you built getting there.
+	 *
+	 * Two things a revive deliberately does NOT do: it does not maximize the
+	 * editor group (the viewer maximizes when YOU open it; doing that during a
+	 * window restore would rearrange a layout nobody touched), and it does not
+	 * let the toolchain reach the network.
+	 */
+	register(): Disposable {
+		return window.registerWebviewPanelSerializer(DOCS_VIEW_TYPE, {
+			deserializeWebviewPanel: async (panel: WebviewPanel, state: unknown): Promise<void> => {
+				const saved = (state ?? {}) as DocViewerState;
+				const history = (saved.history ?? []).filter((t): t is DocTarget => !!t && typeof t.label === 'string');
+				this.panel?.dispose();
+				this.history = [...history];
+				this.cursor = typeof saved.cursor === 'number' && saved.cursor >= 0 && saved.cursor < history.length
+					? saved.cursor
+					: history.length - 1;
+				this.restoring = this.cursor >= 0;
+				this.panel = panel;
+				panel.webview.options = { enableScripts: true };
+				panel.webview.html = this.html();
+				panel.webview.onDidReceiveMessage((m: Inbound) => this.onMessage(m), undefined, this.disposables);
+				panel.onDidDispose(() => this.onDisposed(), undefined, this.disposables);
+				await this.render();
+			},
+		});
+	}
+
 	/** Truncate any forward history and append the new target. */
 	private push(target: DocTarget): void {
 		this.history = this.history.slice(0, this.cursor + 1);
@@ -104,7 +156,7 @@ export class DocViewer implements Disposable {
 			return;
 		}
 		const panel = window.createWebviewPanel(
-			'burrowGoDocs',
+			DOCS_VIEW_TYPE,
 			'Go Docs',
 			ViewColumn.Active,
 			{ enableScripts: true, retainContextWhenHidden: true },
@@ -145,6 +197,12 @@ export class DocViewer implements Disposable {
 					await this.render();
 				}
 				return;
+			case 'retry':
+				// The button an offline restore offers. Clicking it IS the user
+				// asking, so this render may reach the module proxy.
+				this.restoring = false;
+				await this.render();
+				return;
 			case 'close':
 				this.panel?.dispose();
 				return;
@@ -167,14 +225,31 @@ export class DocViewer implements Disposable {
 		const showAll = cfg.get<boolean>('showAll', false);
 		panel.title = `Go Docs — ${target.label}`;
 		void panel.webview.postMessage({ type: 'loading', label: target.label });
-		const result = await runGoDoc(goBin, buildGoDocArgs(target, showAll), this.cwd());
+		const offline = this.restoring;
+		this.restoring = false;
+		const result = await runGoDoc(goBin, buildGoDocArgs(target, showAll), this.cwd(), undefined, offline);
 		if (this.panel !== panel) {
 			// Disposed (or replaced) while awaiting the toolchain — drop the stale result.
 			return;
 		}
 		const canBack = this.cursor > 0;
+		// Persist the navigation, not the page — the webview owns the blob the
+		// serializer above reads back (WO-60). Only the tail: a long reading
+		// session is unbounded, and a panel's state is not a place to keep an
+		// unbounded list. Back stops working past HISTORY_CAP hops, which is the
+		// smaller of the two costs.
+		const from = Math.max(0, this.history.length - HISTORY_CAP);
+		void panel.webview.postMessage({ type: 'state', history: this.history.slice(from), cursor: this.cursor - from });
 		if (result.ok) {
 			void panel.webview.postMessage({ type: 'render', label: target.label, html: renderDocHtml(result.text), canBack });
+		} else if (offline) {
+			void panel.webview.postMessage({
+				type: 'error',
+				label: target.label,
+				message: `${result.error ?? 'go doc failed'}\n\nThis tab was restored, so Burrow ran the toolchain offline rather than letting it fetch a module you did not ask for.`,
+				canBack,
+				offline: true,
+			});
 		} else {
 			void panel.webview.postMessage({ type: 'error', label: target.label, message: result.error ?? 'go doc failed', canBack });
 		}
@@ -300,6 +375,17 @@ export class DocViewer implements Disposable {
 				div.className = 'status error';
 				div.textContent = m.message;
 				content.replaceChildren(div);
+				if (m.offline) {
+					const retry = document.createElement('button');
+					retry.textContent = 'Run go doc anyway';
+					retry.style.marginTop = '10px';
+					retry.addEventListener('click', () => vscode.postMessage({ type: 'retry' }));
+					content.appendChild(retry);
+				}
+			} else if (m.type === 'state') {
+				// WO-60: where you had navigated to, handed back to the serializer on
+				// a rail switch, a reload and a relaunch.
+				vscode.setState({ history: m.history, cursor: m.cursor });
 			}
 		});
 		vscode.postMessage({ type: 'ready' });

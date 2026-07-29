@@ -1,7 +1,7 @@
 {
 	"name": "burrow-go-docs",
 	"displayName": "Burrow Go Docs",
-	"description": "Offline Go documentation for Burrow (architecture task 07): a command + hover affordance that shells the workspace Go toolchain (go doc <pkg>/<pkg>.<sym>) and renders version-true docs in a maximized, Esc/✕-dismissable fullscreen webview viewer.",
+	"description": "Offline Go documentation for Burrow (architecture task 07): a command + hover affordance that shells the workspace Go toolchain (go doc <pkg>/<pkg>.<sym>) and renders version-true docs in a maximized, Esc/\u2715-dismissable fullscreen webview viewer.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -13,7 +13,8 @@
 	],
 	"activationEvents": [
 		"onLanguage:go",
-		"onCommand:burrow.goDocs.open"
+		"onCommand:burrow.goDocs.open",
+		"onWebviewPanel:burrowGoDocs"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -31,7 +32,7 @@
 		"commands": [
 			{
 				"command": "burrow.goDocs.open",
-				"title": "Open Go Docs…",
+				"title": "Open Go Docs\u2026",
 				"category": "Burrow",
 				"icon": "$(book)"
 			}

@@ -1,7 +1,7 @@
 {
 	"name": "burrow-go-test",
 	"displayName": "Burrow Go Tests",
-	"description": "First-class Go tests for Burrow (architecture task 11): a native Test Explorer populated by scanning the workspace for `func Test*`/`Benchmark*`/`Fuzz*`/`Example*`, with real `go test -run <name> -json ./<pkg>` execution reporting pass/fail live into the test UI. First slice — discovery + run; coverage, bench history, fuzz corpus, watch mode and debug come later.",
+	"description": "First-class Go tests for Burrow (architecture task 11): a native Test Explorer populated by scanning the workspace for `func Test*`/`Benchmark*`/`Fuzz*`/`Example*`, with real `go test -run <name> -json ./<pkg>` execution reporting pass/fail live into the test UI. First slice \u2014 discovery + run; coverage, bench history, fuzz corpus, watch mode and debug come later.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -14,7 +14,8 @@
 	"activationEvents": [
 		"onLanguage:go",
 		"onView:burrowTests",
-		"workspaceContains:**/*_test.go"
+		"workspaceContains:**/*_test.go",
+		"onWebviewPanel:burrow.test.lab"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {

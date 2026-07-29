@@ -39,13 +39,59 @@ const DEFAULT_PORT = 6110;
 // real default comes from, and burrow-db already reads it).
 const EXAMPLE_DSN = 'postgres://user:password@localhost:5432/database';
 
+/** What a revived pgAdmin panel carries (WO-60). No connection string: the
+ *  label is `user@host:port/db`, which is what the panel already shows. */
+interface PgAdminPanelState {
+	readonly label?: string;
+	readonly port?: number;
+}
+
 /** Owns the pgAdmin container + its embedded webview. One per window. */
 export class PgAdmin implements vscode.Disposable {
+
+	public static readonly viewType = 'burrow.db.pgadmin';
 
 	private readonly out = vscode.window.createOutputChannel('Burrow pgAdmin');
 	private panel: vscode.WebviewPanel | undefined;
 
 	constructor(private readonly extensionPath: string) { }
+
+	/**
+	 * Make the panel survive a rail switch, a reload and a relaunch (WO-60).
+	 *
+	 * It comes back **stopped**, always. Reviving a tab must not start a Docker
+	 * container: the panel is restored because the workbench restored an editor,
+	 * not because anyone asked for pgAdmin — so it shows what it is pointed at
+	 * and offers one button. That button is the user-initiated act.
+	 */
+	register(): vscode.Disposable {
+		return vscode.window.registerWebviewPanelSerializer(PgAdmin.viewType, {
+			deserializeWebviewPanel: async (panel: vscode.WebviewPanel, state: unknown): Promise<void> => {
+				const saved = (state ?? {}) as PgAdminPanelState;
+				this.panel?.dispose();
+				this.panel = panel;
+				this.wire(panel);
+				this.paint(panel, typeof saved.port === 'number' ? saved.port : this.port(), saved.label ?? this.describeConfigured() ?? 'the configured connection', 'stopped');
+			},
+		});
+	}
+
+	/** The connection the window is pointed at, or undefined when none is set. */
+	private describeConfigured(): string | undefined {
+		const conn = pickConnectionString({
+			setting: vscode.workspace.getConfiguration(CONFIG_SECTION).get<string>('connectionString'),
+			env: process.env.DATABASE_URL,
+			workspace: findWorkspaceDatabaseUrl(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
+		});
+		if (!conn) {
+			return undefined;
+		}
+		try {
+			return describeDsn(parsePostgresUrl(conn));
+		} catch {
+			return undefined;
+		}
+	}
 
 	private get dir(): string { return path.join(this.extensionPath, 'tools', 'db-admin'); }
 	private port(): number { return vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>('pgadmin.port') ?? DEFAULT_PORT; }
@@ -187,25 +233,35 @@ export class PgAdmin implements vscode.Disposable {
 	 * failure that names the thing to start rather than showing a dead frame.
 	 */
 	private showPanel(port: number, label: string, state: 'loading' | 'ready' | 'failed', detail = ''): void {
-		const origin = `http://127.0.0.1:${port}`;
 		const panel = this.panel ?? vscode.window.createWebviewPanel(
-			'burrow.db.pgadmin',
+			PgAdmin.viewType,
 			'pgAdmin',
 			vscode.ViewColumn.Active,
 			{ enableScripts: true, retainContextWhenHidden: true },
 		);
 		if (!this.panel) {
-			panel.onDidDispose(() => { this.panel = undefined; });
-			panel.webview.onDidReceiveMessage((message: { type?: string }) => {
-				if (message?.type === 'exitFocus') {
-					// Esc bridge (docs/plans/01 §4): the iframe owns the keystroke.
-					void vscode.commands.executeCommand('burrow.focus.exit');
-				} else if (message?.type === 'retry') {
-					void this.open();
-				}
-			});
+			this.wire(panel);
 			this.panel = panel;
 		}
+		this.paint(panel, port, label, state, detail);
+	}
+
+	/** The one place the panel's listeners are attached — shared by a fresh open
+	 *  and by a revive, so a restored panel's ✕ and Esc behave identically. */
+	private wire(panel: vscode.WebviewPanel): void {
+		panel.onDidDispose(() => { this.panel = undefined; });
+		panel.webview.onDidReceiveMessage((message: { type?: string }) => {
+			if (message?.type === 'exitFocus') {
+				// Esc bridge (docs/plans/01 §4): the iframe owns the keystroke.
+				void vscode.commands.executeCommand('burrow.focus.exit');
+			} else if (message?.type === 'retry') {
+				void this.open();
+			}
+		});
+	}
+
+	private paint(panel: vscode.WebviewPanel, port: number, label: string, state: 'loading' | 'ready' | 'failed' | 'stopped', detail = ''): void {
+		const origin = `http://127.0.0.1:${port}`;
 		panel.title = state === 'ready' ? 'pgAdmin' : state === 'loading' ? 'pgAdmin — starting…' : 'pgAdmin — not running';
 		const n = nonce();
 		const body = state === 'ready'
@@ -213,7 +269,17 @@ export class PgAdmin implements vscode.Disposable {
 			: state === 'loading'
 				? `<div class="wait"><div class="spinner"></div><p>Starting pgAdmin for <b>${escapeHtml(label)}</b>…</p>
 					<p class="muted">First run pulls the <code>dpage/pgadmin4</code> image, which can take a minute.</p></div>`
-				: `<div class="wait"><h3>pgAdmin is not running</h3>
+				: state === 'stopped'
+					// WO-60: restored, not started. Reviving a tab is the workbench's
+					// doing, not a request for a container — so this state says what
+					// it is pointed at and waits to be asked.
+					? `<div class="wait"><h3>pgAdmin is not running</h3>
+					<p>This tab came back with the window. It is pointed at <b>${escapeHtml(label)}</b>, and nothing has been
+					started — Burrow does not bring up a container because an editor was restored.</p>
+					<p class="muted">pgAdmin also does not remember which page you were on: it runs at
+					<code>${escapeHtml(origin)}</code> in a frame of its own, and Burrow cannot read across that boundary.</p>
+					<button id="retry">Start pgAdmin</button></div>`
+					: `<div class="wait"><h3>pgAdmin is not running</h3>
 					<p>Its container could not start. Docker Desktop must be running; the tool then brings up <code>pgadmin</code> itself.</p>
 					<pre>${escapeHtml(detail.trim() || 'no detail')}</pre>
 					<button id="retry">Try again</button></div>`;
@@ -245,6 +311,9 @@ export class PgAdmin implements vscode.Disposable {
 	${body}
 <script nonce="${n}">
 	const vscode = acquireVsCodeApi();
+	// WO-60: what a revived panel needs to name its target and its port. The
+	// connection string never crosses into here, so it cannot be persisted from here.
+	vscode.setState({ label: ${JSON.stringify(label)}, port: ${port} });
 	const retry = document.getElementById('retry');
 	if (retry) { retry.addEventListener('click', () => vscode.postMessage({ type: 'retry' })); }
 	window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); } });

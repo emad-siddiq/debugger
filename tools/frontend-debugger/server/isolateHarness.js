@@ -457,6 +457,17 @@ const store = {
   set(k, v) { try { localStorage.setItem('burrow.iso.' + k, String(v)) } catch (e) {} },
 }
 
+// The canvas chrome, reported UP so the extension can put it back (WO-60).
+// localStorage alone is not enough: inside a webview this page is a
+// cross-origin iframe whose storage may be partitioned or refused outright,
+// and the whole point of the report is that it survives the window closing.
+// The extension echoes these back as URL seeds on the next isolate.
+let chromeReady = false
+function saveChrome() {
+  if (!chromeReady) return
+  report('chrome', { w: stageWidth, bg: bgIndex, tab: panelTab, panelH: Math.round(panel.getBoundingClientRect().height) })
+}
+
 const PANEL_MIN = 90    // the tab strip plus one row of controls
 const PANEL_GUTTER = 160 // the canvas never gets squeezed below this
 function setPanelHeight(px) {
@@ -484,6 +495,7 @@ if (grip) {
       grip.classList.remove('dragging')
       document.body.classList.remove('resize-y')
       store.set('panelHeight', setPanelHeight(startH + (startY - ev.clientY)))
+      saveChrome()
     }
     grip.addEventListener('pointermove', move)
     grip.addEventListener('pointerup', up)
@@ -497,13 +509,16 @@ if (grip) {
 // tablet one). 0 = Fit: the stage hugs the component instead of framing it.
 let widthButtons = []
 let widthSelect = null
+let stageWidth = 0
 function setStageWidth(w) {
+  stageWidth = w
   if (w === 0) { stage.classList.remove('frame'); stage.style.width = '' }
   else { stage.classList.add('frame'); stage.style.width = w + 'px' }
   for (const b of widthButtons) b.classList.toggle('on', Number(b.getAttribute('data-w')) === w)
   // The tight-layout <select> is the same control in another shape, so it has
   // to follow every caller — including the breakpoints tab's jump buttons.
   if (widthSelect) widthSelect.value = String(w)
+  saveChrome()
 }
 
 // What is drawn BEHIND the component — not a theme switcher, which is what the
@@ -519,6 +534,7 @@ let bgCycle = null
 let bgIndex = 0
 function setBackground(i) {
   bgIndex = ((i % BGS.length) + BGS.length) % BGS.length
+  saveChrome()
   canvas.className = BGS[bgIndex][1]
   for (let n = 0; n < bgButtons.length; n++) bgButtons[n].classList.toggle('on', n === bgIndex)
   if (bgCycle) {
@@ -1502,7 +1518,7 @@ function buildPanel() {
   for (const [key, label, tip] of PANEL_TABS) {
     tabs.append(el('button', {
       class: 'ptab' + (panelTab === key ? ' on' : ''), title: tip,
-      onclick: () => { panelTab = key; buildPanel() },
+      onclick: () => { panelTab = key; saveChrome(); buildPanel() },
     }, label))
   }
   tabs.append(el('button', {
@@ -1659,11 +1675,20 @@ function buildPropsTab(body) {
     seedProps = clone(rawProps)
 
     const label = CFG.export || (CFG.module.split('/').pop() || '').replace(/\\.[jt]sx?$/, '')
+    // WO-60: the chrome the extension saw last time, if it sent any. URL seeds
+    // beat localStorage because storage in a partitioned iframe may not be ours.
+    const seed = (CFG.chrome && typeof CFG.chrome === 'object') ? CFG.chrome : {}
+    if (PANEL_TABS.some(([k]) => k === seed.tab)) panelTab = seed.tab
     buildTopBar(label)
     setProvenance()
     buildPanel()
-    setPanelHeight(Number(store.get('panelHeight', 260)) || 260)
+    setPanelHeight(Number(seed.panelH || store.get('panelHeight', 260)) || 260)
     setPanelVisible(true)
+    if (Number.isFinite(Number(seed.w))) setStageWidth(Number(seed.w))
+    if (Number.isFinite(Number(seed.bg))) setBackground(Number(seed.bg))
+    // Only now may the harness report: everything above is restoration, and
+    // echoing it straight back would be a write for every read.
+    chromeReady = true
 
     const root = createRoot(document.getElementById('burrow-iso-root'))
     renderFn = () => {

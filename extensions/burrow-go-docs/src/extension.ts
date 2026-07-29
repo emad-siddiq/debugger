@@ -17,7 +17,7 @@ import {
 	window,
 } from 'vscode';
 import { claimSurface } from './toolSurface';
-import { DocViewer } from './viewer';
+import { DOCS_VIEW_TYPE, DocViewer } from './viewer';
 import { parseDocTarget } from './godoc';
 
 // burrow-go-docs — offline Go docs + hover → fullscreen viewer (architecture
@@ -49,7 +49,10 @@ export function activate(context: ExtensionContext): void {
 		// surface — it has no rail view of its own, so it only claims its tab,
 		// which is enough for the registry to tidy it when another tool takes
 		// over the editor area.
-		claimSurface('files', { viewType: 'burrowGoDocs' }),
+		claimSurface('files', { viewType: DOCS_VIEW_TYPE }),
+		// Panel persistence (WO-60): the viewer comes back at the symbol you were
+		// reading, with its back stack, and re-renders offline.
+		viewer.register(),
 		commands.registerCommand('burrow.goDocs.open', (arg?: unknown) =>
 			openDocs(viewer, typeof arg === 'string' ? arg : undefined)),
 		languages.registerHoverProvider(GO, new GoDocHoverProvider()),

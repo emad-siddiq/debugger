@@ -13,7 +13,9 @@
 	],
 	"activationEvents": [
 		"onView:burrowDbExplorer",
-		"onCommand:burrow.db.runQuery"
+		"onCommand:burrow.db.runQuery",
+		"onWebviewPanel:burrow.db.grid",
+		"onWebviewPanel:burrow.db.pgadmin"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {

@@ -224,12 +224,27 @@ export function inspectorPlugin({
           'src/burrow.isolate.ts',
           'src/burrow.isolate.js',
         ])
+        // The canvas chrome the extension is putting back (WO-60): stage width,
+        // background index, panel tab, dock height. Passed straight through —
+        // the harness validates each field, so a hand-edited URL can only give
+        // itself a odd-looking canvas.
+        let chrome = null
+        const rawChrome = q.get('chrome')
+        if (rawChrome) {
+          try {
+            const parsed = JSON.parse(rawChrome)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) chrome = parsed
+          } catch {
+            chrome = null // malformed seed → the harness's own defaults
+          }
+        }
         const cfg = {
           base: isolatePath.slice(0, -ISOLATE_SUFFIX.length),
           module: moduleRel,
           export: q.get('export') || '',
           props,
           schema,
+          chrome,
           // Where `props` came from, for the harness's provenance chip:
           // 'capture' (lifted off the running app) or 'synth' (the extension
           // synthesized them from the types). Absent → the harness works it

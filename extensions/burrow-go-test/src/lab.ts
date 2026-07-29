@@ -3,8 +3,8 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
-import { LabRun, LabTest, verdict } from './labModel';
+import { Disposable, ExtensionContext, ViewColumn, WebviewPanel, commands, window } from 'vscode';
+import { LabRun, LabTest, sizeOf, trimRunForStorage, verdict } from './labModel';
 
 // The **Test Lab** (docs/plans/02 §3.4): the tree in the rail is the index, the
 // result surface is a full editor tab. Left, the suites with a state dot and a
@@ -19,12 +19,28 @@ import { LabRun, LabTest, verdict } from './labModel';
 // extension that imports its stylesheet from a frontend tool would couple two
 // things that have no other reason to know about each other.
 
+/** Where the last run is kept so a restored lab has something to show (WO-60).
+ *  Workspace-scoped, because a verdict set belongs to a project. */
+const LAST_RUN_KEY = 'burrow.test.lab.lastRun';
+
+interface StoredRun {
+	readonly run: LabRun;
+	/** ISO timestamp of the run, so a restored lab can say how old it is. */
+	readonly at: string;
+	/** True when per-failure output had to be dropped to fit the budget. */
+	readonly trimmed: boolean;
+}
+
 export class TestLab implements Disposable {
 
 	public static readonly viewType = 'burrow.test.lab';
 
 	private panel: WebviewPanel | undefined;
 	private run: LabRun | undefined;
+	private context: ExtensionContext | undefined;
+	/** Set while showing a run recovered from storage rather than one that just
+	 *  finished — the header says so, so nobody reads it as fresh. */
+	private restored: StoredRun | undefined;
 
 	constructor(private readonly onAction: (action: 'run' | 'rerunFailed' | 'race') => void) { }
 
@@ -32,9 +48,44 @@ export class TestLab implements Disposable {
 		this.panel?.dispose();
 	}
 
+	/**
+	 * Persist the last run and make the panel revivable (WO-60).
+	 *
+	 * The lab restores its verdict set because a `go test` run is a record of
+	 * something that happened, not a live session — and re-running it on restore
+	 * would be minutes of CPU nobody asked for. Nothing here restores a DEBUG
+	 * session: dlv-backed surfaces come back empty by construction, because the
+	 * lab has never held one.
+	 */
+	register(context: ExtensionContext): Disposable {
+		this.context = context;
+		return window.registerWebviewPanelSerializer(TestLab.viewType, {
+			deserializeWebviewPanel: async (panel: WebviewPanel, _state: unknown): Promise<void> => {
+				this.panel?.dispose();
+				this.panel = panel;
+				this.wire(panel);
+				const stored = context.workspaceState.get<StoredRun>(LAST_RUN_KEY);
+				if (stored?.run) {
+					this.run = stored.run;
+					this.restored = stored;
+				}
+				this.render();
+			},
+		});
+	}
+
 	/** Show the lab, creating it if needed. */
 	open(): void {
 		this.reveal();
+		if (!this.run && this.context) {
+			// Opened by hand in a window that has not run tests yet: the last run
+			// this workspace produced is a better answer than an empty stage.
+			const stored = this.context.workspaceState.get<StoredRun>(LAST_RUN_KEY);
+			if (stored?.run) {
+				this.run = stored.run;
+				this.restored = stored;
+			}
+		}
 		this.render();
 	}
 
@@ -43,6 +94,11 @@ export class TestLab implements Disposable {
 	 *  developer asked for the lab. */
 	publish(run: LabRun): void {
 		this.run = run;
+		this.restored = undefined;
+		if (this.context) {
+			const { run: small, trimmed } = trimRunForStorage(run);
+			void this.context.workspaceState.update(LAST_RUN_KEY, { run: small, at: new Date().toISOString(), trimmed } satisfies StoredRun);
+		}
 		if (this.panel) {
 			this.render();
 		}
@@ -50,6 +106,11 @@ export class TestLab implements Disposable {
 
 	get last(): LabRun | undefined {
 		return this.run;
+	}
+
+	/** Bytes the persisted run occupies — reported, not guessed (WO-60 §4). */
+	get storedBytes(): number {
+		return sizeOf(this.context?.workspaceState.get<StoredRun>(LAST_RUN_KEY));
 	}
 
 	private reveal(): void {
@@ -61,8 +122,13 @@ export class TestLab implements Disposable {
 			enableScripts: true,
 			retainContextWhenHidden: true,
 		});
-		this.panel.onDidDispose(() => { this.panel = undefined; });
-		this.panel.webview.onDidReceiveMessage((message: { type?: string; file?: string; line?: number }) => {
+		this.wire(this.panel);
+	}
+
+	/** Listener wiring shared by a fresh open and a revive. */
+	private wire(panel: WebviewPanel): void {
+		panel.onDidDispose(() => { this.panel = undefined; });
+		panel.webview.onDidReceiveMessage((message: { type?: string; file?: string; line?: number }) => {
 			if (message?.type === 'run' || message?.type === 'rerunFailed' || message?.type === 'race') {
 				this.onAction(message.type);
 			} else if (message?.type === 'exitFocus') {
@@ -74,7 +140,7 @@ export class TestLab implements Disposable {
 
 	private render(): void {
 		if (this.panel) {
-			this.panel.webview.html = html(this.run);
+			this.panel.webview.html = html(this.run, this.restored);
 			this.panel.title = this.run ? `Test Lab — ${this.run.failed ? `${this.run.failed} failed` : 'green'}` : 'Test Lab';
 		}
 	}
@@ -116,12 +182,36 @@ function testBlock(test: LabTest, longest: number): string {
 	</div>`;
 }
 
-function html(run: LabRun | undefined): string {
+/** "3 minutes ago" — precise enough to know whether a restored verdict is stale. */
+function ago(iso: string): string {
+	const ms = Date.now() - Date.parse(iso);
+	if (!Number.isFinite(ms) || ms < 0) {
+		return 'earlier';
+	}
+	const minutes = Math.round(ms / 60_000);
+	if (minutes < 1) {
+		return 'just now';
+	}
+	if (minutes < 60) {
+		return `${minutes} min ago`;
+	}
+	const hours = Math.round(minutes / 60);
+	return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+}
+
+function html(run: LabRun | undefined, restored?: StoredRun): string {
 	const n = nonce();
 	const longest = run ? Math.max(1, ...run.suites.flatMap((s) => s.tests.map((t) => t.durationMs ?? 0))) : 1;
+	// A restored verdict set is a RECORD, and says so. Presenting it as if the
+	// tests had just run is the one way this feature could mislead.
+	const note = restored
+		? `<div class="restored">Restored from the run ${esc(ago(restored.at))} — these tests have not been re-run.${restored.trimmed
+			? ' The failure output was too large to keep; press <b>Re-run failed</b> to see it.'
+			: ''}</div>`
+		: '';
 	const body = !run
 		? '<div class="empty">No run yet. Run a Go package from the <b>Tests</b> section, or press Run above.</div>'
-		: (run.stderr
+		: note + (run.stderr
 			? `<div class="stderr"><h3>go test could not run</h3><pre>${esc(run.stderr.trim())}</pre></div>`
 			: run.suites.map((suite) => `<section>
 				<h2>${esc(suite.label)} <span class="tally">${suite.failed ? `${suite.failed} failed · ` : ''}${suite.passed} passed${suite.skipped ? ` · ${suite.skipped} skipped` : ''}</span></h2>
@@ -206,6 +296,8 @@ function html(run: LabRun | undefined): string {
 		font-size: .9em; line-height: 1.45; white-space: pre-wrap;
 	}
 	.empty, .stderr { opacity: .7; max-width: 60ch; }
+	.restored { margin: -6px 0 16px; padding: 6px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5;
+		max-width: 72ch; opacity: .85; background: var(--vscode-editorWidget-background); }
 	.stderr h3 { font-size: 12px; margin: 0 0 6px; color: var(--vscode-testing-iconFailed, #f85149); }
 </style>
 </head>
@@ -213,6 +305,7 @@ function html(run: LabRun | undefined): string {
 	<div id="top">
 		<span class="name">Test Lab</span>
 		<span class="chip">${run ? esc(verdict(run)) : 'no run yet'}</span>
+		${restored ? '<span class="chip">restored</span>' : ''}
 		${run?.race ? '<span class="chip">race</span>' : ''}
 		<span class="spacer"></span>
 		<button id="rerun" ${run && run.failed ? '' : 'disabled'}>Re-run failed</button>
@@ -235,11 +328,24 @@ function html(run: LabRun | undefined): string {
 	</div>
 <script nonce="${n}">
 	const vscode = acquireVsCodeApi();
+	// WO-60: the lab's OWN view state. The verdict set is not here — it lives in
+	// workspace storage, trimmed, because the host renders it and a run can be
+	// far larger than a webview state blob should ever be.
+	const stage = document.getElementById('stage');
+	let saved = Object.assign({ scroll: 0, help: false }, vscode.getState() || {});
+	const remember = (patch) => { saved = Object.assign({}, saved, patch); vscode.setState(saved); };
+	stage.scrollTop = saved.scroll || 0;
+	let scrollTimer;
+	stage.addEventListener('scroll', () => {
+		clearTimeout(scrollTimer);
+		scrollTimer = setTimeout(() => remember({ scroll: stage.scrollTop }), 200);
+	});
 	for (const [id, type] of [['run', 'run'], ['rerun', 'rerunFailed'], ['race', 'race']]) {
 		document.getElementById(id).addEventListener('click', () => vscode.postMessage({ type }));
 	}
 	const help = document.getElementById('help');
-	const setHelp = (on) => { help.hidden = !on; };
+	const setHelp = (on) => { help.hidden = !on; remember({ help: on }); };
+	if (saved.help) { setHelp(true); }
 	document.getElementById('helpbtn').addEventListener('click', () => setHelp(help.hidden));
 	document.getElementById('helpclose').addEventListener('click', () => setHelp(false));
 	// The help sheet is the shallowest thing Escape can close, so it goes first.

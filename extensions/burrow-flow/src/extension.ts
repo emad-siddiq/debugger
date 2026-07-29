@@ -33,6 +33,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	const migrationFor = (table: string): string | undefined => tree.document?.tables?.[table];
 
+	// Panel persistence (WO-60): a restored diagram re-resolves its route out of
+	// the cached flows document loaded just above — a file read, not a trace.
+	context.subscriptions.push(panel.register(() => {
+		const paths = detectProject();
+		if (!paths) {
+			return undefined;
+		}
+		return {
+			backendDir: paths.backendDir,
+			migrationFor,
+			find: (method, routePath) => (tree.document?.flows ?? []).find(f => f.method === method && f.path === routePath),
+		};
+	}));
+
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.refresh', async () => {
 		const paths = detectProject();
 		if (!paths) {

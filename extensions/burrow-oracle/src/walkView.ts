@@ -111,6 +111,18 @@ export class OracleWalkProvider implements WebviewViewProvider {
 	${body}
 	<script nonce="${n}">
 		const vscode = acquireVsCodeApi();
+		// WO-60: a view pane's webview is TORN DOWN whenever it scrolls out of the
+		// side bar, so without this a glance at another section sends a 200-package
+		// walk back to the top. The tree itself is not persisted — rebuilding it
+		// means running go list, and a restored pane must not spawn a toolchain.
+		// (No backticks in here: this whole page is a template literal.)
+		const saved = vscode.getState() || {};
+		if (saved.scroll) { window.scrollTo(0, saved.scroll); }
+		let scrollTimer;
+		window.addEventListener('scroll', () => {
+			clearTimeout(scrollTimer);
+			scrollTimer = setTimeout(() => vscode.setState({ scroll: window.scrollY }), 200);
+		});
 		document.addEventListener('click', e => {
 			const el = e.target.closest('.pkg');
 			if (el && el.dataset.dir) {

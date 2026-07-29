@@ -12,7 +12,9 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onView:burrowComponents"
+		"onView:burrowComponents",
+		"onWebviewPanel:burrow.frontendDebugger",
+		"onWebviewPanel:burrow.frontendIsolation"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -64,7 +66,7 @@
 			},
 			{
 				"command": "burrow.frontendDebugger.saveSample",
-				"title": "Save Props as Sample…",
+				"title": "Save Props as Sample\u2026",
 				"category": "Burrow",
 				"icon": "$(save)"
 			},
@@ -232,7 +234,7 @@
 				"burrow.frontendDebugger.targetBase": {
 					"type": "string",
 					"default": "/",
-					"description": "Base path the target app is served under (merkle serves from the domain root). Only used when spawning the sidecar — an attached sidecar reports its own base."
+					"description": "Base path the target app is served under (merkle serves from the domain root). Only used when spawning the sidecar \u2014 an attached sidecar reports its own base."
 				},
 				"burrow.frontendDebugger.toolPath": {
 					"type": "string",
@@ -242,7 +244,7 @@
 				"burrow.frontendDebugger.runCommand": {
 					"type": "string",
 					"default": "",
-					"description": "Command that starts YOUR dev server, run verbatim in a terminal for \"Open App in Browser\" (e.g. npm run dev). Empty = use the built-in instrumented sidecar (overlay pre-injected, zero setup). For the verbatim path, add the Burrow inspector Vite plugin to your config so ⌥-click reveal works."
+					"description": "Command that starts YOUR dev server, run verbatim in a terminal for \"Open App in Browser\" (e.g. npm run dev). Empty = use the built-in instrumented sidecar (overlay pre-injected, zero setup). For the verbatim path, add the Burrow inspector Vite plugin to your config so \u2325-click reveal works."
 				},
 				"burrow.frontendDebugger.appUrl": {
 					"type": "string",
@@ -262,7 +264,7 @@
 				"burrow.frontendDebugger.designLayout": {
 					"type": "boolean",
 					"default": false,
-					"markdownDescription": "When isolating a component, also hide the side bars and bottom panel so the source | preview columns fill the window (Framer-style design mode). Off by default: isolating arranges the columns but leaves your file tree alone, and hiding chrome is **Focus Mode**'s job (`⌘⇧↩`, `Esc` to exit). With this on, `⌘B` / `⌘J` are the only way to bring the chrome back.",
+					"markdownDescription": "When isolating a component, also hide the side bars and bottom panel so the source | preview columns fill the window (Framer-style design mode). Off by default: isolating arranges the columns but leaves your file tree alone, and hiding chrome is **Focus Mode**'s job (`\u2318\u21e7\u21a9`, `Esc` to exit). With this on, `\u2318B` / `\u2318J` are the only way to bring the chrome back.",
 					"tags": [
 						"burrow"
 					]
@@ -270,7 +272,7 @@
 				"burrow.frontendDebugger.tidyTabs": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. The source, stylesheet and live canvas are one workbench — closing any of the three closes the other two. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
+					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. The source, stylesheet and live canvas are one workbench \u2014 closing any of the three closes the other two. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
 					"tags": [
 						"burrow"
 					]

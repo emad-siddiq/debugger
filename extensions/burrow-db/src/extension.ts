@@ -133,12 +133,30 @@ export function activate(context: ExtensionContext): BurrowDbApi {
 	/** Per-table saved starter queries, in workspace state. */
 	const startersKey = (schema: string, table: string): string => `burrow.db.starters:${schema}.${table}`;
 
+	/** What the grid names its connection as — no password, ever (describeDsn). */
+	const connectionLabel = (): string | undefined => {
+		const conn = connectionString();
+		if (!conn) {
+			return undefined;
+		}
+		try {
+			return describeDsn(parsePostgresUrl(conn));
+		} catch {
+			return undefined;
+		}
+	};
+
 	context.subscriptions.push(
 		pgAdmin,
 		writesPill,
 		dbView,
 		announceOnVisible('data', dbView),
 		claimSurface('data', { viewType: 'burrow.db.grid' }),
+		// Panel persistence (WO-60): both Data surfaces come back with their rail,
+		// a reload and a relaunch. Neither reconnects on the way in — the grid
+		// restores holding its SQL, pgAdmin restores stopped.
+		GridPanel.register(runner, connectionLabel),
+		pgAdmin.register(),
 
 		commands.registerCommand('burrow.db.openPgAdmin', () => pgAdmin.open()),
 		// Native-first routing (docs/plans/02 §3.6 step 2): browsing and peeking

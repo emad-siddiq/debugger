@@ -16,13 +16,32 @@ import { escapeHtml, LEGEND, renderFlow } from './diagram';
 import { Flow, handlerOf } from './model';
 
 interface PanelMessage {
-	readonly type: 'open' | 'query' | 'table' | 'breakpoint' | 'exitFocus';
+	readonly type: 'open' | 'query' | 'table' | 'breakpoint' | 'exitFocus' | 'refresh';
 	readonly file?: string;
 	readonly line?: number;
 	readonly col?: number;
 	readonly sql?: string;
 	readonly table?: string;
 }
+
+/** Everything a REVIVED diagram needs that the panel itself cannot remember: the
+ *  project it is drawn against, and the route index to look its flow up in. */
+export interface DiagramDeps {
+	readonly backendDir: string;
+	readonly migrationFor: (table: string) => string | undefined;
+	readonly find: (method: string, path: string) => Flow | undefined;
+}
+
+/** The panel's own state (WO-60): the ROUTE, never the drawing. The diagram is
+ *  derived from `flows.json` in a few milliseconds, so persisting the render
+ *  would be storing a cache of a cache. */
+interface DiagramPanelState {
+	readonly method?: string;
+	readonly path?: string;
+	readonly help?: boolean;
+}
+
+export const DIAGRAM_VIEW_TYPE = 'burrowFlowDiagram';
 
 export class DiagramPanel implements vscode.Disposable {
 	private panel: vscode.WebviewPanel | undefined;
@@ -36,17 +55,54 @@ export class DiagramPanel implements vscode.Disposable {
 		this.migrationFor = migrationFor;
 		if (!this.panel) {
 			this.panel = vscode.window.createWebviewPanel(
-				'burrowFlowDiagram',
+				DIAGRAM_VIEW_TYPE,
 				'Wire Diagram',
 				{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
 				{ enableScripts: true },
 			);
-			this.panel.onDidDispose(() => { this.panel = undefined; });
-			this.panel.webview.onDidReceiveMessage((message: PanelMessage) => this.onMessage(message));
+			this.adopt(this.panel);
 		}
 		this.panel.title = `${flow.method} ${flow.path}`;
 		this.panel.webview.html = this.html(flow);
 		this.panel.reveal(vscode.ViewColumn.Beside, false);
+	}
+
+	/**
+	 * Come back with the rail, a reload and a relaunch (WO-60).
+	 *
+	 * The route is re-resolved out of the cached `flows.json` — a local file
+	 * read, the same one activation already does, and no request to anything.
+	 * When the index is missing (a fresh clone, a workspace that was never
+	 * traced) the panel says which route it was for and offers Refresh, rather
+	 * than coming back blank or quietly redrawing the wrong thing.
+	 */
+	register(deps: () => DiagramDeps | undefined): vscode.Disposable {
+		return vscode.window.registerWebviewPanelSerializer(DIAGRAM_VIEW_TYPE, {
+			deserializeWebviewPanel: async (panel: vscode.WebviewPanel, state: unknown): Promise<void> => {
+				const saved = (state ?? {}) as DiagramPanelState;
+				this.panel?.dispose();
+				this.panel = panel;
+				this.adopt(panel);
+				const wiring = deps();
+				const flow = saved.method && saved.path ? wiring?.find(saved.method, saved.path) : undefined;
+				if (wiring && flow) {
+					this.flow = flow;
+					this.backendDir = wiring.backendDir;
+					this.migrationFor = wiring.migrationFor;
+					panel.title = `${flow.method} ${flow.path}`;
+					panel.webview.html = this.html(flow);
+					return;
+				}
+				panel.title = saved.method && saved.path ? `${saved.method} ${saved.path}` : 'Wire Diagram';
+				panel.webview.html = unresolvedHtml(saved.method, saved.path, wiring ? 'stale' : 'noproject');
+			},
+		});
+	}
+
+	/** Listener wiring shared by a fresh open and a revive. */
+	private adopt(panel: vscode.WebviewPanel): void {
+		panel.onDidDispose(() => { this.panel = undefined; });
+		panel.webview.onDidReceiveMessage((message: PanelMessage) => this.onMessage(message));
 	}
 
 	dispose(): void {
@@ -55,6 +111,12 @@ export class DiagramPanel implements vscode.Disposable {
 
 	private async onMessage(message: PanelMessage): Promise<void> {
 		switch (message.type) {
+			case 'refresh': {
+				// The button a diagram restored without an index offers. Tracing is
+				// explicit work, so it happens because this was clicked.
+				await vscode.commands.executeCommand('burrow.flow.refresh');
+				return;
+			}
 			case 'exitFocus': {
 				try {
 					await vscode.commands.executeCommand('burrow.focus.exit');
@@ -219,8 +281,16 @@ ${renderFlow(flow)}
 </div>
 <script nonce="${nonce}">
 	const vscode = acquireVsCodeApi();
+	// WO-60: the route this tab is for, plus whether the help sheet was open.
+	// That is the whole of the diagram's view state — there is no zoom or pan to
+	// remember, and the nodes are laid out by the host on every render.
+	const ROUTE = { method: ${JSON.stringify(flow.method)}, path: ${JSON.stringify(flow.path)} };
+	let saved = Object.assign({ help: false }, vscode.getState() || {}, ROUTE);
+	vscode.setState(saved);
+	const remember = (patch) => { saved = Object.assign({}, saved, patch); vscode.setState(saved); };
 	const help = document.getElementById('help');
-	const setHelp = (on) => help.classList.toggle('on', on);
+	const setHelp = (on) => { help.classList.toggle('on', on); remember({ help: on }); };
+	if (saved.help) { help.classList.add('on'); }
 	document.getElementById('helpbtn').addEventListener('click', e => { e.stopPropagation(); setHelp(!help.classList.contains('on')); });
 	document.addEventListener('keydown', e => {
 		if (e.key === '?') { setHelp(true); return; }
@@ -230,6 +300,7 @@ ${renderFlow(flow)}
 	});
 	document.addEventListener('click', e => {
 		if (help.contains(e.target)) { return; }
+		if (e.target.id === 'refresh') { vscode.postMessage({ type: 'refresh' }); return; }
 		const act = e.target.closest('.act');
 		if (act) {
 			const node = act.closest('.node');
@@ -252,4 +323,44 @@ ${renderFlow(flow)}
 </body>
 </html>`;
 	}
+}
+
+/**
+ * The diagram came back but its route did not (WO-60, "grey with a reason").
+ * Two causes, and they need different sentences: no Go backend is open in this
+ * window at all, or there is one and the route index has not been built for it.
+ */
+function unresolvedHtml(method: string | undefined, routePath: string | undefined, why: 'stale' | 'noproject'): string {
+	const nonce = crypto.randomBytes(16).toString('base64');
+	const route = method && routePath ? `${method} ${routePath}` : 'a route';
+	const reason = why === 'noproject'
+		? 'No Go backend is open in this window, so there is nothing to trace it against.'
+		: 'The route index has not been built in this workspace yet — tracing reads the Go source, and Burrow does not start it because a tab was restored.';
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+	<style nonce="${nonce}">
+		body { font: 13px var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 14px 18px; }
+		h3 { font-size: 13px; margin: 0 0 8px; }
+		p { max-width: 62ch; line-height: 1.55; opacity: .8; }
+		code { font-family: var(--vscode-editor-font-family); }
+		button { font: inherit; font-size: 12px; padding: 2px 10px; border: 0; border-radius: 4px; cursor: pointer;
+			color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+	</style>
+</head>
+<body>
+	<h3>${escapeHtml(route)}</h3>
+	<p>${escapeHtml(reason)}</p>
+	${why === 'stale' ? '<button id="refresh">Refresh flows</button>' : ''}
+<script nonce="${nonce}">
+	const vscode = acquireVsCodeApi();
+	vscode.setState({ method: ${JSON.stringify(method ?? null)}, path: ${JSON.stringify(routePath ?? null)} });
+	const btn = document.getElementById('refresh');
+	if (btn) { btn.addEventListener('click', () => vscode.postMessage({ type: 'refresh' })); }
+	document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); } });
+</script>
+</body>
+</html>`;
 }

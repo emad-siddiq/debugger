@@ -18,12 +18,54 @@ import { nonce } from './webview';
 /** Runs a SQL string and resolves its grid model. Rejects with a message on failure. */
 export type GridRunner = (sql: string) => Promise<GridModel>;
 
+/** The connection the window is pointed at right now, as `user@host:port/db`. */
+export type ConnectionLabel = () => string | undefined;
+
+/**
+ * What the webview hands back when the panel is revived (WO-60). It is the
+ * webview's OWN `setState` blob, so it survives a rail switch, a window reload
+ * and a relaunch by the same route the workbench uses for editors.
+ *
+ * Deliberately not in it: the connection string, and the rows. A restored panel
+ * carries the QUESTION (the SQL, and which database it was asked of) and never
+ * the answer — persisting a result set would put real data in workspace storage
+ * to save one keystroke.
+ */
+export interface GridPanelState {
+	readonly sql?: string;
+	/** `describeDsn` of the connection the last run went to — no password. */
+	readonly conn?: string;
+	readonly help?: boolean;
+	/** Set instead of `sql` when the statement was too large to keep; its length,
+	 *  so the restored panel can say what it dropped. */
+	readonly oversize?: number;
+}
+
+/**
+ * Ceiling on the persisted SQL. Not paranoia: "Seed the DB" hands this panel a
+ * whole `.sql` file as one statement, and a panel's state is not a place to put
+ * a migration. Past it the panel restores empty and says why, which is a smaller
+ * lie than restoring a statement chopped off mid-string.
+ */
+const MAX_SQL_BYTES = 32_000;
+
+function asState(value: unknown): GridPanelState {
+	const s = (value ?? {}) as GridPanelState;
+	return {
+		sql: typeof s.sql === 'string' ? s.sql : undefined,
+		conn: typeof s.conn === 'string' ? s.conn : undefined,
+		help: s.help === true,
+		oversize: typeof s.oversize === 'number' ? s.oversize : undefined,
+	};
+}
+
 // ---- wire protocol ---------------------------------------------------------
 
 type Outbound =
 	| { readonly type: 'running'; readonly sql: string }
-	| { readonly type: 'grid'; readonly sql: string; readonly grid: GridModel; readonly elapsedMs: number }
-	| { readonly type: 'error'; readonly sql: string; readonly message: string };
+	| { readonly type: 'grid'; readonly sql: string; readonly conn?: string; readonly grid: GridModel; readonly elapsedMs: number }
+	| { readonly type: 'error'; readonly sql: string; readonly conn?: string; readonly message: string }
+	| { readonly type: 'idle'; readonly sql: string; readonly conn?: string; readonly note: string };
 
 type Inbound =
 	| { readonly type: 'ready' }
@@ -34,15 +76,58 @@ export class GridPanel {
 
 	public static readonly viewType = 'burrow.db.grid';
 	private static current: GridPanel | undefined;
+	/** Set once by `register`, so a revived panel has a runner without a command
+	 *  having been invoked — revival happens before any user action. */
+	private static runner: GridRunner | undefined;
+	private static connection: ConnectionLabel = () => undefined;
 
 	private readonly disposables: Disposable[] = [];
 	private lastSql = 'SELECT 1';
+	/** The connection the restored SQL was last run against, if this panel was
+	 *  revived. Compared against the live one so a moved target is stated, not
+	 *  silently assumed. */
+	private readonly boundConn: string | undefined;
+	/** Length of the statement that was too large to persist, if there was one. */
+	private readonly droppedSql: number | undefined;
+	private ready = false;
+	/** A run asked for before the webview said `ready` — replayed once, so the
+	 *  first open sends ONE query rather than two. */
+	private pending: string | undefined;
+	private readonly restored: boolean;
 
-	private constructor(private readonly panel: WebviewPanel, private run: GridRunner) {
+	private constructor(private readonly panel: WebviewPanel, private run: GridRunner, state?: GridPanelState) {
+		this.restored = state !== undefined;
+		this.lastSql = state?.sql ?? this.lastSql;
+		this.boundConn = state?.conn;
+		this.droppedSql = state?.oversize;
 		this.panel.webview.options = { enableScripts: true };
-		this.panel.webview.html = this.html();
+		this.panel.webview.html = this.html(state);
 		this.disposables.push(this.panel.webview.onDidReceiveMessage((m: Inbound) => this.onMessage(m)));
 		this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
+	}
+
+	/**
+	 * Wire the panel up for the life of the extension: remember the runner and
+	 * the connection label a REVIVED panel will need, and register the
+	 * `WebviewPanelSerializer` that makes reviving possible at all.
+	 *
+	 * Without a serializer the workbench refuses to persist the editor
+	 * (`webviewEditorInputSerializer.canSerialize` → `shouldPersist` → "is there
+	 * a reviver?"), which is why the grid used to vanish on a rail switch while
+	 * the files beside it came back.
+	 */
+	static register(run: GridRunner, connection: ConnectionLabel): Disposable {
+		GridPanel.runner = run;
+		GridPanel.connection = connection;
+		return window.registerWebviewPanelSerializer(GridPanel.viewType, {
+			async deserializeWebviewPanel(panel: WebviewPanel, state: unknown): Promise<void> {
+				// One grid per window, as when it is opened by hand: a stale handle
+				// from a previous restore would leave two panels fighting over
+				// `GridPanel.current`.
+				GridPanel.current?.panel.dispose();
+				GridPanel.current = new GridPanel(panel, GridPanel.runner ?? (async () => { throw new Error('The Data view is still starting.'); }), asState(state));
+			},
+		});
 	}
 
 	/** Reveal the shared panel (creating it once), refreshing its runner to the caller's. */
@@ -66,18 +151,51 @@ export class GridPanel {
 	async runAndShow(sql: string): Promise<void> {
 		this.lastSql = sql;
 		this.panel.reveal(ViewColumn.Active);
-		await this.execute(sql);
+		if (this.ready) {
+			await this.execute(sql);
+		} else {
+			// The webview has not attached its listener yet; `ready` replays it.
+			this.pending = sql;
+		}
 	}
 
 	private async onMessage(message: Inbound): Promise<void> {
 		if (message.type === 'exitFocus') {
 			void commands.executeCommand('burrow.focus.exit');
 		} else if (message.type === 'ready') {
-			await this.execute(this.lastSql);
+			this.ready = true;
+			const queued = this.pending;
+			this.pending = undefined;
+			if (queued !== undefined) {
+				await this.execute(queued);
+			} else {
+				// A restored panel NEVER runs on its own (WO-60 constraint 2: no
+				// non-user-initiated network). It comes back holding the question,
+				// saying so, with Run one keystroke away.
+				this.post({ type: 'idle', sql: this.lastSql, conn: GridPanel.connection(), note: this.idleNote() });
+			}
 		} else if (message.type === 'run' && typeof message.sql === 'string') {
 			this.lastSql = message.sql;
 			await this.execute(message.sql);
 		}
+	}
+
+	/** Why the grid is empty, in one sentence — never a blank surface. */
+	private idleNote(): string {
+		const live = GridPanel.connection();
+		if (!this.restored) {
+			return 'Ready.';
+		}
+		if (this.droppedSql) {
+			return `Restored. The statement here was ${this.droppedSql.toLocaleString()} characters — too large to keep across a reload, so the box is empty rather than half-full.`;
+		}
+		if (!live) {
+			return 'Restored — not run. No Postgres connection is configured in this window.';
+		}
+		if (this.boundConn && this.boundConn !== live) {
+			return `Restored — not run. These rows came from ${this.boundConn}; this window is now pointed at ${live}.`;
+		}
+		return 'Restored — not run. Press Run (⌘↵) to send it again.';
 	}
 
 	private async execute(sql: string): Promise<void> {
@@ -87,11 +205,12 @@ export class GridPanel {
 		}
 		this.post({ type: 'running', sql: trimmed });
 		const started = Date.now();
+		const conn = GridPanel.connection();
 		try {
 			const grid = await this.run(trimmed);
-			this.post({ type: 'grid', sql: trimmed, grid, elapsedMs: Date.now() - started });
+			this.post({ type: 'grid', sql: trimmed, conn, grid, elapsedMs: Date.now() - started });
 		} catch (err) {
-			this.post({ type: 'error', sql: trimmed, message: err instanceof Error ? err.message : String(err) });
+			this.post({ type: 'error', sql: trimmed, conn, message: err instanceof Error ? err.message : String(err) });
 		}
 	}
 
@@ -105,8 +224,14 @@ export class GridPanel {
 		this.disposables.length = 0;
 	}
 
-	private html(): string {
+	private html(state?: GridPanelState): string {
 		const n = nonce();
+		// The host renders the SQL into the markup rather than leaving the webview
+		// to recover it from `getState()`: on a revive the html is built here
+		// first, and a box that is briefly empty and then fills in reads as a bug.
+		const seedSql = JSON.stringify(state?.sql ?? '');
+		const seedHelp = state?.help === true ? 'true' : 'false';
+		const seedNote = JSON.stringify(state ? this.idleNote() : '');
 		const csp = `default-src 'none'; style-src 'nonce-${n}'; script-src 'nonce-${n}';`;
 		// Self-contained: inline CSS/JS (no bundler). The webview builds every cell
 		// with textContent, so result data is never interpolated into markup.
@@ -188,16 +313,36 @@ export class GridPanel {
 		const $banner = document.getElementById('banner');
 		const $gridwrap = document.getElementById('gridwrap');
 
+		// WO-60: the panel's own view state, written on every change. The
+		// workbench hands this blob back to the extension's serializer on a rail
+		// switch, a reload and a relaunch, so it is the only thing that has to
+		// survive — and it holds the question, never the answer.
+		const MAX_SQL = ${MAX_SQL_BYTES};
+		let saved = Object.assign({ sql: '', conn: undefined, help: false }, vscode.getState() || {});
+		function remember(patch) {
+			saved = Object.assign({}, saved, patch);
+			// "Seed the DB" runs a whole .sql file through this box. Keeping it
+			// would put a migration in workspace storage, so past the cap the panel
+			// remembers that there WAS one rather than a truncated half of it.
+			const keep = typeof saved.sql === 'string' && saved.sql.length > MAX_SQL
+				? Object.assign({}, saved, { sql: '', oversize: saved.sql.length })
+				: saved;
+			vscode.setState(keep);
+		}
+
 		function post(msg) { vscode.postMessage(msg); }
-		function run() { post({ type: 'run', sql: $sql.value }); }
+		function run() { remember({ sql: $sql.value }); post({ type: 'run', sql: $sql.value }); }
 
 		$run.onclick = run;
 		$sql.addEventListener('keydown', e => {
 			if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { run(); e.preventDefault(); }
 		});
+		// Typing is the state: a panel restored with a half-written query has to
+		// come back with the half you wrote, not the last one you ran.
+		$sql.addEventListener('input', () => remember({ sql: $sql.value }));
 
 		const $help = document.getElementById('help');
-		const setHelp = on => { $help.hidden = !on; };
+		const setHelp = on => { $help.hidden = !on; remember({ help: on }); };
 		document.getElementById('helpbtn').onclick = () => setHelp($help.hidden);
 		document.getElementById('helpclose').onclick = () => setHelp(false);
 
@@ -264,6 +409,14 @@ export class GridPanel {
 				setStatus('Running…', false);
 				return;
 			}
+			if (state.type === 'idle') {
+				// Restored, and honest about it: the query is here, the rows are not,
+				// and nothing was sent to the database to bring this tab back.
+				$banner.hidden = true;
+				$gridwrap.textContent = '';
+				setStatus(state.note, false);
+				return;
+			}
 			if (state.type === 'error') {
 				$banner.hidden = true;
 				$gridwrap.textContent = '';
@@ -289,8 +442,17 @@ export class GridPanel {
 			if (state && typeof state.sql === 'string' && document.activeElement !== $sql) {
 				$sql.value = state.sql;
 			}
+			if (state && typeof state.sql === 'string') { remember({ sql: state.sql, conn: state.conn }); }
 			apply(state);
 		});
+
+		// Seed from the revive blob BEFORE saying ready, so the host's first
+		// message lands on a box that already reads the way you left it.
+		const seed = ${seedSql};
+		if (seed) { $sql.value = seed; }
+		if (${seedHelp}) { setHelp(true); }
+		const note = ${seedNote};
+		if (note) { setStatus(note, false); }
 
 		post({ type: 'ready' });
 	</script>

@@ -125,6 +125,48 @@ export function failedNames(run: LabRun): string[] {
 	return run.suites.flatMap((suite) => suite.tests.filter((t) => t.status === 'fail').map((t) => t.name));
 }
 
+/**
+ * The run, small enough to persist so the lab comes back with its verdict set
+ * (WO-60). Three reductions, in the order they cost the reader least:
+ *
+ *   1. Passing and skipped tests keep no output — the lab never renders theirs.
+ *   2. A failure's output is clipped to `perFailure` characters.
+ *   3. If it is STILL over budget, outputs go entirely and `trimmed` is set, so
+ *      the lab can say the detail was dropped rather than imply the failures
+ *      had nothing to say.
+ *
+ * Nothing here reaches for the network or the filesystem, so it is unit-tested
+ * standalone alongside the rest of labModel.
+ */
+export function trimRunForStorage(run: LabRun, budgetBytes = 48_000, perFailure = 4_000): { run: LabRun; trimmed: boolean } {
+	const reduce = (keepOutput: boolean): LabRun => ({
+		...run,
+		suites: run.suites.map((suite) => ({
+			...suite,
+			tests: suite.tests.map((test) => ({
+				...test,
+				output: keepOutput && test.status === 'fail'
+					? (test.output.length > perFailure ? `${test.output.slice(0, perFailure)}\n… (clipped)` : test.output)
+					: '',
+			})),
+		})),
+	});
+	const withOutput = reduce(true);
+	if (sizeOf(withOutput) <= budgetBytes) {
+		return { run: withOutput, trimmed: false };
+	}
+	return { run: reduce(false), trimmed: true };
+}
+
+/** Byte length of a value once stored as JSON — what the budget is actually spent in. */
+export function sizeOf(value: unknown): number {
+	try {
+		return Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+	} catch {
+		return Number.MAX_SAFE_INTEGER;
+	}
+}
+
 /** A one-line verdict for the lab's header and the tree's description. */
 export function verdict(run: LabRun): string {
 	if (run.stderr) {

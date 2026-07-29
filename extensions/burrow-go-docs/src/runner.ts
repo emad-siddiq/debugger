@@ -26,9 +26,18 @@ export interface GoDocResult {
 export type ExecFileFn = (
 	file: string,
 	args: readonly string[],
-	options: { cwd?: string; timeout?: number; maxBuffer?: number },
+	options: { cwd?: string; timeout?: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 	callback: (error: Error | null, stdout: string, stderr: string) => void
 ) => void;
+
+/**
+ * `go doc` normally reads the local module cache, but for a package that is not
+ * in it the toolchain will go and fetch one — which is a network call. When the
+ * viewer is REVIVED rather than opened, nobody asked for that (WO-60 constraint
+ * 2), so the restore path runs offline and shows the toolchain's own "not in
+ * cache" error with a button that retries without the restriction.
+ */
+export const OFFLINE_ENV: NodeJS.ProcessEnv = { GOPROXY: 'off', GOFLAGS: '-mod=mod' };
 
 /** Hard ceiling on how long a `go doc` call may run before it is killed. */
 const TIMEOUT_MS = 15_000;
@@ -44,16 +53,21 @@ const MAX_BUFFER = 16 * 1024 * 1024;
  * @param args The full argv after the binary (e.g. `['doc', 'net/http']`).
  * @param cwd The module directory, so dependency docs match go.sum; `undefined` for stdlib-only.
  * @param exec The exec implementation; defaults to node's `execFile`, overridden in tests.
+ * @param offline When true, run with {@link OFFLINE_ENV} so the toolchain cannot fetch a module.
  * @returns The captured result.
  */
 export function runGoDoc(
 	goBin: string,
 	args: string[],
 	cwd: string | undefined,
-	exec: ExecFileFn = execFile as unknown as ExecFileFn
+	exec: ExecFileFn = execFile as unknown as ExecFileFn,
+	offline = false
 ): Promise<GoDocResult> {
 	return new Promise<GoDocResult>(resolve => {
-		exec(goBin, args, { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER }, (error, stdout, stderr) => {
+		const options = offline
+			? { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: { ...process.env, ...OFFLINE_ENV } }
+			: { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER };
+		exec(goBin, args, options, (error, stdout, stderr) => {
 			if (error) {
 				const message = (stderr && stderr.trim()) || error.message;
 				resolve({ ok: false, text: stdout ?? '', error: message });

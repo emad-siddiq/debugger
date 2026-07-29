@@ -45,6 +45,8 @@ type RouteChoicesHandler = (args: { file: string; name: string | null; choices: 
 let routeChoicesHandler: RouteChoicesHandler | undefined;
 export function setRouteChoicesHandler(fn: RouteChoicesHandler): void { routeChoicesHandler = fn; }
 
+export const APP_PANEL_VIEW_TYPE = 'burrow.frontendDebugger';
+
 let current: vscode.WebviewPanel | undefined;
 let targetDir = '';
 let maximized = false;
@@ -56,7 +58,7 @@ export function openPanel(context: vscode.ExtensionContext, uiPort: number, dir:
 		return current;
 	}
 	const panel = vscode.window.createWebviewPanel(
-		'burrow.frontendDebugger',
+		APP_PANEL_VIEW_TYPE,
 		'Frontend Debugger',
 		vscode.ViewColumn.Active,
 		{ enableScripts: true, retainContextWhenHidden: true },
@@ -67,6 +69,12 @@ export function openPanel(context: vscode.ExtensionContext, uiPort: number, dir:
 	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('openMaximized', true)) {
 		void setEditorFullScreen(true);
 	}
+	adopt(context, panel);
+	return panel;
+}
+
+/** Listener wiring shared by a fresh open and a revive. */
+function adopt(context: vscode.ExtensionContext, panel: vscode.WebviewPanel): void {
 	panel.webview.onDidReceiveMessage((msg: HostMessage) => void handleHostMessage(msg), undefined, context.subscriptions);
 	panel.onDidDispose(() => {
 		current = undefined;
@@ -75,7 +83,66 @@ export function openPanel(context: vscode.ExtensionContext, uiPort: number, dir:
 		}
 	}, undefined, context.subscriptions);
 	current = panel;
-	return panel;
+}
+
+/**
+ * Bring the whole-app panel back with the rail, a reload and a relaunch
+ * (WO-60).
+ *
+ * Two things it does NOT do. It does not start the sidecar — a restored tab is
+ * the workbench's doing, and starting a dev server (and, through it, a target
+ * Vite) behind the user's back is exactly what constraint 2 forbids. And it does
+ * not maximize the editor group: `openMaximized` describes what happens when YOU
+ * open the panel, not what should happen to a layout during a window restore.
+ */
+export function registerAppPanel(
+	context: vscode.ExtensionContext,
+	resolve: () => { uiPort: number; targetDir: string } | undefined,
+): vscode.Disposable {
+	return vscode.window.registerWebviewPanelSerializer(APP_PANEL_VIEW_TYPE, {
+		deserializeWebviewPanel: async (panel: vscode.WebviewPanel, _state: unknown): Promise<void> => {
+			current?.dispose();
+			adopt(context, panel);
+			const live = resolve();
+			if (live) {
+				targetDir = live.targetDir;
+				panel.webview.html = buildHtml(live.uiPort);
+			} else {
+				panel.webview.html = buildStoppedHtml();
+			}
+		},
+	});
+}
+
+/** The app panel with nothing to show, and the reason (WO-60). */
+function buildStoppedHtml(): string {
+	const nonce = getNonce();
+	return `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'">
+	<style>
+		body { margin: 0; padding: 18px 22px; font: var(--vscode-font-size) var(--vscode-font-family);
+			color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+		h3 { font-size: 13px; margin: 0 0 8px; }
+		p { max-width: 62ch; line-height: 1.55; opacity: .8; font-size: 12px; }
+		button { font: inherit; font-size: 12px; padding: 3px 11px; border: 0; border-radius: 4px; cursor: pointer;
+			color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+	</style>
+</head>
+<body>
+	<h3>Frontend Debugger</h3>
+	<p>This tab came back with the window, but the dev server behind it is not running. Burrow does not start
+		one because an editor was restored — that is a deliberate act, and this is the button for it.</p>
+	<button id="start">Start the frontend debugger</button>
+<script nonce="${nonce}">
+	const vscode = acquireVsCodeApi();
+	document.getElementById('start').addEventListener('click', () => vscode.postMessage({ __fedbgHost: 1, type: 'restart' }));
+	window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ __fedbgHost: 1, type: 'exitFocus' }); } });
+</script>
+</body>
+</html>`;
 }
 
 /** Re-point the iframe after a sidecar restart (the port may have changed). */
@@ -129,6 +196,10 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
 		// Esc bridge (docs/plans/01 §4): the SPA iframe owns the focused document,
 		// so the keystroke reaches the workbench only by this route.
 		await vscode.commands.executeCommand('burrow.focus.exit');
+	} else if (msg.type === 'restart') {
+		// The stopped panel's own button — a restored tab becomes a running one
+		// only because this was clicked.
+		await vscode.commands.executeCommand('burrow.frontendDebugger.open');
 	} else if (msg.type === 'openSource') {
 		await openSource(msg);
 	} else if (msg.type === 'setFullScreen') {

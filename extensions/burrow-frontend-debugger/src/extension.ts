@@ -6,8 +6,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
-import { openPanel, refreshPanel, postToApp, setIsolationHandler, setRouteChoicesHandler } from './panel';
-import { openIsolation, IsolateArgs, registerIsolationTabs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
+import { openPanel, refreshPanel, postToApp, registerAppPanel, setIsolationHandler, setRouteChoicesHandler } from './panel';
+import { openIsolation, IsolateArgs, registerIsolationPanel, registerIsolationTabs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
 import { ComponentsProvider } from './gallery';
 import { Sidecar, sidecarPhase } from './sidecar';
 import { announceOnVisible, claimSurface } from './toolSurface';
@@ -59,6 +59,23 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		announceOnVisible('components', componentsView),
 		claimSurface('components', { viewType: 'burrow.frontendDebugger' }),
 		registerIsolationTabs(),
+		// Panel persistence (WO-60). Both Components surfaces come back with the
+		// rail, a reload and a relaunch — and neither wakes the dev server on the
+		// way in. Without a running sidecar they restore into a stated
+		// disconnected state with one button that starts it.
+		registerIsolationPanel(context, () => {
+			if (!sidecar?.running) {
+				return undefined;
+			}
+			const cfg = resolveConfig(context);
+			return {
+				targetOrigin: `http://127.0.0.1:${sidecar.targetPort || cfg.targetPort}`,
+				targetBase: sidecar.targetBase,
+				targetDir: cfg.targetDir,
+				uiPort: sidecar.uiPort,
+			};
+		}, () => resolveConfig(context).targetDir),
+		registerAppPanel(context, () => (sidecar?.running ? { uiPort: sidecar.uiPort, targetDir: resolveConfig(context).targetDir } : undefined)),
 	);
 
 	// Revealing the Components view warm-starts the sidecar in the background so

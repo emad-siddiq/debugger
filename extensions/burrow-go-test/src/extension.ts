@@ -89,6 +89,9 @@ export function activate(context: ExtensionContext): void {
 		announceOnVisible('run', view),
 		view.onDidChangeVisibility(() => void rescanIfEmpty()),
 		claimSurface('run', { viewType: TestLab.viewType }),
+		// Panel persistence (WO-60): the lab comes back with the verdict set it was
+		// showing, labelled as a record rather than a fresh run.
+		lab.register(context),
 		// A palette/keybinding entry point for a full re-scan; the controller's
 		// refresh button in the Test Explorer routes to the same discovery pass.
 		commands.registerCommand('burrow.test.refresh', async () => {

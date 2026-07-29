@@ -15,7 +15,8 @@
 		"onCommand:burrow.http.importPostman",
 		"onLanguage:http",
 		"onView:burrowHttpRequests",
-		"workspaceContains:**/*.http"
+		"workspaceContains:**/*.http",
+		"onWebviewPanel:burrowHttpWorkbench"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {

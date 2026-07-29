@@ -66,7 +66,37 @@ let currentCss: string | undefined;
 let currentTargetDir: string | undefined;
 let currentUiPort = 0;
 let currentLabel = '';
+let currentExport: string | undefined;
 let isolationGeneration = 0;
+
+/** The canvas chrome the harness last reported: stage width, background index,
+ *  which dock tab, dock height. Seeded back through the isolate URL so the
+ *  workbench comes back looking the way it was left (WO-60). */
+export interface IsolateChrome {
+	readonly w?: number;
+	readonly bg?: number;
+	readonly tab?: string;
+	readonly panelH?: number;
+}
+let currentChrome: IsolateChrome | undefined;
+
+export const ISOLATION_VIEW_TYPE = 'burrow.frontendIsolation';
+
+/** What a revived preview carries. The props are the component's OWN inputs,
+ *  not data from a server, and they are what makes a restored canvas render the
+ *  thing you were looking at rather than an empty skeleton. Capped, because a
+ *  panel's state is not a place to keep an unbounded object. */
+interface IsolationPanelState {
+	/** Target-relative, e.g. `src/primitives/badge/Badge.tsx`. */
+	readonly file?: string;
+	readonly export?: string;
+	readonly props?: Record<string, unknown>;
+	readonly chrome?: IsolateChrome;
+}
+
+/** Serialized-props ceiling. Beyond this the canvas restores with the type
+ *  skeleton instead — a smaller lie than truncating an object mid-key. */
+const MAX_PROPS_BYTES = 16_000;
 
 // The trio's lifecycle (see registerIsolationTabs). `trioSeen` is the baseline
 // the tab diff runs against; `isolating` is a COUNTER, not a flag, because the
@@ -225,7 +255,7 @@ async function openIsolationInner(context: vscode.ExtensionContext, target: Isol
 		props = schema.skeleton;
 		propsSource = 'synth';
 	}
-	const url = buildIsolateUrl(target, rel, exportName, props, schema?.specs, propsSource);
+	const url = buildIsolateUrl(target, rel, exportName, props, schema?.specs, propsSource, currentChrome);
 	const label = exportName || stem;
 
 	// New component → the previous component's state no longer applies. The
@@ -236,12 +266,13 @@ async function openIsolationInner(context: vscode.ExtensionContext, target: Isol
 	currentTargetDir = target.targetDir;
 	currentUiPort = target.uiPort;
 	currentLabel = label;
+	currentExport = exportName;
 	isolationGeneration++;
 
 	const previewColumn = cssAbs ? vscode.ViewColumn.Three : vscode.ViewColumn.Beside;
 	if (!preview) {
 		preview = vscode.window.createWebviewPanel(
-			'burrow.frontendIsolation',
+			ISOLATION_VIEW_TYPE,
 			`Preview — ${label}`,
 			{ viewColumn: previewColumn, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true },
@@ -447,20 +478,14 @@ async function resetLayoutIfEmpty(): Promise<void> {
 	}
 }
 
-/** A preview tab left over from the previous window. No WebviewPanelSerializer
- *  is registered, so the workbench's revive attempt leaves dead "could not be
- *  restored" chrome that no handle owns — sweep it at activation. */
-function sweepOrphanPreviewTabs(): void {
-	const orphans = vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter(isIsolationTab);
-	if (orphans.length) {
-		void vscode.window.tabGroups.close(orphans, false);
-	}
-}
-
 /** Wire the trio cascade up. Call once from activate; push the result into
- *  `context.subscriptions`. */
+ *  `context.subscriptions`.
+ *
+ *  This used to sweep away any preview tab left by a previous window, because
+ *  there was no serializer and the workbench's revive attempt left dead chrome
+ *  no handle owned. There is one now (WO-60), so an orphan is a thing to
+ *  restore, not to bin. */
 export function registerIsolationTabs(): vscode.Disposable {
-	sweepOrphanPreviewTabs();
 	return vscode.Disposable.from(
 		vscode.window.tabGroups.onDidChangeTabs(onTabsChanged),
 		new vscode.Disposable(() => {
@@ -470,6 +495,141 @@ export function registerIsolationTabs(): vscode.Disposable {
 			}
 		}),
 	);
+}
+
+// ---- persistence (WO-60) ---------------------------------------------------
+
+/** The current workbench as a state blob, target-relative so it survives the
+ *  project being checked out somewhere else. */
+function isolationState(): IsolationPanelState {
+	const rel = currentFile && currentTargetDir
+		? path.relative(currentTargetDir, currentFile).split(path.sep).join('/')
+		: undefined;
+	let props = currentProps;
+	if (props && JSON.stringify(props).length > MAX_PROPS_BYTES) {
+		// Too big to keep. Dropping them is honest — the harness will re-derive a
+		// skeleton from the component's types, exactly as on a first isolate.
+		props = undefined;
+	}
+	return { file: rel && !rel.startsWith('..') ? rel : undefined, export: currentExport, props, chrome: currentChrome };
+}
+
+/** Hand the current state to the panel's shim, which owns `setState`. */
+function pushIsolationState(): void {
+	void preview?.webview.postMessage({ __burrowIsoState: 1, state: isolationState() });
+}
+
+/**
+ * Bring the isolation workbench back with the rail, a reload and a relaunch
+ * (WO-60).
+ *
+ * Deliberately NOT by calling `openIsolation`: that opens editors, closes the
+ * previous component's tabs and re-lays out the columns, which is right when a
+ * person asks for a component and wrong during a window restore — the workbench
+ * is already putting the source and stylesheet back by itself. So this paints
+ * the canvas, adopts the panel, re-baselines the trio, and stops.
+ *
+ * If the dev server is not running the canvas cannot render anything, and
+ * Burrow does not start one because a tab came back. The panel says which
+ * component it is for and offers the button that starts it.
+ */
+export function registerIsolationPanel(
+	context: vscode.ExtensionContext,
+	resolve: () => IsolateTarget | undefined,
+	targetDir: () => string,
+): vscode.Disposable {
+	return vscode.window.registerWebviewPanelSerializer(ISOLATION_VIEW_TYPE, {
+		deserializeWebviewPanel: async (panel: vscode.WebviewPanel, state: unknown): Promise<void> => {
+			const saved = (state ?? {}) as IsolationPanelState;
+			preview?.dispose();
+			preview = panel;
+			panel.onDidDispose(() => { void teardownIsolation(); }, undefined, context.subscriptions);
+			panel.webview.onDidReceiveMessage((msg: IsolateEnvelope) => handleEnvelope(msg), undefined, context.subscriptions);
+
+			const target = resolve();
+			const rel = typeof saved.file === 'string' ? saved.file : undefined;
+			currentChrome = saved.chrome;
+			currentExport = typeof saved.export === 'string' ? saved.export : undefined;
+			currentProps = undefined;
+			const stem = rel ? (rel.split('/').pop() ?? rel).replace(/\.[jt]sx?$/, '') : 'component';
+			currentLabel = currentExport || stem;
+			panel.title = `Preview — ${currentLabel}`;
+
+			if (!target || !rel) {
+				// The canvas cannot render, but the BUTTON still has to work — so the
+				// component is resolved from the configured target anyway. Without
+				// this the Start button had nothing to reopen and did nothing.
+				const dir = targetDir();
+				currentTargetDir = dir || undefined;
+				currentFile = rel && dir ? path.join(dir, rel) : undefined;
+				currentCss = currentFile ? findColocatedCss(currentFile) : undefined;
+				panel.webview.html = disconnectedPreviewHtml(rel, currentLabel, currentFile ? 'nosidecar' : 'nofile', saved);
+			} else {
+				const abs = path.join(target.targetDir, rel);
+				currentFile = abs;
+				currentCss = findColocatedCss(abs);
+				currentTargetDir = target.targetDir;
+				currentUiPort = target.uiPort;
+				const props = isRecord(saved.props) ? saved.props : {};
+				const url = buildIsolateUrl(target, rel, currentExport, props, undefined, Object.keys(props).length ? 'capture' : undefined, currentChrome);
+				panel.webview.html = buildPreviewHtml(target.targetOrigin, url, saved);
+			}
+			// The restore is the new normal: whatever the workbench put back is the
+			// baseline the trio cascade diffs against from here.
+			isolationGeneration++;
+			trioSeen = snapshotTrio();
+			closedColumns = [];
+			openedColumns.clear();
+		},
+	});
+}
+
+/**
+ * The canvas cannot render: either no dev server is running in this window, or
+ * the component the panel was for is not resolvable. Says which, and offers the
+ * one click that fixes it (WO-60, "grey with a reason").
+ */
+function disconnectedPreviewHtml(rel: string | undefined, label: string, why: 'nosidecar' | 'nofile', seed: IsolationPanelState): string {
+	const nonce = getNonce();
+	const reason = why === 'nosidecar'
+		? 'The dev server that serves the isolation canvas is not running in this window. Burrow does not start one because a tab was restored — starting it is a deliberate act.'
+		: 'This preview did not record which component it was showing, so there is nothing to put back on the canvas.';
+	return `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'">
+	<style>
+		body { margin: 0; padding: 18px 22px; font: var(--vscode-font-size) var(--vscode-font-family);
+			color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+		h3 { font-size: 13px; margin: 0 0 8px; }
+		p { max-width: 62ch; line-height: 1.55; opacity: .8; font-size: 12px; }
+		code { font-family: var(--vscode-editor-font-family); }
+		button { font: inherit; font-size: 12px; padding: 3px 11px; border: 0; border-radius: 4px; cursor: pointer;
+			color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+	</style>
+</head>
+<body>
+	<h3>${escapeAttr(label)}</h3>
+	<p>${escapeAttr(reason)}</p>
+	${rel ? `<p><code>${escapeAttr(rel)}</code></p>` : ''}
+	${why === 'nosidecar' ? '<button id="start">Start the dev server and isolate it</button>' : ''}
+<script nonce="${nonce}">
+	const vscode = acquireVsCodeApi();
+	vscode.setState(${JSON.stringify(seed)});
+	const btn = document.getElementById('start');
+	if (btn) { btn.addEventListener('click', () => vscode.postMessage({ __burrowIso: 1, type: 'restore' })); }
+	window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ __burrowIso: 1, type: 'exitFocus' }); } });
+</script>
+</body>
+</html>`;
+}
+
+/** Escape text interpolated into the disconnected page. */
+function escapeAttr(text: string): string {
+	return text.replace(/[&<>"']/g, (ch) => (
+		ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '"' ? '&quot;' : '&#39;'
+	));
 }
 
 /**
@@ -561,6 +721,14 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 		void vscode.commands.executeCommand('burrow.focus.exit');
 		return;
 	}
+	if (msg.type === 'restore') {
+		// The disconnected canvas's own button. Clicking it IS the request to
+		// start the dev server, so the full isolate flow runs from here.
+		if (currentFile) {
+			void vscode.commands.executeCommand('burrow.frontendDebugger.isolate', vscode.Uri.file(currentFile));
+		}
+		return;
+	}
 	if (msg.type === 'samples') {
 		// The harness found a colocated <Component>.samples.* — its own panel
 		// renders the picker; nothing to cache on the extension side anymore.
@@ -588,10 +756,25 @@ function handleEnvelope(msg: IsolateEnvelope): void {
 		}
 		return;
 	}
+	if (msg.type === 'chrome' && isRecord(msg.detail)) {
+		// The canvas chrome changed (viewport preset, background, dock tab or its
+		// height). Kept module-side and pushed into the panel's own state, so a
+		// rail switch, a reload or a relaunch brings the same canvas back.
+		const d = msg.detail;
+		currentChrome = {
+			w: typeof d.w === 'number' ? d.w : undefined,
+			bg: typeof d.bg === 'number' ? d.bg : undefined,
+			tab: typeof d.tab === 'string' ? d.tab : undefined,
+			panelH: typeof d.panelH === 'number' ? d.panelH : undefined,
+		};
+		pushIsolationState();
+		return;
+	}
 	if (msg.type === 'props' && msg.detail && typeof msg.detail === 'object' && !Array.isArray(msg.detail)) {
 		// The harness mirrors its live props (JSON-safe, 'ƒ' markers intact) after
 		// every render — the seed for editProps.
 		currentProps = msg.detail;
+		pushIsolationState();
 		return;
 	}
 	if (msg.type === 'saveSample') {
@@ -783,10 +966,15 @@ function sanitizeProps(raw: unknown): Record<string, unknown> {
 	return out;
 }
 
-function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>, specs?: PropSpec[], propsSource?: 'capture' | 'synth'): string {
+function buildIsolateUrl(target: IsolateTarget, rel: string, exportName: string | undefined, props: Record<string, unknown>, specs?: PropSpec[], propsSource?: 'capture' | 'synth', chrome?: IsolateChrome): string {
 	const base = target.targetBase.endsWith('/') ? target.targetBase : `${target.targetBase}/`;
 	const q = new URLSearchParams();
 	q.set('module', rel);
+	// The canvas chrome, so a restored (or re-isolated) preview keeps the
+	// viewport, the background and the dock you set (WO-60).
+	if (chrome && Object.keys(chrome).length) {
+		q.set('chrome', JSON.stringify(chrome));
+	}
 	if (exportName) {
 		q.set('export', exportName);
 	}
@@ -836,7 +1024,7 @@ function defaultLabel(rel: string): string {
  * and (b) relays native commands (reload/props) FROM the extension DOWN to the
  * harness as `__burrowIsoCmd`.
  */
-function buildPreviewHtml(origin: string, isoUrl: string): string {
+function buildPreviewHtml(origin: string, isoUrl: string, seed: IsolationPanelState = isolationState()): string {
 	const nonce = getNonce();
 	const safeUrl = isoUrl.replace(/"/g, '&quot;');
 	return `<!DOCTYPE html>
@@ -860,6 +1048,10 @@ function buildPreviewHtml(origin: string, isoUrl: string): string {
 		window.addEventListener('message', (e) => {
 			const d = e.data;
 			if (!d) { return; }
+			// WO-60: the shim is the only thing in this panel that can call
+			// setState, and the state it writes is the extension's — the harness
+			// lives at another origin and never sees it.
+			if (d.__burrowIsoState === 1) { vscode.setState(d.state); return; }
 			if (d.__burrowIsoCmd === 1) {
 				if (frame.contentWindow) { frame.contentWindow.postMessage(d, '*'); }
 				return;
@@ -867,6 +1059,9 @@ function buildPreviewHtml(origin: string, isoUrl: string): string {
 			// The harness's ready/renderError envelopes bubble up to the extension.
 			if (e.origin === origin && d.__burrowIso === 1) { vscode.postMessage(d); }
 		});
+		// Seeded by the host on every (re-)paint so the blob is never empty, even
+		// if the harness never reports anything.
+		vscode.setState(${JSON.stringify(seed)});
 	</script>
 </body>
 </html>`;

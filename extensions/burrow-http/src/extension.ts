@@ -8,7 +8,7 @@ import { HttpCodeLensProvider } from './codelens';
 import { convertPostmanCollection } from './postman';
 import { RequestsProvider } from './requestsTree';
 import { announceOnVisible, claimSurface } from './toolSurface';
-import { HttpWorkbench } from './workbench';
+import { HTTP_WORKBENCH_VIEW_TYPE, HttpWorkbench } from './workbench';
 
 // burrow-http — the HTTP workbench (architecture task 09), a file-backed Postman-class
 // client. This FIRST SLICE ships the vertical spine of tasks 1–4: the pure `.http`
@@ -38,7 +38,11 @@ export function activate(context: ExtensionContext): void {
 		requests,
 		requestsView,
 		announceOnVisible('api', requestsView),
-		claimSurface('api', { viewType: 'burrowHttpWorkbench' }),
+		claimSurface('api', { viewType: HTTP_WORKBENCH_VIEW_TYPE }),
+		// Panel persistence (WO-60): the workbench comes back bound to its file
+		// with its request picked, and with an empty response pane — restoring a
+		// tab never sends anything.
+		workbench.register(),
 		commands.registerCommand('burrow.http.refreshRequests', () => requests.refresh()),
 		languages.registerCodeLensProvider(HTTP_SELECTOR, new HttpCodeLensProvider()),
 

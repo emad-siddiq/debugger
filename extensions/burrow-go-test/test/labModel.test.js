@@ -10,7 +10,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { buildSuite, buildRun, wantGot, failedNames, verdict } = require('../out/labModel');
+const { buildSuite, buildRun, wantGot, failedNames, verdict, trimRunForStorage, sizeOf } = require('../out/labModel');
 
 const result = (name, status, durationMs = 1, output = '') => ({ name, status, durationMs, output });
 
@@ -84,6 +84,41 @@ const cases = {
 	},
 	'a build failure says so instead of reporting zero passes': () => {
 		assert.strictEqual(verdict(buildRun([], false, 'undefined: Foo')), 'build failed');
+	},
+
+	// --- what survives a reload (WO-60) ---------------------------------------
+	'a stored run keeps every verdict but only the failures\' output': () => {
+		const run = buildRun([buildSuite('./a', 'a', [
+			result('TestFail', 'fail', 3, 'want 1 got 2'),
+			result('TestPass', 'pass', 1, 'lots of passing chatter'),
+			result('TestSkip', 'skip', 0, 'skipping'),
+		])], false);
+		const { run: small, trimmed } = trimRunForStorage(run);
+		const tests = small.suites[0].tests;
+		assert.strictEqual(trimmed, false);
+		assert.deepStrictEqual(tests.map((t) => t.status), ['fail', 'skip', 'pass']);
+		assert.strictEqual(tests.find((t) => t.name === 'TestFail').output, 'want 1 got 2');
+		assert.strictEqual(tests.find((t) => t.name === 'TestPass').output, '');
+		assert.strictEqual(tests.find((t) => t.name === 'TestSkip').output, '');
+	},
+	'one enormous failure is clipped, not dropped': () => {
+		const run = buildRun([buildSuite('./a', 'a', [result('TestHuge', 'fail', 1, 'x'.repeat(50_000))])], false);
+		const { run: small, trimmed } = trimRunForStorage(run);
+		assert.strictEqual(trimmed, false);
+		assert.match(small.suites[0].tests[0].output, /^x{4000}\n… \(clipped\)$/);
+	},
+	'a run too big even clipped drops output and says so': () => {
+		// 40 failures × 4 000 clipped chars is far past the 48 KB budget.
+		const tests = Array.from({ length: 40 }, (_, i) => result(`TestF${i}`, 'fail', 1, 'y'.repeat(9_000)));
+		const { run: small, trimmed } = trimRunForStorage(buildRun([buildSuite('./a', 'a', tests)], false));
+		assert.strictEqual(trimmed, true);
+		assert.ok(small.suites[0].tests.every((t) => t.output === ''));
+		assert.strictEqual(small.suites[0].tests.length, 40, 'every verdict is still there');
+	},
+	'the stored run stays inside the 64 KB per-panel budget': () => {
+		const tests = Array.from({ length: 400 }, (_, i) => result(`TestP${i}`, 'pass', i, 'chatter'.repeat(200)));
+		const { run: small } = trimRunForStorage(buildRun([buildSuite('./big', 'big', tests)], false));
+		assert.ok(sizeOf(small) < 64_000, `stored run was ${sizeOf(small)} bytes`);
 	},
 };
 

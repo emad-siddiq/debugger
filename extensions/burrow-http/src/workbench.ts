@@ -25,12 +25,65 @@ function nonce(): string {
 	return out;
 }
 
+export const HTTP_WORKBENCH_VIEW_TYPE = 'burrowHttpWorkbench';
+
+/**
+ * What a revived workbench carries (WO-60): which `.http` file it is bound to
+ * and which request was picked. **Never the response** — a body can be
+ * megabytes, can carry a token, and is the one thing a restored panel must not
+ * pretend it still has.
+ */
+interface HttpPanelState {
+	readonly doc?: string;
+	readonly index?: number;
+	readonly help?: boolean;
+}
+
 /** Owns the singleton HTTP workbench panel and the pick → send → render loop. */
 export class HttpWorkbench implements Disposable {
 	private panel: WebviewPanel | undefined;
 	/** The `.http` document the panel is bound to; re-read on each send. */
 	private docUri: Uri | undefined;
 	private readonly disposables: Disposable[] = [];
+
+	/**
+	 * Come back with the rail, a reload and a relaunch (WO-60).
+	 *
+	 * The picker is rebuilt by re-parsing the bound file — a read of a file the
+	 * workspace already has — and the response pane comes back empty and says
+	 * why. Restoring a tab is not a reason to send an HTTP request.
+	 */
+	public register(): Disposable {
+		return window.registerWebviewPanelSerializer(HTTP_WORKBENCH_VIEW_TYPE, {
+			deserializeWebviewPanel: async (panel: WebviewPanel, state: unknown): Promise<void> => {
+				const saved = (state ?? {}) as HttpPanelState;
+				this.panel?.dispose();
+				this.panel = panel;
+				this.wire(panel);
+				let document: TextDocument | undefined;
+				if (saved.doc) {
+					try {
+						document = await workspace.openTextDocument(Uri.parse(saved.doc));
+					} catch {
+						document = undefined;
+					}
+				}
+				if (document) {
+					this.docUri = document.uri;
+					panel.webview.html = this.html(document, saved);
+					return;
+				}
+				this.docUri = undefined;
+				panel.webview.html = this.unboundHtml(saved.doc);
+			},
+		});
+	}
+
+	/** Listener wiring shared by a fresh open and a revive. */
+	private wire(panel: WebviewPanel): void {
+		panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.disposables);
+		panel.webview.onDidReceiveMessage(message => this.onMessage(message), undefined, this.disposables);
+	}
 
 	/** Read the send timeout (ms) from configuration; `0` disables it. */
 	private timeoutMs(): number {
@@ -45,13 +98,12 @@ export class HttpWorkbench implements Disposable {
 		this.docUri = document.uri;
 		if (!this.panel) {
 			this.panel = window.createWebviewPanel(
-				'burrowHttpWorkbench',
+				HTTP_WORKBENCH_VIEW_TYPE,
 				'HTTP Workbench',
 				{ viewColumn: ViewColumn.Beside, preserveFocus: true },
 				{ enableScripts: true, retainContextWhenHidden: true },
 			);
-			this.panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.disposables);
-			this.panel.webview.onDidReceiveMessage(message => this.onMessage(message), undefined, this.disposables);
+			this.wire(this.panel);
 		}
 		this.panel.webview.html = this.html(document);
 		this.panel.reveal(ViewColumn.Beside, true);
@@ -120,12 +172,22 @@ export class HttpWorkbench implements Disposable {
 	}
 
 	/** Build the full webview page: the request picker toolbar plus the response pane. */
-	private html(document: TextDocument): string {
+	private html(document: TextDocument, restored?: HttpPanelState): string {
 		const n = nonce();
 		const parsed = parseHttpFile(document.getText());
+		const selected = restored && typeof restored.index === 'number' && restored.index >= 0 && restored.index < parsed.requests.length
+			? restored.index
+			: undefined;
 		const options = parsed.requests
-			.map((r, i) => `<option value="${i}">${escapeAttr(`${r.method}  ${r.name}`)}</option>`)
+			.map((r, i) => `<option value="${i}"${i === selected ? ' selected' : ''}>${escapeAttr(`${r.method}  ${r.name}`)}</option>`)
 			.join('');
+		// A restored panel says what it is holding and what it is not. The picked
+		// request is back; the response is not, because nothing was sent.
+		const opening = restored
+			? (selected === undefined
+				? `Restored. The request you had picked is no longer in ${basename(document.uri)} — pick another and press Send.`
+				: 'Restored — nothing sent. Press Send to run it again.')
+			: 'Pick a request and press Send.';
 		const csp = `default-src 'none'; style-src 'nonce-${n}'; script-src 'nonce-${n}';`;
 
 		return `<!DOCTYPE html>
@@ -175,7 +237,7 @@ export class HttpWorkbench implements Disposable {
 		<button id="send">Send</button>
 		<button id="helpbtn" title="What is this? — every part of this editor, in one sentence each">?</button>
 	</div>
-	<div id="result"><div class="note">Pick a request and press Send.</div></div>
+	<div id="result"><div class="note">${escapeAttr(opening)}</div></div>
 	<div id="help" hidden>
 		<div class="hh"><b>API workbench</b><button id="helpclose" title="Close (Esc)">✕</button></div>
 		<div class="lede">The requests in the <code>.http</code> file beside this pane, sent for real against
@@ -191,15 +253,24 @@ export class HttpWorkbench implements Disposable {
 		const vscode = acquireVsCodeApi();
 		const picker = document.getElementById('picker');
 		const result = document.getElementById('result');
+		// WO-60: the binding and the pick, and nothing else. The response pane's
+		// contents are deliberately absent — a restored tab must not be able to
+		// show a body it did not just receive.
+		let saved = { doc: ${JSON.stringify(document.uri.toString())}, index: Number(picker.value) || 0, help: ${restored?.help === true ? 'true' : 'false'} };
+		const remember = (patch) => { saved = Object.assign({}, saved, patch); vscode.setState(saved); };
+		remember({});
+		picker.addEventListener('change', () => remember({ index: Number(picker.value) || 0 }));
 		document.getElementById('send').addEventListener('click', () => {
 			const index = Number(picker.value);
 			if (!Number.isNaN(index)) {
+				remember({ index });
 				result.innerHTML = '<div class="note">Sending…</div>';
 				vscode.postMessage({ type: 'send', index });
 			}
 		});
 		const help = document.getElementById('help');
-		const setHelp = on => { help.hidden = !on; };
+		const setHelp = on => { help.hidden = !on; remember({ help: on }); };
+		if (saved.help) { setHelp(true); }
 		document.getElementById('helpbtn').addEventListener('click', () => setHelp(help.hidden));
 		document.getElementById('helpclose').addEventListener('click', () => setHelp(false));
 		// Esc bridge (docs/plans/01 §4): this webview has focus, so the workbench
@@ -224,6 +295,40 @@ export class HttpWorkbench implements Disposable {
 </html>`;
 	}
 
+	/**
+	 * The workbench came back but its `.http` file did not — deleted, renamed, or
+	 * a different workspace opened in the same window. It says which file, rather
+	 * than presenting an empty picker that looks like the file has no requests
+	 * (WO-60, "grey with a reason").
+	 */
+	private unboundHtml(doc: string | undefined): string {
+		const n = nonce();
+		const name = doc ? basename(Uri.parse(doc)) : 'the file it was opened from';
+		return `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${n}'; script-src 'nonce-${n}';">
+	<style nonce="${n}">
+		body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 14px 16px; }
+		h3 { font-size: 13px; margin: 0 0 8px; }
+		p { max-width: 60ch; line-height: 1.55; opacity: .8; font-size: 12px; }
+		code { font-family: var(--vscode-editor-font-family); }
+	</style>
+</head>
+<body>
+	<h3>No requests to show</h3>
+	<p>This workbench was bound to <code>${escapeAttr(name)}</code>, which this window cannot open. Open a
+		<code>.http</code> file and run <b>Burrow HTTP: Open HTTP Workbench</b> to bind it to another one.</p>
+<script nonce="${n}">
+	const vscode = acquireVsCodeApi();
+	vscode.setState({ doc: ${JSON.stringify(doc ?? null)} });
+	window.addEventListener('keydown', e => { if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); } });
+</script>
+</body>
+</html>`;
+	}
+
 	public dispose(): void {
 		this.panel?.dispose();
 		for (const d of this.disposables) {
@@ -235,4 +340,10 @@ export class HttpWorkbench implements Disposable {
 /** Escape a string for safe use inside a double-quoted HTML attribute. */
 function escapeAttr(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+/** Last path segment of a uri — the name a person calls the file. */
+function basename(uri: Uri): string {
+	const parts = uri.path.split('/');
+	return parts[parts.length - 1] || uri.toString();
 }
