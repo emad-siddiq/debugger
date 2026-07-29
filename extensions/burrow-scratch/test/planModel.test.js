@@ -34,6 +34,16 @@ const project = () => [
 	file('node_modules/left-pad/index.js', 'module.exports = 1;'),
 ];
 
+/** A schema plus the two shapes that can apply it: a runner package, and the
+ *  `cmd/migrate` main that drives it. Shaped like merkle's. */
+const migrating = () => [
+	file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+	file('backend/migrations/001_init.sql', 'CREATE TABLE nodes (id text primary key);\n'),
+	file('backend/migrations/002_more.sql', 'CREATE TABLE edges (id text primary key);\n'),
+	file('backend/internal/migrate/migrate.go', '// Package migrate is the forward-only SQL migration runner.\npackage migrate\n\nfunc Run(dir string) error {\n\treturn nil\n}\n'),
+	file('backend/cmd/migrate/main.go', 'package main\n\nimport "example.com/app/internal/migrate"\n\nfunc main() {\n\t_ = migrate.Run("migrations")\n}\n'),
+];
+
 /** A flows.json with `traced` dialled to whatever the case needs. */
 const flows = (traced) => ({
 	backend: '/ref/backend',
@@ -233,11 +243,42 @@ const cases = {
 			'and it really did come first, so this is a gate and not an ordering accident');
 	},
 
+	'the data grid waits for something that can apply the schema': () => {
+		const plan = buildPlan(migrating(), { name: 'app', reference: '/ref' });
+		const hinted = plan.stages.filter((s) => s.tools.some((t) => t.command === 'burrow.db.refresh')).map((s) => s.id);
+		assert.ok(hinted.includes('backend/cmd/migrate'), 'the stage planning the runner offers it');
+		assert.ok(!hinted.includes('backend/migrations'), 'writing .sql files puts nothing in a database');
+	},
+	'migrations with no migrate entry point offer no data grid hint at all': () => {
+		// Degrade to absent, the same way route annotations do: a hint pointing at
+		// a view that cannot be filled is worse than no hint.
+		const plan = buildPlan(migrating().filter((f) => !f.path.startsWith('backend/cmd/migrate/')
+			&& !f.path.startsWith('backend/internal/migrate/')), { name: 'app', reference: '/ref' });
+		assert.ok(plan.stages.some((s) => s.id === 'backend/migrations'), 'the schema is still planned');
+		assert.deepStrictEqual(
+			plan.stages.filter((s) => s.tools.some((t) => t.command === 'burrow.db.refresh')).map((s) => s.id), []);
+	},
+
 	'a stage with a test file offers the Test Lab': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
 		const tools = plan.stages.find((s) => s.id === 'backend/store').tools.map((t) => t.command);
 		assert.ok(tools.includes('burrow.test.runAll'));
 	},
+	'the Test Lab hint survives where the other two are correctly withheld': () => {
+		// go test runs against a partial tree — verified in the packaged app at
+		// stage 7 of merkle: 12 tests, 3 packages, no main.go. Preconditioning the
+		// API and Data hints must not quietly take this one with them.
+		const plan = buildPlan([
+			file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+			file('backend/migrations/001_init.sql', 'CREATE TABLE nodes (id text primary key);\n'),
+			file('backend/store/store.go', 'package store\n\nfunc List() {}\n'),
+			file('backend/store/store_test.go', 'package store\n\nimport "testing"\n\nfunc TestList(t *testing.T) {}\n'),
+		], { name: 'app', reference: '/ref' });
+		const stage = plan.stages.find((s) => s.id === 'backend/store');
+		assert.deepStrictEqual(stage.tools.map((t) => t.command), ['burrow.test.runAll'],
+			'the module resolves and the tests are there, so the Test Lab is offered and nothing else is');
+	},
+
 	'foundations carry the one-off dependency installs': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
 		assert.deepStrictEqual(plan.stages[0].setup, ['cd backend && go mod download', 'cd web && npm install']);

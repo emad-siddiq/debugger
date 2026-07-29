@@ -588,6 +588,10 @@ const ROUTER_SEED = /\b(?:NewRouter|NewMux|NewServeMux)\s*\(/;
  *  pointing at once a seed exists — before that there is nothing to walk from. */
 const ROUTE_MOUNT = /\.(?:Route|Mount)\s*\(|\bchi\.Router\b|\*chi\.Mux\b|\*http\.ServeMux\b/;
 
+/** The name of a package that APPLIES migrations, as opposed to the directory of
+ *  `.sql` files it applies — which holds no Go and so is never imported. */
+const MIGRATOR = /^migrat/;
+
 /**
  * Preconditions a tool needs, accumulated as the plan is emitted. Stages are
  * pushed in the order they are worked, and a precondition met at stage 20 is
@@ -596,6 +600,10 @@ const ROUTE_MOUNT = /\.(?:Route|Mount)\s*\(|\bchi\.Router\b|\*chi\.Mux\b|\*http\
 interface ToolReadiness {
 	/** Something has created a router: flowscan has a seed to walk from. */
 	router: boolean;
+	/** Some `.sql` has been planned: there is a schema to talk about. */
+	schema: boolean;
+	/** A migration runner has been planned: the schema can reach a database. */
+	migrator: boolean;
 }
 
 /**
@@ -607,6 +615,7 @@ interface ToolReadiness {
 function stageTools(
 	paths: readonly string[],
 	text: (p: string) => string,
+	depDirs: (p: string) => readonly string[],
 	ready: ToolReadiness,
 ): ToolHint[] {
 	const tools: ToolHint[] = [];
@@ -630,10 +639,20 @@ function stageTools(
 		});
 	}
 
-	if (paths.some((p) => p.endsWith('.sql'))) {
+	// Writing 134 migrations puts 134 files on disk and nothing in a database.
+	// The hint waits for whatever is going to APPLY them: a package importing the
+	// project's own migration runner, or a `cmd/migrate`-shaped main that is its
+	// own runner. A project with no such entry point gets no hint at all — the
+	// same degrade-to-absent the route annotations use.
+	const sql = paths.some((p) => p.endsWith('.sql'));
+	ready.schema ||= sql;
+	const applies = code.some((p) => depDirs(p).some((d) => MIGRATOR.test(baseName(d)))
+		|| (MIGRATOR.test(baseName(dirName(p))) && baseName(dirName(dirName(p))) === 'cmd' && /^package\s+main\b/m.test(text(p))));
+	ready.migrator ||= applies;
+	if (ready.schema && ready.migrator && (applies || sql)) {
 		tools.push({
 			label: 'Open the database', command: 'burrow.db.refresh',
-			why: 'These migrations define the tables; the Data view reads the live schema back.',
+			why: 'A migration runner has been planned, so the schema can be applied and the Data view can read it back.',
 		});
 	}
 
@@ -667,8 +686,9 @@ export function buildPlan(
 	const claimed = new Set<string>();
 
 	const textOf = (p: string) => analysed.get(p)?.file.text ?? '';
+	const depDirsOf = (p: string) => analysed.get(p)?.depDirs ?? [];
 	// Carried across stages, in the order they are emitted: see ToolReadiness.
-	const ready: ToolReadiness = { router: false };
+	const ready: ToolReadiness = { router: false, schema: false, migrator: false };
 	// Enrichment, not structure: nothing below reads this, and a plan built
 	// without it differs only in the sentence the page prints.
 	const routesFor = (p: string): { routes?: readonly string[]; routeCount?: number } => {
@@ -703,7 +723,7 @@ export function buildPlan(
 			};
 			claimed.add(p);
 		}
-		stages.push({ ...stage, steps: paths, tools: stage.tools.length ? stage.tools : stageTools(paths, textOf, ready) });
+		stages.push({ ...stage, steps: paths, tools: stage.tools.length ? stage.tools : stageTools(paths, textOf, depDirsOf, ready) });
 	};
 
 	// 1 — Foundations. Every manifest and lockfile in the project, roots first.
