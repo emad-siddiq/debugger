@@ -244,7 +244,12 @@ export function linkList(plan: ScratchPlan, ids: readonly string[], empty: strin
 		return `<p class="quiet">${empty}</p>`;
 	}
 	const forward = ofStep === undefined ? undefined : forwardDeps(plan).get(ofStep);
-	const shown = ids.slice(0, LINK_CAP);
+	// A forward dependency is the one entry in this list a reader must not miss,
+	// so the cap never hides one — it applies to the ordinary entries around it.
+	// `frontend/src/primitives/index.ts` names 25 dependencies with its first
+	// forward one at index 22, and a flat slice(0, 12) told it nothing at all.
+	let budget = LINK_CAP;
+	const shown = ids.filter((id) => forward?.has(id) || budget-- > 0);
 	const rows = shown.map((id) => {
 		const step = plan.steps[id];
 		const note = forward?.has(id) ? `<span class="quiet"> — ${forward.get(id) ? CYCLE_NOTE : DEFECT_NOTE}</span>`

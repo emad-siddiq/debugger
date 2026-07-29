@@ -79,6 +79,19 @@ const cases = {
 		assert.notStrictEqual(CYCLE_NOTE, DEFECT_NOTE);
 	},
 
+	'a forward dependency past the twelfth link is shown anyway': () => {
+		const plan = buildPlan(barrel(), { name: 'web', reference: '/ref' });
+		const deps = plan.steps['web/src/index.ts'].deps;
+		assert.strictEqual(deps.length, 14);
+		assert.ok(deps.indexOf('web/src/z/Z.ts') >= 12, 'the case only bites past the cap');
+
+		const html = linkList(plan, deps, '', 'web/src/index.ts');
+		assert.ok(html.includes('data-goto="web/src/z/Z.ts"'), `the forward dependency must render:\n${html}`);
+		// Twelve ordinary entries plus the forward one; the fourteenth is counted.
+		assert.strictEqual((html.match(/data-goto=/g) ?? []).length, 13);
+		assert.ok(html.includes('…and 1 more'), 'the rest are still counted, not dropped');
+	},
+
 	'a list with nothing out of order is capped exactly as before': () => {
 		const plan = buildPlan(barrel(), { name: 'web', reference: '/ref' });
 		const deps = plan.steps['web/src/index.ts'].deps;
