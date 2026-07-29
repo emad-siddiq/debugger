@@ -1,7 +1,7 @@
 {
 	"name": "burrow-scratch",
 	"displayName": "Burrow Scratch",
-	"description": "Rebuild a project by hand, one file at a time, in a second Burrow window. Reads the reference project, orders every file so nothing is written before what it imports, and turns that order into stages you work through — with per-file checks, a diff against the reference when you want it, and progress saved in the scratch folder itself. See docs/plans/08-scratch-mode.md.",
+	"description": "Rebuild a project by hand, one file at a time, in a second Burrow window. Reads the reference project, orders every file so nothing is written before what it imports, and turns that order into stages you work through \u2014 with per-file checks, a diff against the reference when you want it, and progress saved in the scratch folder itself. See docs/plans/08-scratch-mode.md.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -12,7 +12,8 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onStartupFinished"
+		"onStartupFinished",
+		"onWebviewPanel:burrow.scratch.step"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -30,7 +31,7 @@
 		"commands": [
 			{
 				"command": "burrow.scratch.start",
-				"title": "New Scratch Build…",
+				"title": "New Scratch Build\u2026",
 				"category": "Scratch"
 			},
 			{
@@ -172,6 +173,12 @@
 		"configuration": {
 			"title": "Burrow Scratch",
 			"properties": {
+				"burrow.scratch.flowsFile": {
+					"type": "string",
+					"default": "",
+					"scope": "window",
+					"markdownDescription": "Path to a flowscan `flows.json`, used only to annotate steps with the routes they serve. Empty looks for `.burrow/flows.json` beside the reference project. Annotations are omitted entirely when the file is missing or reports a degraded scan."
+				},
 				"burrow.scratch.location": {
 					"type": "string",
 					"default": "",

@@ -182,6 +182,20 @@ function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
 		: '';
 }
 
+/**
+ * Why this file is in the project at all, in the only terms a reader already
+ * has: the routes it serves. Absent whenever flowscan has not run — a step
+ * without it renders exactly as it did before annotations existed.
+ */
+export function routeNote(step: ScratchStep): string {
+	if (!step.routes?.length) {
+		return '';
+	}
+	const named = step.routes.map((r) => `<code>${escape(r)}</code>`).join(', ');
+	const rest = (step.routeCount ?? step.routes.length) - step.routes.length;
+	return `<p class="quiet">Serves ${named}${rest > 0 ? ` and ${rest} more route${rest === 1 ? '' : 's'}` : ''}.</p>`;
+}
+
 /** A step's place in the plan, for spotting a dependency that comes later. */
 function position(plan: ScratchPlan, stepId: string): number {
 	const stage = plan.stages.findIndex((s) => s.id === plan.steps[stepId]?.stage);
@@ -302,6 +316,7 @@ function html(state: PageState): string {
 	</div>
 	<p class="lede">${instruction(step, stage)}</p>
 	${step.summary ? `<p class="quiet">The reference's own note: ${escape(step.summary.slice(0, 400))}</p>` : ''}
+	${routeNote(step)}
 
 	<section>
 		<h2>What it needs</h2>

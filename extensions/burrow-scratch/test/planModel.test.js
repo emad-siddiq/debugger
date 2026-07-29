@@ -13,7 +13,7 @@
 const assert = require('node:assert');
 const {
 	buildPlan, dependents, goDeclares, goImports, isIgnored, kindOf,
-	leadingComment, orderViolations, pairTests, topoSort, tsDeclares, tsImports,
+	leadingComment, orderViolations, pairTests, routeIndex, topoSort, tsDeclares, tsImports,
 } = require('../out/planModel');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
@@ -33,6 +33,16 @@ const project = () => [
 	file('README.md', '# app\n'),
 	file('node_modules/left-pad/index.js', 'module.exports = 1;'),
 ];
+
+/** A flows.json with `traced` dialled to whatever the case needs. */
+const flows = (traced) => ({
+	backend: '/ref/backend',
+	coverage: { traced },
+	flows: [
+		{ method: 'GET', path: '/api/nodes', file: 'router.go', nodes: [{ file: 'store/store.go' }] },
+		{ method: 'POST', path: '/api/nodes', file: 'router.go', middleware: [{ file: 'middleware/auth.go' }] },
+	],
+});
 
 const stageOf = (plan, id) => plan.steps[id].stage;
 const stageIndex = (plan, id) => plan.stages.findIndex((s) => s.id === stageOf(plan, id));
@@ -210,6 +220,42 @@ const cases = {
 		const b = JSON.stringify(buildPlan(project().reverse(), { name: 'app', reference: '/ref' }));
 		assert.strictEqual(a, b);
 	},
+	// --- route annotations ----------------------------------------------------
+	'routes reach the registration site, the handler and the middleware': () => {
+		const index = routeIndex(flows(60), 'backend');
+		assert.deepStrictEqual(index.get('backend/router.go'), ['GET /api/nodes', 'POST /api/nodes']);
+		assert.deepStrictEqual(index.get('backend/store/store.go'), ['GET /api/nodes']);
+		assert.deepStrictEqual(index.get('backend/middleware/auth.go'), ['POST /api/nodes']);
+	},
+	'a degraded scan annotates nothing at all, not a little': () => {
+		// The stale-binary case: flowscan still succeeds and still emits flows,
+		// it just traces six of them. Six explained routes read as though the
+		// other two hundred serve nothing.
+		assert.strictEqual(routeIndex(flows(6), 'backend'), undefined);
+		assert.strictEqual(routeIndex(undefined, 'backend'), undefined);
+		assert.strictEqual(routeIndex({ coverage: { traced: 200 }, flows: [] }, 'backend'), undefined);
+	},
+	'annotations name three routes and count the rest': () => {
+		const many = { coverage: { traced: 99 }, flows: [] };
+		for (let i = 0; i < 7; i++) {
+			many.flows.push({ method: 'GET', path: `/api/r${i}`, file: 'router.go', nodes: [{ file: 'store/store.go' }] });
+		}
+		const plan = buildPlan(project(), { name: 'app', reference: '/ref', routes: routeIndex(many, 'backend') });
+		const step = plan.steps['backend/store/store.go'];
+		assert.strictEqual(step.routes.length, 3);
+		assert.strictEqual(step.routeCount, 7);
+	},
+	'annotation changes no ordering and no check': () => {
+		const bare = buildPlan(project(), { name: 'app', reference: '/ref' });
+		const rich = buildPlan(project(), { name: 'app', reference: '/ref', routes: routeIndex(flows(60), 'backend') });
+		assert.deepStrictEqual(rich.stages.flatMap((s) => s.steps), bare.stages.flatMap((s) => s.steps));
+		for (const id of Object.keys(bare.steps)) {
+			assert.deepStrictEqual(rich.steps[id].checks, bare.steps[id].checks);
+		}
+		assert.strictEqual(bare.steps['backend/router.go'].routes, undefined);
+		assert.deepStrictEqual(rich.steps['backend/router.go'].routes, ['GET /api/nodes', 'POST /api/nodes']);
+	},
+
 	// --- the invariant --------------------------------------------------------
 	// This is the assertion the whole feature rests on, and it is checked against
 	// the EMITTED plan, not against topoSort: an ordering policy can be wrong in

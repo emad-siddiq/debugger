@@ -21,11 +21,12 @@
 // than code that already exists. That is the entire trick, and it is why this
 // needed no core patch.
 
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CheckRun, runChecks, summarize } from './checks';
-import { buildPlan } from './planModel';
+import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, routeIndex } from './planModel';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
@@ -56,6 +57,56 @@ export function deactivate(): void {
 // ---------------------------------------------------------------------------
 // The launcher — runs in the reference project's window
 // ---------------------------------------------------------------------------
+
+/**
+ * Route annotations, when flowscan has produced something worth reading.
+ *
+ * Every failure path returns `undefined` and says why in the log: annotations
+ * are enrichment, and a plan that explains a handful of routes reads as though
+ * the rest serve nothing. The staged flowscan binary going stale is exactly this
+ * case — it reports six traced flows out of two hundred and thirty-five rather
+ * than failing — which is why the floor is on the traced count and not on the
+ * file existing.
+ */
+function loadRoutes(reference: string, log: vscode.OutputChannel): ReadonlyMap<string, readonly string[]> | undefined {
+	const configured = vscode.workspace.getConfiguration('burrow.scratch').get<string>('flowsFile', '');
+	const candidate = configured
+		? configured.replace(/^~/, os.homedir())
+		: path.join(reference, '.burrow', 'flows.json');
+	if (!fs.existsSync(candidate)) {
+		log.appendLine(`no route annotations: ${candidate} does not exist (run "API Flows: Refresh" or set burrow.scratch.flowsFile)`);
+		return undefined;
+	}
+	let doc: FlowsDoc;
+	try {
+		doc = JSON.parse(fs.readFileSync(candidate, 'utf8')) as FlowsDoc;
+	} catch (error) {
+		log.appendLine(`no route annotations: ${candidate} is not readable JSON (${error instanceof Error ? error.message : String(error)})`);
+		return undefined;
+	}
+	// flows.json records the absolute backend directory it scanned; trust that
+	// over any convention, and fall back only when the file predates the field.
+	const backendAbs = doc.backend && path.isAbsolute(doc.backend) ? doc.backend : guessBackend(reference);
+	const rel = path.relative(reference, backendAbs);
+	const index = routeIndex(doc, rel.startsWith('..') ? '' : rel.split(path.sep).join('/'));
+	if (!index) {
+		log.appendLine(`no route annotations: ${candidate} traced ${doc.coverage?.traced ?? 0} flows, below the floor of ${MIN_TRACED_FLOWS} — a degraded scan explains less than nothing`);
+		return undefined;
+	}
+	log.appendLine(`route annotations: ${index.size} files carry at least one route, from ${doc.coverage?.traced} traced flows`);
+	return index;
+}
+
+/** flows.json records an absolute backend dir; prefer it, fall back to the
+ *  conventional layout so a hand-copied file still resolves. */
+function guessBackend(reference: string): string {
+	for (const name of ['backend', 'server', 'api']) {
+		if (fs.existsSync(path.join(reference, name, 'go.mod'))) {
+			return path.join(reference, name);
+		}
+	}
+	return reference;
+}
 
 async function startScratch(log: vscode.OutputChannel): Promise<void> {
 	const folder = vscode.workspace.workspaceFolders?.[0];
@@ -91,7 +142,7 @@ async function startScratch(log: vscode.OutputChannel): Promise<void> {
 			progress.report({ message: `${scan.files.length} files — working out the order…` });
 			// Yield once so the notification paints before the plan is built.
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			const built = buildPlan(scan.files, { name: folder.name, reference });
+			const built = buildPlan(scan.files, { name: folder.name, reference, routes: loadRoutes(reference, log) });
 			log.appendLine(`planned ${folder.name}: ${built.counts.steps} steps in ${built.counts.stages} stages, ${built.counts.lines} lines (${scan.skipped} binary/oversized files left out)`);
 			return built;
 		},
@@ -411,7 +462,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 
 	register('burrow.scratch.replan', (async () => {
 		const scan = scanProject(plan.reference);
-		const rebuilt = buildPlan(scan.files, { name: plan.name, reference: plan.reference });
+		const rebuilt = buildPlan(scan.files, { name: plan.name, reference: plan.reference, routes: loadRoutes(plan.reference, log) });
 		const kept = order(rebuilt).filter((id) => isSettled(stateOf(progress, id))).length;
 		const lost = order(plan).filter((id) => isSettled(stateOf(progress, id)) && !rebuilt.steps[id]);
 		const ok = await vscode.window.showWarningMessage(

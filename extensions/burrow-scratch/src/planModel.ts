@@ -76,6 +76,11 @@ export interface ScratchStep {
 	/** Stage ids this file depends on (Go imports are package-level). */
 	readonly depStages: readonly string[];
 	readonly checks: readonly Check[];
+	/** Up to three routes this file serves, for the page to name. Enrichment
+	 *  only: absent everywhere when flowscan has not run, and never structural. */
+	readonly routes?: readonly string[];
+	/** How many routes reach it in total, when more than `routes` names. */
+	readonly routeCount?: number;
 }
 
 export type StageClass = 'foundations' | 'schema' | 'go' | 'web' | 'rest';
@@ -590,7 +595,10 @@ function stageTools(paths: readonly string[], text: (p: string) => string): Tool
 	return tools;
 }
 
-export function buildPlan(files: readonly SourceFile[], options: { name: string; reference: string }): ScratchPlan {
+export function buildPlan(
+	files: readonly SourceFile[],
+	options: { name: string; reference: string; routes?: ReadonlyMap<string, readonly string[]> },
+): ScratchPlan {
 	// go.sum is project content but never a step: `go mod tidy`, which the go.mod
 	// step runs, writes it. Dropped from the step universe rather than from
 	// isIgnored — it is not noise, it just has no step to call its own.
@@ -608,6 +616,12 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 	const claimed = new Set<string>();
 
 	const textOf = (p: string) => analysed.get(p)?.file.text ?? '';
+	// Enrichment, not structure: nothing below reads this, and a plan built
+	// without it differs only in the sentence the page prints.
+	const routesFor = (p: string): { routes?: readonly string[]; routeCount?: number } => {
+		const all = options.routes?.get(p);
+		return all && all.length ? { routes: all.slice(0, 3), routeCount: all.length } : {};
+	};
 	const addStage = (stage: Omit<ScratchStage, 'steps'>, paths: readonly string[]): void => {
 		if (!paths.length) {
 			return;
@@ -632,6 +646,7 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 				deps: a.deps,
 				depStages: a.depDirs,
 				checks: checksFor(shape, owner?.[0]),
+				...routesFor(p),
 			};
 			claimed.add(p);
 		}
@@ -797,6 +812,72 @@ export function buildPlan(files: readonly SourceFile[], options: { name: string;
 		steps,
 		counts: { stages: stages.length, steps: all.length, lines: all.reduce((n, s) => n + s.lines, 0) },
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Route annotations
+// ---------------------------------------------------------------------------
+
+/** The subset of flowscan's flows.json this reads. */
+export interface FlowsDoc {
+	/** Absolute path of the backend flowscan scanned; paths inside are relative to it. */
+	readonly backend?: string;
+	readonly coverage?: { readonly traced?: number };
+	readonly flows?: ReadonlyArray<{
+		readonly method?: string;
+		readonly path?: string;
+		readonly file?: string;
+		readonly middleware?: ReadonlyArray<{ readonly file?: string }>;
+		readonly nodes?: ReadonlyArray<{ readonly file?: string }>;
+	}>;
+}
+
+/** Below this many traced flows the data is a degraded run, not a thin project. */
+export const MIN_TRACED_FLOWS = 50;
+
+/**
+ * Which routes reach which file, project-relative.
+ *
+ * Returns `undefined` — meaning annotate nothing — when flowscan did not run or
+ * ran degraded. A curriculum that explains six routes out of two hundred and
+ * thirty-five is worse than one that explains none: the reader cannot tell the
+ * silence from the absence. The stale-binary case is exactly this, and it
+ * reports 6 traced rather than failing.
+ */
+export function routeIndex(doc: FlowsDoc | undefined, backendPrefix: string): Map<string, string[]> | undefined {
+	const traced = doc?.coverage?.traced ?? 0;
+	if (!doc || !Array.isArray(doc.flows) || !doc.flows.length || traced < MIN_TRACED_FLOWS) {
+		return undefined;
+	}
+	const out = new Map<string, string[]>();
+	const add = (rel: string | undefined, route: string) => {
+		if (!rel) {
+			return;
+		}
+		const id = join(backendPrefix, rel);
+		const list = out.get(id) ?? [];
+		if (!list.includes(route)) {
+			list.push(route);
+			out.set(id, list);
+		}
+	};
+	for (const flow of doc.flows) {
+		if (!flow.method || !flow.path) {
+			continue;
+		}
+		const route = `${flow.method} ${flow.path}`;
+		add(flow.file, route);
+		for (const m of flow.middleware ?? []) {
+			add(m.file, route);
+		}
+		for (const n of flow.nodes ?? []) {
+			add(n.file, route);
+		}
+	}
+	for (const list of out.values()) {
+		list.sort();
+	}
+	return out;
 }
 
 // ---------------------------------------------------------------------------
