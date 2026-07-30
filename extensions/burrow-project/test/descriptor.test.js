@@ -41,6 +41,7 @@ const kids = (files, rel, wantDirs) => {
 
 const GO_MOD = 'module example.com/thing\n\ngo 1.25\n';
 const live = (project) => capabilities(project).filter((c) => c.live).map((c) => c.id).sort();
+const stateOf = (project, id) => capabilities(project).find((c) => c.id === id);
 
 const cases = {
 	// ── detection first: a repo that has never seen Burrow must work ──────────
@@ -81,6 +82,31 @@ const cases = {
 	},
 
 	// ── services ─────────────────────────────────────────────────────────────
+	// WO-72 §0.2: `live` means MEASURED. flowscan seeds from NewRouter() CALL sites,
+	// so whether it finds anything depends on the code and not the layout — WO-71
+	// reported `flow: live` for a router LIBRARY on inference alone.
+	'flow is unknown, never live, because detection cannot measure it': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD }), 'x');
+		const flow = stateOf(p, 'flow');
+		assert.strictEqual(flow.state, 'unknown');
+		assert.strictEqual(flow.live, false, 'unknown must not read as live to a boolean caller');
+		assert.match(flow.why, /run "API Flows: Refresh Flows"/, 'unknown has to say how to find out');
+	},
+	'flow is inert, not unknown, with no Go stack at all': () => {
+		assert.strictEqual(stateOf(detect(tree({}), 'x'), 'flow').state, 'inert');
+	},
+	'go and test are live because the tree measures them': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD }), 'x');
+		assert.strictEqual(stateOf(p, 'go').state, 'live');
+		assert.strictEqual(stateOf(p, 'test').state, 'live');
+	},
+	'every capability has one of exactly three states': () => {
+		for (const c of capabilities(detect(tree({ 'go.mod': GO_MOD }), 'x'))) {
+			assert.ok(['live', 'inert', 'unknown'].includes(c.state), `${c.id} has state ${c.state}`);
+			assert.ok(c.why.length > 0, `${c.id} gives no reason`);
+		}
+	},
+
 	'a compose Postgres lights the Data rail': () => {
 		const p = detect(tree({
 			'go.mod': GO_MOD,
@@ -88,7 +114,7 @@ const cases = {
 		}), 'x');
 		assert.strictEqual(p.services[0].kind, 'postgres');
 		assert.strictEqual(p.services[0].composeService, 'db');
-		assert.deepStrictEqual(live(p), ['data', 'flow', 'go', 'test']);
+		assert.deepStrictEqual(live(p), ['data', 'go', 'test'], 'flow is unknown, not live');
 	},
 	'a DATABASE_URL in .env lights it too, with no compose at all': () => {
 		const p = detect(tree({ 'go.mod': GO_MOD, '.env': 'DATABASE_URL=postgres://u:p@localhost:5432/d\n' }), 'x');

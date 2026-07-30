@@ -35,6 +35,41 @@ every generated file for `/burrow/i` and fails naming the line. `.gitignore` is 
 single exception, and only to *ignore* `.burrow/` — which is what makes the
 directory gitignorable, as the descriptor's contract requires.
 
+## The house rule: nothing declines silently
+
+> Grey-with-a-reason has governed what the UI *shows*. It now governs what Burrow
+> **does**: **no Burrow code path may decline to act without saying why.** A
+> provider that cannot resolve a configuration says so. A tier that cannot start
+> names what it needed. An action that no-ops explains itself.
+
+**What it costs to break it.** WO-71 spent a large fraction of its budget on 130
+seconds of nothing, three times over, and concluded F5 was broken. It was not —
+`resolveDebugConfiguration` never declined, the adapter never failed, and the
+session started every time in about 28 seconds. What produced "nothing" was a
+*probe* reading `.debug-toolbar`'s `innerText`, which is empty in this fork because
+the toolbar is icon-only. A live session and no session looked identical.
+
+So the rule earns its place, but note carefully what the incident actually
+demonstrates: **the absence of a signal is not evidence of absence.** The fix that
+generalises is not only "say why you declined" but "make presence legible" — if the
+only way to tell a session is running is an element with no text, every observer of
+that state is one bad selector away from a wrong diagnosis.
+
+Applied here:
+
+- `burrow-go-debug`'s config provider logs the module root it chose when it differs
+  from the workspace root, so a `program` you did not write is traceable.
+- `capabilities()` distinguishes **`live` (measured)** from **`unknown` (needs the
+  tool run to find out)** from **`inert` (measured absent)** — see below.
+
+Found and **not** fixed here, listed as the rule requires:
+
+| Where | The silent decline |
+|---|---|
+| `Debug: Start Debugging` with no configuration selected | Upstream's; it did start a session here, so it is not a decline — recorded because it was suspected and cleared |
+| `burrow-flow`'s `detectProject()` returning `undefined` | The caller shows a warning naming `backend/go.mod`, so this one already complies |
+| `sidecarTargetUrl()` returning `undefined` on an inactive extension | The browser tier logs "the sidecar reported no URL — skipped"; complies |
+
 ## Detection first, declaration second
 
 A folder with a `go.mod` is a Go project without anyone writing anything. **A

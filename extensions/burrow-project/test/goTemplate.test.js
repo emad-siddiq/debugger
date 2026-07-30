@@ -126,6 +126,45 @@ const cases = {
 		assert.ok(!lines.includes('.env.example'), '.env.example is the committed template');
 	},
 
+	// ── template corruption (WO-72 §0.3) ────────────────────────────────────
+	//
+	// A backtick in prose inside a template literal ends it early. Three times now:
+	// isolateHarness.js, walkView.ts, goTemplate.ts. The compiler catches it
+	// DETERMINISTICALLY — TS1005, every time — so it is not a missed defect, and a
+	// lint that re-derives what tsc already proves is a heuristic fighting every
+	// apostrophe in every comment. I tried; it false-positived on "the env var's
+	// NAME" and I threw it away.
+	//
+	// The residual risk the compiler does NOT cover is a split that still parses:
+	// literal + accidentally-valid code + literal, which compiles and quietly emits
+	// mangled content. THAT is what these assert. Every generated file is checked
+	// for the fingerprints of a split — an unsubstituted `${`, a stray delimiter, a
+	// comment marker from this source leaking into output.
+	'no generated file carries the fingerprints of a split template literal': () => {
+		for (const file of [...withDb, seedSql()]) {
+			// compose.yaml legitimately carries `${POSTGRES_PORT:-5432}` — that is
+			// COMPOSE's variable syntax, not an unsubstituted JS one. Allow exactly
+			// the variables the template means to emit and nothing else.
+			const stray = [...file.content.matchAll(/\$\{([^}]*)\}/g)]
+				.map((m) => m[1])
+				.filter((v) => !/^POSTGRES_PORT:-\d+$/.test(v));
+			assert.deepStrictEqual(stray, [],
+				`${file.path} has an unsubstituted \${...} — a literal was split and re-opened`);
+			// No TypeScript-keyword sniffing: Go shares `func`, `const` and `return`,
+			// so that check flagged main.go on its own correct output. `${` and a JS
+			// comment delimiter are the two fingerprints no generated file here can
+			// produce legitimately.
+			assert.ok(!file.content.includes('*/') && !file.content.includes('/**'),
+				`${file.path} contains a JS comment delimiter from this module`);
+		}
+	},
+	'every template emits non-empty content and ends with a newline': () => {
+		for (const file of [...withDb, seedSql()]) {
+			assert.ok(file.content.length > 0, `${file.path} is empty`);
+			assert.ok(file.content.endsWith('\n'), `${file.path} does not end with a newline`);
+		}
+	},
+
 	// ── both Postgres paths exist (§3) ───────────────────────────────────────
 	'adding Postgres afterwards yields the same files as asking at create time': () => {
 		const added = paths(postgresAddition('myservice')).sort();

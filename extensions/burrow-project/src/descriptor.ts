@@ -398,16 +398,51 @@ export function parse(text: string | undefined): Descriptor | undefined {
 	}
 }
 
-/** One line per rail: what is live, and when it is not, why not. Consumed by the
- *  report and by anything that wants to explain itself to a user. */
-export function capabilities(project: Project): { readonly id: string; readonly live: boolean; readonly why: string }[] {
+/**
+ * What each rail can do here, and when it cannot, why not.
+ *
+ * **`live` means measured. Anything short of that is `unknown`** (WO-72 §0.2).
+ * WO-71 reported `flow: live` for go-chi/chi on the reasoning that flowscan
+ * analyses any Go stack — but flowscan seeds its walk from `NewRouter()` CALL
+ * sites, and chi *defines* `NewRouter` rather than calling it, so the claim was
+ * inference dressed as a measurement. A capability list that guesses is worse than
+ * none: it sends someone to a rail that will be empty and gives them no reason.
+ *
+ * `unknown` is not a hedge, it is a different fact — "this needs running the tool
+ * to find out" — and it carries the sentence that says so.
+ */
+export type Liveness = 'live' | 'inert' | 'unknown';
+
+export interface Capability {
+	readonly id: string;
+	readonly state: Liveness;
+	readonly why: string;
+	/** Kept for callers that only want a boolean; true ONLY for `live`. */
+	readonly live: boolean;
+}
+
+export function capabilities(project: Project): Capability[] {
 	const go = project.stacks.find((s) => s.id === 'go');
 	const pg = project.services.find((s) => s.kind === 'postgres');
+	const cap = (id: string, state: Liveness, why: string): Capability => ({ id, state, why, live: state === 'live' });
+
 	return [
-		{ id: 'go', live: !!go, why: go ? `go.mod in ${go.root}` : 'no go.mod found in the root or the usual server directories' },
-		{ id: 'test', live: !!go, why: go ? 'the Go stack supplies the test packages' : 'needs a Go stack' },
-		{ id: 'flow', live: !!go, why: go ? `flowscan analyses ${go.root}` : 'needs a Go stack' },
-		{ id: 'data', live: !!pg, why: pg ? pgWhy(pg) : 'no Postgres service in a compose file and no postgres:// URL in an env file' },
+		// Measured by the tree: a go.mod is there or it is not.
+		cap('go', go ? 'live' : 'inert',
+			go ? `go.mod in ${go.root}` : 'no go.mod found in the root or the usual server directories'),
+		cap('test', go ? 'live' : 'inert',
+			go ? 'the Go stack supplies the test packages' : 'needs a Go stack'),
+
+		// NOT measured by the tree. Whether flowscan finds anything depends on the
+		// code, not the layout — a Go module with no router to walk yields an empty
+		// diagram, and detection cannot tell from here.
+		cap('flow', go ? 'unknown' : 'inert',
+			go
+				? `flowscan can analyse ${go.root}, but whether it finds routes depends on there being a router to seed from — run "API Flows: Refresh Flows" to find out`
+				: 'needs a Go stack'),
+
+		cap('data', pg ? 'live' : 'inert',
+			pg ? pgWhy(pg) : 'no Postgres service in a compose file and no postgres:// URL in an env file'),
 	];
 }
 

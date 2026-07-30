@@ -83,10 +83,31 @@ function macDeveloperModeDisabled(): Promise<boolean> {
 }
 
 /**
+ * The directory holding the `go.mod` this workspace's program lives in.
+ *
+ * The same order `burrow-project`'s detection uses, deliberately duplicated rather
+ * than imported: an extension that cannot start a debug session because a SIBLING
+ * extension failed to activate is a worse failure than one that repeats six lines.
+ * If the two ever disagree, `burrow.project.explain` is the tie-breaker and says
+ * which root it found.
+ */
+function goModuleRoot(folderPath: string): string | undefined {
+	for (const dir of ['.', 'backend', 'server', 'api', 'cmd', 'src', 'service']) {
+		const at = dir === '.' ? folderPath : join(folderPath, dir);
+		if (existsSync(join(at, 'go.mod'))) {
+			return at;
+		}
+	}
+	return undefined;
+}
+
+/**
  * Fills the gaps VS Code leaves in a bare `go` config so a fixture can debug
  * with just `{ "type": "go", "request": "launch" }` (or an F5 with no launch.json).
  */
 class GoDebugConfigurationProvider implements DebugConfigurationProvider {
+	constructor(private readonly out: import('vscode').OutputChannel) { }
+
 	async resolveDebugConfiguration(folder: WorkspaceFolder | undefined, config: DebugConfiguration): Promise<DebugConfiguration | undefined> {
 		// Abort HERE (undefined = clean cancel; startDebugging resolves false)
 		// rather than failing later in the adapter factory — a descriptor
@@ -107,14 +128,31 @@ class GoDebugConfigurationProvider implements DebugConfigurationProvider {
 			if (!config.mode) {
 				config.mode = 'debug';
 			}
+			// THE MODULE ROOT, not the workspace root (WO-72 §2).
+			//
+			// This used to default `program` and `cwd` to the workspace folder, which
+			// is right only when the go.mod is AT the folder. For a repository whose
+			// module sits under `backend/` — merkle's shape, and a common one — dlv
+			// then runs `go build` somewhere with no go.mod and fails with "cannot
+			// find main module". It worked for merkle only because merkle's
+			// launch.json spells the path out by hand.
+			//
+			// The descriptor knows where the module is, from detection, with no config
+			// file required. This is the only thing migrated onto it in this work
+			// order: the line is drawn at "what F5 needs to find the program", and
+			// nothing else in the debug path changes behaviour.
+			const moduleRoot = folder ? goModuleRoot(folder.uri.fsPath) : undefined;
 			if (!config.program) {
-				config.program = folder ? folder.uri.fsPath : '${workspaceFolder}';
+				config.program = moduleRoot ?? (folder ? folder.uri.fsPath : '${workspaceFolder}');
 			}
 			// dlv builds (`go build`) from cwd; without it dlv uses its own process
 			// cwd (the IDE root, which has no go.mod) and the build fails with
-			// "cannot find main module". Default cwd to the package/workspace folder.
+			// "cannot find main module".
 			if (!config.cwd) {
-				config.cwd = folder ? folder.uri.fsPath : '${workspaceFolder}';
+				config.cwd = moduleRoot ?? (folder ? folder.uri.fsPath : '${workspaceFolder}');
+			}
+			if (moduleRoot && folder && moduleRoot !== folder.uri.fsPath) {
+				this.out.appendLine(`[go-debug] module root is ${moduleRoot} (not the workspace root) — program and cwd default there`);
 			}
 		} else if (config.request === 'attach' && !config.mode) {
 			config.mode = 'local';
@@ -246,7 +284,7 @@ export function activate(context: ExtensionContext): void {
 	const factory = new GoDebugAdapterDescriptorFactory(out);
 	context.subscriptions.push(
 		out,
-		debug.registerDebugConfigurationProvider(DEBUG_TYPE, new GoDebugConfigurationProvider()),
+		debug.registerDebugConfigurationProvider(DEBUG_TYPE, new GoDebugConfigurationProvider(out)),
 		debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, factory),
 		factory,
 		debug.onDidTerminateDebugSession(session => {
