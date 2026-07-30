@@ -19,6 +19,9 @@ import { getActiveWindow } from '../../../base/browser/dom.js';
 import { IProgressService, ProgressLocation } from '../../../platform/progress/common/progress.js';
 import { IDialogService } from '../../../platform/dialogs/common/dialogs.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../services/statusbar/browser/statusbar.js';
+import { INotificationService } from '../../../platform/notification/common/notification.js'; // BURROW patch 0011
+import { IQuickInputService } from '../../../platform/quickinput/common/quickInput.js'; // BURROW patch 0011
+import { IPoint } from '../../../platform/window/common/window.js'; // BURROW patch 0011
 
 export class ToggleDevToolsAction extends Action2 {
 
@@ -103,6 +106,81 @@ export class OpenUserDataFolderAction extends Action2 {
 		const environmentService = accessor.get(INativeWorkbenchEnvironmentService);
 
 		return nativeHostService.showItemInFolder(URI.file(environmentService.userDataPath).fsPath);
+	}
+}
+
+/**
+ * BURROW patch 0011 — the instrument, not the fix.
+ *
+ * Burrow has no title bar, so it pins the macOS traffic lights itself
+ * (`window.trafficLightPosition`). Where they actually land was unmeasurable for
+ * three rounds of guessing: they are native views outside the web contents, and
+ * `screencapture -l` refuses an occluded window. `getWindowButtonPosition()`
+ * answers it directly, and `setWindowButtonPosition()` moves them on the LIVE
+ * window, so tuning the pin no longer costs a rebuild per guess.
+ *
+ * Debug-only: these write nothing. The durable value stays the setting, which
+ * the main process reads at window creation.
+ */
+export class ShowWindowButtonPositionAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'burrow.debug.getWindowButtonPosition',
+			title: localize2('burrowGetWindowButtonPosition', 'Burrow: Show macOS Window Button Position'),
+			category: Categories.Developer,
+			f1: true
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<IPoint | null> {
+		const nativeHostService = accessor.get(INativeHostService);
+		const notificationService = accessor.get(INotificationService);
+
+		const position = await nativeHostService.getWindowButtonPosition();
+		notificationService.info(position
+			? localize('burrowWindowButtonPosition', "macOS window buttons at x={0}, y={1}.", position.x, position.y)
+			: localize('burrowWindowButtonPositionNone', "macOS is placing the window buttons itself (no pin on this window)."));
+
+		return position;
+	}
+}
+
+export class SetWindowButtonPositionAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'burrow.debug.setWindowButtonPosition',
+			title: localize2('burrowSetWindowButtonPosition', 'Burrow: Move macOS Window Buttons'),
+			category: Categories.Developer,
+			f1: true
+		});
+	}
+
+	/**
+	 * `position` may be passed by a caller (`x,y`, or `null` to hand placement
+	 * back to macOS); with no argument it is asked for. Lasts as long as the
+	 * window does — to keep a value, put it in `window.trafficLightPosition`.
+	 */
+	override async run(accessor: ServicesAccessor, position?: IPoint | null): Promise<void> {
+		const nativeHostService = accessor.get(INativeHostService);
+		const quickInputService = accessor.get(IQuickInputService);
+
+		if (position === undefined) {
+			const answer = await quickInputService.input({
+				prompt: localize('burrowSetWindowButtonPositionPrompt', "Window button position as 'x,y' — empty hands placement back to macOS"),
+				placeHolder: '0,0'
+			});
+
+			if (answer === undefined) {
+				return; // cancelled
+			}
+
+			const [x, y] = answer.split(',').map(part => parseInt(part.trim(), 10));
+			position = (Number.isFinite(x) && Number.isFinite(y)) ? { x, y } : null;
+		}
+
+		return nativeHostService.setWindowButtonPosition(position ?? null);
 	}
 }
 

@@ -350,6 +350,28 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return { point, display: display.bounds };
 	}
 
+	// BURROW patch 0011 — the traffic lights, read and written on the live window.
+	// `windowById` resolves auxiliary windows too, so `targetWindowId` reaches a
+	// floating panel window as well as the main one.
+
+	async getWindowButtonPosition(windowId: number | undefined, options?: INativeHostOptions): Promise<IPoint | null> {
+		if (!isMacintosh) {
+			return null;
+		}
+
+		const window = this.windowById(options?.targetWindowId, windowId);
+		return window?.win?.getWindowButtonPosition() ?? null;
+	}
+
+	async setWindowButtonPosition(windowId: number | undefined, position: IPoint | null, options?: INativeHostOptions): Promise<void> {
+		if (!isMacintosh) {
+			return;
+		}
+
+		const window = this.windowById(options?.targetWindowId, windowId);
+		window?.win?.setWindowButtonPosition(position);
+	}
+
 	async isMaximized(windowId: number | undefined, options?: INativeHostOptions): Promise<boolean> {
 		const window = this.windowById(options?.targetWindowId, windowId);
 		return window?.win?.isMaximized() ?? false;

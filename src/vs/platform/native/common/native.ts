@@ -186,6 +186,26 @@ export interface ICommonNativeHostService {
 
 	getCursorScreenPoint(): Promise<{ readonly point: IPoint; readonly display: IRectangle }>;
 
+	/**
+	 * BURROW patch 0011 — read and move the macOS traffic lights at runtime.
+	 *
+	 * Burrow pins them (`window.trafficLightPosition`, default `{0,0}`) because it
+	 * ships no title bar for macOS to put them in. They are native views outside
+	 * the web contents, so the renderer cannot see where they actually landed —
+	 * which is why the pin was tuned by guesswork for three rounds. Electron does
+	 * expose both halves; this is the pair, surfaced for the `burrow.debug.*`
+	 * commands. macOS only: elsewhere the getter answers `null` and the setter is
+	 * a no-op.
+	 */
+	getWindowButtonPosition(options?: INativeHostOptions): Promise<IPoint | null>;
+
+	/**
+	 * Passing `null` hands placement back to macOS. Takes effect immediately on
+	 * the live window and is NOT persisted — the durable value is the
+	 * `window.trafficLightPosition` setting, read at window creation.
+	 */
+	setWindowButtonPosition(position: IPoint | null, options?: INativeHostOptions): Promise<void>;
+
 	isMaximized(options?: INativeHostOptions): Promise<boolean>;
 	maximizeWindow(options?: INativeHostOptions): Promise<void>;
 	unmaximizeWindow(options?: INativeHostOptions): Promise<void>;
