@@ -17,7 +17,7 @@ import { ServicesAccessor, createDecorator } from '../../instantiation/common/in
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
-import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowControlsInset, WindowMinimumSize, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
+import { IOpenEmptyWindowOptions, IWindowOpenable, IWindowSettings, TitlebarStyle, WindowMinimumSize, getTrafficLightPosition, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, zoomLevelToZoomFactor } from '../../window/common/window.js';
 import { ICodeWindow, IWindowState, WindowMode, defaultWindowState } from '../../window/electron-main/window.js';
 
 export const IWindowsMainService = createDecorator<IWindowsMainService>('windowsMainService');
@@ -214,21 +214,14 @@ export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowSt
 			options.frame = false;
 		}
 
-		// BURROW patch 0011 — pin the traffic lights to the top-left of the content.
+		// BURROW patch 0011 — pin the traffic lights into the reserved strip.
 		//
-		// Leaving macOS to place them put them OUTSIDE the viewport (user, three
-		// rounds in: "make sure the traffic lights are at 0,0, not outside the
-		// viewport"), and `{ x: 7, y: 13 }` before that left them partly clipped.
-		// So: an explicit origin, and a SETTING, because every guess at this costs
-		// a full rebuild and there is no way to read the buttons' real position
-		// back from the renderer. `window.trafficLightPosition` takes effect on the
-		// next window — the value is read here, at window creation.
+		// This is only the starting value. `BaseWindow.updateWindowControls()`
+		// re-places the buttons from the title bar's measured height moments later
+		// and would otherwise overwrite it — see the guard there, which is what
+		// actually makes this pin hold.
 		if (isMacintosh) {
-			const configured = configurationService.getValue<{ x?: number; y?: number } | undefined>('window.trafficLightPosition');
-			options.trafficLightPosition = {
-				x: typeof configured?.x === 'number' ? configured.x : WindowControlsInset.x,
-				y: typeof configured?.y === 'number' ? configured.y : WindowControlsInset.y,
-			};
+			options.trafficLightPosition = getTrafficLightPosition(configurationService);
 		}
 
 		if (useWindowControlsOverlay(configurationService)) {

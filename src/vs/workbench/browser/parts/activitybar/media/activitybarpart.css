@@ -75,19 +75,18 @@
 
 /** BURROW patch 0011 — drop the rail icons below the window buttons.
 
-	Burrow ships no title bar (WO-01), so macOS paints the window buttons
-	straight onto content at (0,0) — the activity bar's first icon. Nothing
-	moves the buttons (see the patch note: repositioning them is what made them
-	unclickable), so the icons move instead. The bar's background still starts
-	at y=0, so this reads as the icons sitting a little lower, NOT as a strip or
-	a title row.
+	Burrow ships no title bar (WO-01), so the window buttons land straight on
+	content — the activity bar's first icon. The main process pins them into the
+	top 28px (`WindowControlsInset` in src/vs/platform/window/common/window.ts,
+	measured at {x:7, y:6}); this keeps the icons out of that band. The bar's
+	background still starts at y=0, so this reads as the icons sitting a little
+	lower, NOT as a strip or a title row.
 
 	`3vh` is the user's own measure ("add 2-3vh to the left hand menu explorer
 	icon"), with a 28px floor so a short window cannot shrink the gap back under
-	the buttons — macOS centres them in its own 28pt band, and at the 270px
-	minimum window height 3vh would be 8px. WindowControlsInset.STRIP_HEIGHT in
-	src/vs/platform/window/common/window.ts records the same intent for readers
-	of the main-process side.
+	the buttons — the buttons are centred in a 28px band, and at the 270px
+	minimum window height 3vh would be 8px. This floor and the pin must agree:
+	WindowControlsInset.STRIP_HEIGHT is the shared number.
 
 	This gap carries NO `-webkit-app-region: drag`, and that is the point of
 	this comment. It did, for exactly one build, and a drag region drawn over

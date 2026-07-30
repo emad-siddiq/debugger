@@ -32,7 +32,7 @@ import { IApplicationStorageMainService, IStorageMainService } from '../../stora
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { ThemeIcon } from '../../../base/common/themables.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
-import { getMenuBarVisibility, IFolderToOpen, INativeWindowConfiguration, IWindowSettings, IWorkspaceToOpen, MenuBarVisibility, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, TitlebarStyle, MenuSettings } from '../../window/common/window.js';
+import { getMenuBarVisibility, IFolderToOpen, INativeWindowConfiguration, IWindowSettings, IWorkspaceToOpen, MenuBarVisibility, getTrafficLightPosition, hasNativeTitlebar, useNativeFullScreen, useWindowControlsOverlay, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, TitlebarStyle, MenuSettings } from '../../window/common/window.js';
 import { defaultBrowserWindowOptions, getAllWindowsExcludingOffscreen, IWindowsMainService, OpenContext, WindowStateValidator } from './windows.js';
 import { ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier, toWorkspaceIdentifier } from '../../workspace/common/workspace.js';
 import { IWorkspacesManagementMainService } from '../../workspaces/electron-main/workspacesManagementMainService.js';
@@ -452,8 +452,20 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 			// in both directions.
 			const buttonHeight = isTahoeOrNewer(release()) ? 14 : 16;
 			const offset = Math.floor((options.height - buttonHeight) / 2);
-			if (!offset) {
-				win.setWindowButtonPosition(null);
+
+			// BURROW patch 0011 — Burrow draws no title bar, so the renderer reports
+			// a height of 0 here and upstream's centring maths yields a NEGATIVE
+			// offset: measured 2026-07-30, `floor((0 - 16) / 2) = -8` placed the
+			// buttons at {x: -7, y: -8}, half of each circle off the top-left corner.
+			// That is the clipping the user reported, and it is also why three rounds
+			// of tuning the constructor pin in `windows.ts` changed nothing — this
+			// call overwrote it milliseconds later, every time.
+			//
+			// With no bar to centre in, the configured pin wins. Upstream's own
+			// `!offset` case (hand placement back to macOS) is folded in here: on
+			// Burrow that put the buttons outside the viewport entirely.
+			if (offset <= 0) {
+				win.setWindowButtonPosition(getTrafficLightPosition(this.configurationService));
 			} else {
 				win.setWindowButtonPosition({ x: offset + 1, y: offset });
 			}

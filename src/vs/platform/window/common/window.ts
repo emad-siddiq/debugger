@@ -261,33 +261,54 @@ export function hasNativeTitlebar(configurationService: IConfigurationService, t
 }
 
 /**
- * BURROW patch 0011 — how much room the workbench keeps clear for the macOS
- * traffic lights when Burrow runs with no title strip at all
- * (`titleBarStyle: custom` + `customTitleBarVisibility: never`).
+ * BURROW patch 0011 — where the macOS traffic lights go when Burrow runs with no
+ * title strip at all (`titleBarStyle: custom` + `customTitleBarVisibility: never`),
+ * and how much room the workbench keeps clear for them.
  *
- * Only the renderer reads this now. There is no matching `trafficLightPosition`
- * in the main process on purpose: repositioning the buttons is what broke them
- * (see the patch note). macOS places them itself, ~20px from the left and
- * vertically centred in its own 28px titlebar band, which this strip covers.
+ * Read by BOTH processes: the main process pins the buttons here, the renderer
+ * reserves the strip in `activitybarpart.css`.
  */
 export const WindowControlsInset = {
 	/**
-	 * Where the buttons go, in the window's own coordinates. `0, 0` is the
-	 * top-left of the content — the user's instruction after macOS's own
-	 * placement put them outside the viewport entirely: *"make sure the traffic
-	 * lights are at 0,0, not outside the viewport"*. Overridable at runtime with
-	 * `window.trafficLightPosition` so nudging it does not need a rebuild.
+	 * The pin, in the window's own coordinates — `0,0` is the top-left of the
+	 * content.
+	 *
+	 * These are not a guess. Upstream centres the buttons in the custom title bar
+	 * with `offset = floor((barHeight - buttonHeight) / 2)`, then places them at
+	 * `{x: offset + 1, y: offset}` (`windowImpl.ts`, `updateWindowControls`).
+	 * `7,6` is that same formula evaluated for the 28px strip below, which is the
+	 * bar Burrow reserves instead of drawing: `floor((28 - 16) / 2) = 6`.
+	 *
+	 * Overridable at runtime with `window.trafficLightPosition`; readable at
+	 * runtime with `burrow.debug.getWindowButtonPosition`.
 	 */
-	x: 0,
-	y: 0,
+	x: 7,
+	y: 6,
 	/**
 	 * How far the activity bar's icons drop to clear the buttons. The renderer
 	 * expresses this as `max(3vh, 28px)` in activitybarpart.css — the user's own
 	 * measure, floored so a short window cannot close the gap; 28 is that floor
-	 * and the height of the band macOS centres the buttons in.
+	 * and the band the buttons are centred in above.
 	 */
 	STRIP_HEIGHT: 28
 } as const;
+
+/**
+ * BURROW patch 0011 — the pin, with the user's override applied.
+ *
+ * Both call sites must agree or the buttons move on their own: `windows.ts` sets
+ * it at window creation, and `windowImpl.ts` re-applies it whenever the renderer
+ * reports a title-bar height too small to centre anything in — which, with no
+ * title bar, is every time.
+ */
+export function getTrafficLightPosition(configurationService: IConfigurationService): IPoint {
+	const configured = configurationService.getValue<{ x?: number; y?: number } | undefined>('window.trafficLightPosition');
+
+	return {
+		x: typeof configured?.x === 'number' ? configured.x : WindowControlsInset.x,
+		y: typeof configured?.y === 'number' ? configured.y : WindowControlsInset.y
+	};
+}
 
 export function getTitleBarStyle(configurationService: IConfigurationService): TitlebarStyle {
 	if (isWeb) {

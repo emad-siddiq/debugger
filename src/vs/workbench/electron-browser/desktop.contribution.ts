@@ -9,7 +9,7 @@ import { MenuRegistry, MenuId, registerAction2 } from '../../platform/actions/co
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions, ConfigurationScope } from '../../platform/configuration/common/configurationRegistry.js';
 import { KeyMod, KeyCode } from '../../base/common/keyCodes.js';
 import { isLinux, isMacintosh, isWindows } from '../../base/common/platform.js';
-import { ConfigureRuntimeArgumentsAction, ToggleDevToolsAction, ReloadWindowWithExtensionsDisabledAction, OpenUserDataFolderAction, ShowGPUInfoAction, ShowContentTracingAction, StopTracing, StartTracing, StartHeapTracing } from './actions/developerActions.js';
+import { ConfigureRuntimeArgumentsAction, ToggleDevToolsAction, ReloadWindowWithExtensionsDisabledAction, OpenUserDataFolderAction, ShowGPUInfoAction, ShowContentTracingAction, StopTracing, StartTracing, StartHeapTracing, ShowWindowButtonPositionAction, SetWindowButtonPositionAction } from './actions/developerActions.js';
 import { ZoomResetAction, ZoomOutAction, ZoomInAction, CloseWindowAction, SwitchWindowAction, QuickSwitchWindowAction, SwitchToMainWindowAction, FocusWindowAction, NewWindowTabHandler, ShowPreviousWindowTabHandler, ShowNextWindowTabHandler, MoveWindowTabToNewWindowHandler, MergeWindowTabsHandlerHandler, ToggleWindowTabsBarHandler, ToggleWindowAlwaysOnTopAction, DisableWindowAlwaysOnTopAction, EnableWindowAlwaysOnTopAction, CloseOtherWindowsAction } from './actions/windowActions.js';
 import { ContextKeyExpr } from '../../platform/contextkey/common/contextkey.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../platform/keybinding/common/keybindingsRegistry.js';
@@ -120,6 +120,13 @@ import product from '../../platform/product/common/product.js';
 	registerAction2(StopTracing);
 	registerAction2(StartTracing);
 	registerAction2(StartHeapTracing);
+
+	// BURROW patch 0011 — read/move the traffic lights. macOS is the only place
+	// they exist, and the only place Burrow pins them.
+	if (isMacintosh) {
+		registerAction2(ShowWindowButtonPositionAction);
+		registerAction2(SetWindowButtonPositionAction);
+	}
 })();
 
 // Menu
@@ -273,18 +280,18 @@ import product from '../../platform/product/common/product.js';
 				'markdownDescription': localize('window.customTitleBarVisibility', "Adjust when the custom title bar should be shown. The custom title bar can be hidden when in full screen mode with `windowed`. The custom title bar can only be hidden in non full screen mode with `never` when {0} is set to `native`.", '`#window.titleBarStyle#`'),
 			},
 			// BURROW patch 0011 — where macOS draws the window buttons, in the window's
-			// own coordinates. Burrow has no title bar to put them in, and there is no
-			// way to read their real position back from the renderer, so this is a knob
-			// rather than a constant: nudge it, open a new window, look. Read by the
-			// MAIN process at window creation — a reload will not pick it up, a new
-			// window will.
+			// own coordinates. Burrow has no title bar to put them in, so it places
+			// them itself; the default centres them in the reserved 28px strip.
+			// Read by the MAIN process at window creation and on every window-controls
+			// update, so a new window picks it up — a reload does not.
+			// `burrow.debug.getWindowButtonPosition` reads back where they ended up.
 			'window.trafficLightPosition': {
 				'type': 'object',
 				'properties': {
 					'x': { 'type': 'number' },
 					'y': { 'type': 'number' }
 				},
-				'default': { 'x': 0, 'y': 0 },
+				'default': { 'x': 7, 'y': 6 },
 				'included': isMacintosh,
 				'scope': ConfigurationScope.APPLICATION,
 				'description': localize('window.trafficLightPosition', "Position of the macOS window buttons (close, minimise, zoom), measured from the top-left of the window. Applies to windows opened after the change."),
