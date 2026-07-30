@@ -1,0 +1,57 @@
+{
+	"name": "burrow-project",
+	"displayName": "Burrow Project Spine",
+	"description": "What a project IS, and how Burrow works it out (WO-71). Detection first: a folder with a go.mod is a Go project with nothing written. `.burrow/project.json` records only what detection could not infer. Scaffolds a canonical Go project — go.mod, one HTTP route, compose.yaml, .env — in the form Go's own community writes them, so `rm -rf .burrow` leaves a project that still builds.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-project",
+		"watch": "gulp watch-extension:burrow-project",
+		"test": "node test/descriptor.test.js && node test/goTemplate.test.js"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "burrow.project.create",
+				"title": "New Project…",
+				"category": "Burrow",
+				"icon": "$(new-folder)"
+			},
+			{
+				"command": "burrow.project.addPostgres",
+				"title": "Add Postgres to This Project",
+				"category": "Burrow",
+				"icon": "$(database)"
+			},
+			{
+				"command": "burrow.project.describe",
+				"title": "Write the Project Descriptor",
+				"category": "Burrow",
+				"icon": "$(json)"
+			},
+			{
+				"command": "burrow.project.explain",
+				"title": "What Is This Project?",
+				"category": "Burrow",
+				"icon": "$(question)"
+			}
+		]
+	}
+}

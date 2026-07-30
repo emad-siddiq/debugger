@@ -120,6 +120,34 @@ keeps its own npm/vite lifecycle and its memory oracle
 - Lifecycle: panel close keeps the sidecar; reopen attaches; Stop kills the
   child; occupied 6080 → auto-picked port still works.
 
+## Known gap — type-driven prop synthesis (filed WO-71 §0.2)
+
+**This is ours, not the target's.** Six of the seventeen components that throw in
+merkle's render sweep throw for one reason: the harness mounts them with no value
+for a **required, structured** prop, and they dereference it immediately —
+`Cannot read properties of undefined (reading 'length')`,
+`… (reading 'startsWith')`. `Dashboard`, `Panel`, `AlertInspectorModal`,
+`ValidatorSignedBlocks`, `VirtualRows`, `QuickExpandOverlay`.
+
+It has been read as "merkle's components are fragile". They are not being given
+what their own types say they require. Isolating a component that takes
+`data: Series[]` and passing nothing is not a test of the component.
+
+**What is missing:** synthesis of a plausible value *from the prop's TypeScript
+type* — arrays get a couple of elements, objects get their required fields filled
+recursively, primitives get shape-appropriate defaults (a `string` that is
+dereferenced with `startsWith` wants a string, not `''` necessarily, but never
+`undefined`). The type information is right there: the isolate harness already
+resolves the module, and the props panel already reads the component's signature
+for its editable fields.
+
+**Until it exists**, those six are the sweep's known ceiling — `P2-3`'s ratchet
+records them as 6 of 17 and fails on 18. They are not merkle bugs and should not
+be filed against merkle.
+
+Adjacent, and not the same thing: the other eleven throws are genuine runtime
+errors in the target that reproduce outside isolation.
+
 ## Out of scope
 
 - Packaging the tool into the .app (task 13) — dev-mode runs it from the repo tree.
