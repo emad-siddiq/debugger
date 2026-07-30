@@ -14,7 +14,7 @@
 const assert = require('node:assert');
 const {
 	detect, merge, parse, serialize, capabilities, modulePath, postgresServiceName, postgresUrl,
-	DESCRIPTOR_PATH,
+	DESCRIPTOR_PATH, goEntries, chooseEntry,
 } = require('../out/descriptor');
 
 /** A fake tree from a flat { path: contents } map. */
@@ -79,6 +79,94 @@ const cases = {
 		const p = detect(tree({ 'go.mod': 'go 1.25\n' }), 'x');
 		assert.strictEqual(p.stacks.length, 1);
 		assert.strictEqual(p.stacks[0].module, undefined);
+	},
+
+	// ── entry points: a module root is not a program (WO-74 §1) ──────────────
+	'a main at the module root is one entry point': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'main.go': 'package main\n' }), 'svc');
+		assert.strictEqual(p.stacks[0].entries.length, 1);
+		assert.strictEqual(p.stacks[0].entries[0].kind, 'binary');
+		assert.strictEqual(p.stacks[0].entries[0].path, '.');
+	},
+	'mains under cmd/ are found — alertmanager\'s shape': () => {
+		const p = detect(tree({
+			'go.mod': GO_MOD,
+			'cmd/alertmanager/main.go': 'package main\n',
+			'cmd/amtool/main.go': 'package main\n',
+		}), 'alertmanager');
+		assert.deepStrictEqual(p.stacks[0].entries.map((e) => e.label), ['alertmanager', 'amtool']);
+		assert.deepStrictEqual(p.stacks[0].entries.map((e) => e.path), ['cmd/alertmanager', 'cmd/amtool']);
+	},
+	'a library has zero entry points, which is normal and not an error': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'chi.go': 'package chi\n' }), 'chi');
+		assert.deepStrictEqual(p.stacks[0].entries, []);
+	},
+	'a _test.go declaring package main is not an entry point': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'x_test.go': 'package main\n' }), 'x');
+		assert.deepStrictEqual(p.stacks[0].entries, []);
+	},
+	'entries are found under a module that is not at the root': () => {
+		const p = detect(tree({ 'backend/go.mod': GO_MOD, 'backend/main.go': 'package main\n' }), 'merkle');
+		assert.strictEqual(p.stacks[0].entries[0].path, 'backend');
+	},
+	'cmd/ under a nested module resolves relative to the project root': () => {
+		const p = detect(tree({ 'backend/go.mod': GO_MOD, 'backend/cmd/api/main.go': 'package main\n' }), 'x');
+		assert.strictEqual(p.stacks[0].entries[0].path, 'backend/cmd/api');
+	},
+	'the search is shallow — a main in test fixtures is not an entry point': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'internal/testdata/prog/main.go': 'package main\n' }), 'x');
+		assert.deepStrictEqual(p.stacks[0].entries, []);
+	},
+	'an entry point id is its path, so a choice survives a sibling appearing': () => {
+		const one = goEntries(tree({ 'cmd/a/main.go': 'package main\n' }), '.');
+		const two = goEntries(tree({ 'cmd/a/main.go': 'package main\n', 'cmd/b/main.go': 'package main\n' }), '.');
+		assert.strictEqual(one[0].id, 'cmd/a');
+		assert.strictEqual(two.find((e) => e.label === 'a').id, 'cmd/a', 'the id must not be an index');
+	},
+
+	// ── zero, one, many (WO-74 §2) ───────────────────────────────────────────
+	'one entry point needs no prompt': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'main.go': 'package main\n' }), 'x');
+		const c = chooseEntry(p);
+		assert.strictEqual(c.need, 'one');
+		assert.strictEqual(c.entry.path, '.');
+	},
+	'many entry points ASK — never a guess': () => {
+		const p = detect(tree({ 'go.mod': GO_MOD, 'cmd/a/main.go': 'package main\n', 'cmd/b/main.go': 'package main\n' }), 'a');
+		const c = chooseEntry(p);
+		assert.strictEqual(c.need, 'many');
+		assert.strictEqual(c.entry, undefined, 'choosing for the user is the bug, not the feature');
+		assert.strictEqual(c.options.length, 2);
+	},
+	'zero entry points is its own answer': () => {
+		assert.strictEqual(chooseEntry(detect(tree({ 'go.mod': GO_MOD }), 'x')).need, 'zero');
+	},
+	'a remembered choice settles many without asking': () => {
+		const files = { 'go.mod': GO_MOD, 'cmd/a/main.go': 'package main\n', 'cmd/b/main.go': 'package main\n' };
+		const p = merge(detect(tree(files), 'x'), { entry: 'cmd/b' });
+		const c = chooseEntry(p);
+		assert.strictEqual(c.need, 'one');
+		assert.strictEqual(c.entry.label, 'b');
+	},
+	'a remembered choice that no longer exists is ignored, not honoured': () => {
+		const files = { 'go.mod': GO_MOD, 'cmd/a/main.go': 'package main\n', 'cmd/b/main.go': 'package main\n' };
+		const p = merge(detect(tree(files), 'x'), { entry: 'cmd/gone' });
+		assert.strictEqual(chooseEntry(p).need, 'many', 'a stale choice must re-ask, never launch the wrong program');
+	},
+	'the chosen entry is written to the descriptor': () => {
+		const p = merge(detect(tree({ 'go.mod': GO_MOD, 'cmd/a/main.go': 'package main\n' }), 'x'), { entry: 'cmd/a' });
+		assert.match(serialize(p), /"entry": "cmd\/a"/);
+		assert.strictEqual(parse(serialize(p)).entry, 'cmd/a');
+	},
+	'the run capability reports zero, one and many differently': () => {
+		const zero = capabilities(detect(tree({ 'go.mod': GO_MOD }), 'x')).find((c) => c.id === 'run');
+		assert.strictEqual(zero.state, 'inert');
+		assert.match(zero.why, /library, so there is nothing to launch/);
+		const one = capabilities(detect(tree({ 'go.mod': GO_MOD, 'main.go': 'package main\n' }), 'x')).find((c) => c.id === 'run');
+		assert.strictEqual(one.state, 'live');
+		const many = capabilities(detect(tree({ 'go.mod': GO_MOD, 'cmd/a/main.go': 'package main\n', 'cmd/b/main.go': 'package main\n' }), 'x')).find((c) => c.id === 'run');
+		assert.match(many.why, /2 entry points/);
+		assert.match(many.why, /asked which to debug, once/);
 	},
 
 	// ── services ─────────────────────────────────────────────────────────────

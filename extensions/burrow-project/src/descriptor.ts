@@ -32,6 +32,48 @@ export interface Tree {
 
 export type StackId = 'go';
 
+/**
+ * A thing this project can be told to START (WO-74 §1).
+ *
+ * **A module root is not a program.** WO-72 measured that on `alertmanager`: the
+ * `go.mod` is at the root and the runnable code is in `cmd/alertmanager` and
+ * `cmd/amtool`. Resolving a *module* and calling it a *program* is why F5 started a
+ * session there, failed to build, and died without a word.
+ *
+ * SHAPED FOR FIVE STACKS, IMPLEMENTED FOR ONE. The design was driven by the row
+ * least like the others — a Vite dev server — because a concept that only fits
+ * compiled binaries is the wrong concept:
+ *
+ *   go     `go list` packages named `main`      → kind 'binary',  path = pkg dir
+ *   rust   [[bin]] targets + src/main.rs        → kind 'binary',  path = target
+ *   python __main__.py / console_scripts        → kind 'module',  path = module
+ *   c/c++  CMake targets, Makefile rules        → kind 'binary',  path = target
+ *   ts     the dev server command               → kind 'server',  command = 'npm run dev'
+ *
+ * So an entry point is `{ id, label, kind, path?, command? }` and NOT `{ program }`.
+ * `path` is what a debugger launches; `command` is what a shell runs. A Go main
+ * package has a path and no command; a Vite dev server has a command and no path;
+ * a Python `-m` target arguably has both, which is why `kind` decides rather than
+ * the presence of a field.
+ *
+ * `id` is stable across detections — it is what a remembered choice refers to — and
+ * is the path or command, not an index, because an index changes when a sibling
+ * appears.
+ */
+export type EntryKind = 'binary' | 'module' | 'server';
+
+export interface EntryPoint {
+	/** Stable identity for a remembered choice. The path, or the command. */
+	readonly id: string;
+	/** What a person would call it: `alertmanager`, `dev server`. */
+	readonly label: string;
+	readonly kind: EntryKind;
+	/** Directory or file a debugger launches, relative to the project root. */
+	readonly path?: string;
+	/** Shell command that starts it, for the kinds nothing launches directly. */
+	readonly command?: string;
+}
+
 export interface Stack {
 	readonly id: StackId;
 	/** Directory holding the module, relative to the project root. '.' for root. */
@@ -41,6 +83,12 @@ export interface Stack {
 	/** What the project's OWN toolchain does to build and run it. */
 	readonly build: string;
 	readonly run: string;
+	/**
+	 * Everything this stack can start. **Zero, one or many are all normal** — a
+	 * library has none, a service has one, `alertmanager` has two — and the count
+	 * is what decides whether F5 can act without asking.
+	 */
+	readonly entries: readonly EntryPoint[];
 }
 
 export type ServiceKind = 'postgres';
@@ -63,6 +111,39 @@ export interface Project {
 	readonly services: readonly Service[];
 	/** Which fields came from `.burrow/project.json` rather than the tree. */
 	readonly declared: readonly string[];
+	/** The remembered choice, if the descriptor named one that still exists. */
+	readonly entry?: string;
+}
+
+/**
+ * Which entry point to start, and whether anyone needs to be asked.
+ *
+ * The three cases are three different obligations, not degrees of one:
+ *
+ *   one    act — no prompt, no ceremony
+ *   many   ASK, and never guess. `cmd/<reponame>` was available and is declined:
+ *          picking a binary for someone because its name matched the directory is
+ *          the kind of convenience that debugs the wrong process at 2am.
+ *   zero   say there is nothing to run, and why
+ */
+export function chooseEntry(project: Project): {
+	readonly need: 'one' | 'many' | 'zero';
+	readonly entry?: EntryPoint;
+	readonly options: readonly EntryPoint[];
+} {
+	const options = project.stacks.flatMap((s) => s.entries);
+	if (options.length === 0) {
+		return { need: 'zero', options };
+	}
+	// A remembered choice settles it — but only if it still exists.
+	const remembered = project.entry ? options.find((e) => e.id === project.entry) : undefined;
+	if (remembered) {
+		return { need: 'one', entry: remembered, options };
+	}
+	if (options.length === 1) {
+		return { need: 'one', entry: options[0], options };
+	}
+	return { need: 'many', options };
 }
 
 /** The descriptor file, as authored. Every field optional: it is an override
@@ -72,6 +153,20 @@ export interface Descriptor {
 	readonly name?: string;
 	readonly stacks?: readonly Partial<Stack>[];
 	readonly services?: readonly Partial<Service>[];
+	/**
+	 * The entry point the user picked when there was more than one.
+	 *
+	 * **A descriptor field, not a setting, and not per launch configuration.** It is
+	 * a fact about the project — "of this repository's two binaries, I debug this
+	 * one" — which is precisely what WO-71 built an override sheet to hold. Per
+	 * configuration would be wrong twice over: a bare F5 has no configuration, and
+	 * the answer would have to be repeated in every one that did.
+	 *
+	 * It stores the entry point's `id`, so a choice survives a sibling appearing.
+	 * An id that no longer exists is ignored and the question is asked again —
+	 * silently honouring a stale choice would launch the wrong program.
+	 */
+	readonly entry?: string;
 }
 
 export const DESCRIPTOR_DIR = '.burrow';
@@ -148,6 +243,7 @@ export function detect(tree: Tree, folderName: string): Project {
 			// is the point: these are what a person would type.
 			build: 'go build ./...',
 			run: 'go run .',
+			entries: goEntries(tree, dir),
 		});
 		// One Go stack is enough for this work order. A monorepo with several
 		// modules is a real shape and an honest gap, not something to guess at.
@@ -155,6 +251,63 @@ export function detect(tree: Tree, folderName: string): Project {
 	}
 
 	return { name: folderName, stacks, services: detectServices(tree), declared: [] };
+}
+
+/**
+ * Every `package main` under a Go module, as entry points.
+ *
+ * `go list ./...` is the authoritative answer and this is not it — deliberately.
+ * Detection must work on a folder that has never been built, with no network, and
+ * without shelling out on every window open; `go list` on a cold module cache can
+ * take a minute and wants to download dependencies. So this reads the package
+ * clause of the `.go` files where a main can be, which is exactly as accurate for
+ * the question "what could be started" and free.
+ *
+ * Where a main can be: the module root, and one level under the conventional
+ * command directories. NOT recursive — a `main` five levels down inside
+ * `internal/testdata` is a fixture, and the shallow-search argument from the
+ * compose scan applies unchanged.
+ */
+export function goEntries(tree: Tree, moduleRoot: string): EntryPoint[] {
+	const under = (rel: string) => (moduleRoot === '.' ? rel : `${moduleRoot}/${rel}`);
+	// `dir` may be '' for the project root, and `'' + '/' + f` is an absolute path.
+	// Join through a helper so the root case cannot produce `/main.go`.
+	const at = (dir: string, file: string) => (dir === '' || dir === '.' ? file : `${dir}/${file}`);
+	const isMain = (dir: string): boolean => {
+		for (const file of tree.files(dir)) {
+			if (!file.endsWith('.go') || file.endsWith('_test.go')) {
+				continue;
+			}
+			if (/^\s*package\s+main\b/m.test(tree.read(at(dir, file)) ?? '')) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	const entries: EntryPoint[] = [];
+	const add = (rel: string, label: string) => {
+		const path = rel === '' ? moduleRoot : under(rel);
+		entries.push({ id: path, label, kind: 'binary', path });
+	};
+
+	// The module root itself — the scaffold's shape, and most single services.
+	if (isMain(moduleRoot === '.' ? '' : moduleRoot)) {
+		add('', lastSegment(moduleRoot === '.' ? 'main' : moduleRoot));
+	}
+	// `cmd/<name>` and friends — alertmanager's shape, and Go's own convention.
+	for (const parent of ['cmd', 'cmds', 'apps', 'tools']) {
+		for (const name of tree.dirs(under(parent))) {
+			if (isMain(under(`${parent}/${name}`))) {
+				add(`${parent}/${name}`, name);
+			}
+		}
+	}
+	return entries;
+}
+
+function lastSegment(value: string): string {
+	return value.split('/').filter(Boolean).pop() || value;
 }
 
 function detectServices(tree: Tree): Service[] {
@@ -346,15 +499,19 @@ export function merge(detected: Project, descriptor: Descriptor | undefined): Pr
 		declared.push('services');
 	}
 
+	if (descriptor.entry !== undefined) {
+		declared.push('entry');
+	}
 	return {
 		name: take('name', descriptor.name, detected.name),
 		stacks: stacks as readonly Stack[],
 		services: services as readonly Service[],
 		declared,
+		entry: descriptor.entry,
 	};
 }
 
-const EMPTY_GO_STACK: Stack = { id: 'go', root: '.', build: 'go build ./...', run: 'go run .' };
+const EMPTY_GO_STACK: Stack = { id: 'go', root: '.', build: 'go build ./...', run: 'go run .', entries: [] };
 
 /** Drop `undefined` values so a spread does not erase a detected field. */
 function prune<T extends object>(value: T): Partial<T> {
@@ -373,7 +530,13 @@ export function serialize(project: Project): string {
 	const body = {
 		version: DESCRIPTOR_VERSION,
 		name: project.name,
-		stacks: project.stacks.map((s) => ({ id: s.id, root: s.root, module: s.module, build: s.build, run: s.run })),
+		stacks: project.stacks.map((s) => ({
+			id: s.id, root: s.root, module: s.module, build: s.build, run: s.run,
+			entries: s.entries.map((e) => ({ id: e.id, label: e.label, kind: e.kind, path: e.path, command: e.command })),
+		})),
+		// The user's pick, when there was one to make. Written last because it is the
+		// one field here that is a DECISION rather than an observation.
+		entry: project.entry,
 		services: project.services.map((s) => ({
 			kind: s.kind,
 			composeFile: s.composeFile,
@@ -440,6 +603,20 @@ export function capabilities(project: Project): Capability[] {
 			go
 				? `flowscan can analyse ${go.root}, but whether it finds routes depends on there being a router to seed from — run "API Flows: Refresh Flows" to find out`
 				: 'needs a Go stack'),
+
+		// Whether anything can be STARTED. Zero entry points is not `unknown` — it is
+		// measured, and 'inert' with the reason is exactly right: a library has
+		// nothing to run and saying so is the whole job. (Delegated question in §2:
+		// no new state needed. `unknown` means "run the tool to find out"; this is
+		// known.)
+		cap('run', go ? (go.entries.length ? 'live' : 'inert') : 'inert',
+			!go
+				? 'needs a Go stack'
+				: go.entries.length === 0
+					? `no package main under ${go.root} or its cmd/ directories — this module is a library, so there is nothing to launch`
+					: go.entries.length === 1
+						? `one entry point: ${go.entries[0].label} (${go.entries[0].path})`
+						: `${go.entries.length} entry points — ${go.entries.map((e) => e.label).join(', ')} — you will be asked which to debug, once`),
 
 		cap('data', pg ? 'live' : 'inert',
 			pg ? pgWhy(pg) : 'no Postgres service in a compose file and no postgres:// URL in an env file'),

@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-debug",
 		"watch": "gulp watch-extension:burrow-go-debug",
-		"test": "node test/envfile.test.js"
+		"test": "node test/envfile.test.js && node test/buildError.test.js"
 	},
 	"contributes": {
 		"breakpoints": [

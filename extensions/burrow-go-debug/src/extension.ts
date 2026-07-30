@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcessWithoutNullStreams, execFile, spawn } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import {
 	DebugAdapterDescriptor,
 	DebugAdapterDescriptorFactory,
@@ -20,6 +20,7 @@ import {
 	debug,
 	window,
 } from 'vscode';
+import { buildError } from './buildOutput';
 import { mergeEnv, parseEnvFile } from './envfile';
 
 // burrow-go-debug is the WO-2 IX prerequisite: the smallest extension that turns
@@ -101,6 +102,84 @@ function goModuleRoot(folderPath: string): string | undefined {
 	return undefined;
 }
 
+/** Does this directory hold a `package main`? */
+function isMainPackage(dir: string): boolean {
+	try {
+		for (const file of readdirSync(dir)) {
+			if (!file.endsWith('.go') || file.endsWith('_test.go')) {
+				continue;
+			}
+			if (/^\s*package\s+main\b/m.test(readFileSync(join(dir, file), 'utf8'))) {
+				return true;
+			}
+		}
+	} catch {
+		// absent or unreadable — not a main
+	}
+	return false;
+}
+
+/**
+ * Every runnable package under a module: the module root, plus one level under the
+ * conventional command directories.
+ *
+ * A MODULE ROOT IS NOT A PROGRAM (WO-72, measured on `alertmanager`). The module is
+ * at the root and the runnable code is `cmd/alertmanager` and `cmd/amtool`; pointing
+ * dlv at the root builds nothing and the session dies.
+ *
+ * Mirrors `burrow-project`'s `goEntries` and does not import it, for the reason
+ * stated on `goModuleRoot`: a debug session that cannot start because a sibling
+ * extension failed to activate is a worse failure than repeated lines.
+ */
+function goEntryPoints(moduleRoot: string): { label: string; path: string }[] {
+	const found: { label: string; path: string }[] = [];
+	if (isMainPackage(moduleRoot)) {
+		found.push({ label: basename(moduleRoot), path: moduleRoot });
+	}
+	for (const parent of ['cmd', 'cmds', 'apps', 'tools']) {
+		let names: string[] = [];
+		try { names = readdirSync(join(moduleRoot, parent)); } catch { continue; }
+		for (const name of names) {
+			const at = join(moduleRoot, parent, name);
+			if (isMainPackage(at)) {
+				found.push({ label: name, path: at });
+			}
+		}
+	}
+	return found;
+}
+
+
+/** A path as a person would refer to it inside their own project. */
+function relativeTo(root: string, target: string): string {
+	return target === root ? '.' : target.startsWith(root + '/') ? target.slice(root.length + 1) : target;
+}
+
+/** Where a remembered entry-point choice lives: the project descriptor. */
+const DESCRIPTOR = '.burrow/project.json';
+
+function rememberedEntry(folderPath: string): string | undefined {
+	try {
+		const raw = JSON.parse(readFileSync(join(folderPath, DESCRIPTOR), 'utf8')) as { entry?: string };
+		return typeof raw.entry === 'string' ? raw.entry : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function rememberEntry(folderPath: string, entry: string): void {
+	const at = join(folderPath, DESCRIPTOR);
+	let body: Record<string, unknown> = {};
+	try { body = JSON.parse(readFileSync(at, 'utf8')) as Record<string, unknown>; } catch { body = { version: 1 }; }
+	body.entry = entry;
+	try {
+		mkdirSync(dirname(at), { recursive: true });
+		writeFileSync(at, JSON.stringify(body, null, '\t') + '\n', 'utf8');
+	} catch {
+		// A choice we cannot persist costs one extra prompt, not the session.
+	}
+}
+
 /**
  * Fills the gaps VS Code leaves in a bare `go` config so a fixture can debug
  * with just `{ "type": "go", "request": "launch" }` (or an F5 with no launch.json).
@@ -142,17 +221,89 @@ class GoDebugConfigurationProvider implements DebugConfigurationProvider {
 			// order: the line is drawn at "what F5 needs to find the program", and
 			// nothing else in the debug path changes behaviour.
 			const moduleRoot = folder ? goModuleRoot(folder.uri.fsPath) : undefined;
+			if (moduleRoot && folder && moduleRoot !== folder.uri.fsPath) {
+				this.out.appendLine(`[go-debug] module root is ${moduleRoot} (not the workspace root)`);
+			}
+
+			// ── THE ENTRY POINT (WO-74 §2) ────────────────────────────────────
+			// Zero, one and many are three different obligations. Only resolved when
+			// the config does not already name a program: a launch.json that spells
+			// the path out is the project's business and is left alone.
+			if (!config.program && moduleRoot && folder) {
+				const entries = goEntryPoints(moduleRoot);
+
+				if (entries.length === 0) {
+					// ZERO — say there is nothing to run, and why. A library is not a
+					// broken project, so this is information, not an error dialog.
+					void window.showInformationMessage(
+						`Nothing to debug in ${basename(folder.uri.fsPath)}: no \`package main\` under `
+						+ `${relativeTo(folder.uri.fsPath, moduleRoot)} or its cmd/ directories. `
+						+ `This module is a library — open a package with a main, or add a launch configuration that names one.`,
+					);
+					this.out.appendLine(`[go-debug] no entry point under ${moduleRoot} — nothing to launch`);
+					return undefined;
+				}
+
+				let chosen = entries.length === 1 ? entries[0] : undefined;
+
+				if (!chosen) {
+					// MANY — a remembered choice settles it, but only if it still exists.
+					const remembered = rememberedEntry(folder.uri.fsPath);
+					chosen = remembered
+						? entries.find((e) => relativeTo(folder.uri.fsPath, e.path) === remembered)
+						: undefined;
+					if (remembered && !chosen) {
+						this.out.appendLine(`[go-debug] remembered entry ${remembered} no longer exists — asking again`);
+					}
+				}
+
+				if (!chosen) {
+					// ASK. Never guess: `cmd/<reponame>` was available and is declined
+					// on purpose — picking a binary because its name matched the
+					// directory is how you debug the wrong process at 2am.
+					const picked = await window.showQuickPick(
+						entries.map((e) => ({
+							label: e.label,
+							description: relativeTo(folder.uri.fsPath, e.path),
+							detail: e.path === entries[0].path ? undefined : undefined,
+							path: e.path,
+						})),
+						{
+							title: `${basename(folder.uri.fsPath)} has ${entries.length} programs — which one?`,
+							placeHolder: 'Remembered in .burrow/project.json; you will not be asked again',
+							ignoreFocusOut: true,
+						},
+					);
+					if (!picked) {
+						// Cancelled. Declining is fine; declining SILENTLY is not.
+						this.out.appendLine('[go-debug] entry point not chosen — nothing started');
+						return undefined;
+					}
+					chosen = entries.find((e) => e.path === picked.path);
+					if (chosen) {
+						// RELATIVE, never the absolute path. The descriptor is a project
+						// file — committable, shareable, and meaningless on another
+						// machine if it names /private/tmp/... Also the id contract
+						// `chooseEntry` reads: ids are project-relative paths.
+						const id = relativeTo(folder.uri.fsPath, chosen.path);
+						rememberEntry(folder.uri.fsPath, id);
+						this.out.appendLine(`[go-debug] remembered "${id}" in ${DESCRIPTOR}`);
+					}
+				}
+
+				config.program = chosen!.path;
+				this.out.appendLine(`[go-debug] entry point: ${chosen!.label} (${chosen!.path})`);
+			}
+
 			if (!config.program) {
 				config.program = moduleRoot ?? (folder ? folder.uri.fsPath : '${workspaceFolder}');
 			}
 			// dlv builds (`go build`) from cwd; without it dlv uses its own process
 			// cwd (the IDE root, which has no go.mod) and the build fails with
-			// "cannot find main module".
+			// "cannot find main module". The MODULE root, not the program's directory:
+			// `go build` needs to see the go.mod.
 			if (!config.cwd) {
 				config.cwd = moduleRoot ?? (folder ? folder.uri.fsPath : '${workspaceFolder}');
-			}
-			if (moduleRoot && folder && moduleRoot !== folder.uri.fsPath) {
-				this.out.appendLine(`[go-debug] module root is ${moduleRoot} (not the workspace root) — program and cwd default there`);
 			}
 		} else if (config.request === 'attach' && !config.mode) {
 			config.mode = 'local';
@@ -200,6 +351,9 @@ class GoDebugConfigurationProvider implements DebugConfigurationProvider {
  */
 class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 	private readonly servers = new Map<string, ChildProcessWithoutNullStreams>();
+	/** Sessions already told about a build failure — dlv repeats the error across
+	 *  several chunks and one dialog is the message, five is noise. */
+	private readonly reported = new Set<string>();
 
 	constructor(private readonly out: import('vscode').OutputChannel) { }
 
@@ -250,6 +404,28 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 				// own streams (not as DAP output events) — surface it instead of
 				// silently dropping it.
 				this.out.append(text);
+
+				// A BUILD FAILURE MUST NOT BE SILENT (WO-74 §3).
+				//
+				// dlv binds its DAP port BEFORE it builds, so a compile error arrives
+				// here — after the banner, on a channel nobody has open. The session
+				// then starts, fails, and ends with no message anywhere: exactly what
+				// `alertmanager` produced, and the reason two runs disagreed about
+				// whether a session had existed at all.
+				//
+				// Fixed here rather than only in the entry-point resolution, because
+				// this arrives again from every stack we add and next time the entry
+				// point will not be the cause.
+				const build = buildError(text);
+				if (build && !this.reported.has(session.id)) {
+					this.reported.add(session.id);
+					void window.showErrorMessage(`Go debug: the build failed, so nothing is running.\n\n${build}`, 'Show Output')
+						.then((choice) => {
+							if (choice === 'Show Output') {
+								this.out.show(true);
+							}
+						});
+				}
 			};
 			// dlv binds before it builds anything, so the banner is prompt or never.
 			// Failing loudly beats a session that never starts and never says why.
@@ -259,7 +435,22 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 			child.stdout.on('data', scan);
 			child.stderr.on('data', scan);
 			child.on('error', err => fail(new Error(`Could not start Delve at '${dlv}': ${err.message}. Install Delve or set BURROW_DLV_PATH.`)));
-			child.on('exit', code => fail(new Error(`Delve exited before it began listening (code ${code ?? 'null'}).`)));
+			// PRE-BANNER FAILURE (WO-74 §3, second half). dlv binds before it builds,
+			// so a session that dies BEFORE the banner died for a different reason —
+			// usually the build, and `seen` is holding the compiler's exact words.
+			// Reporting only "exited (code 1)" is the silent decline in a thin
+			// disguise: measured on prometheus/alertmanager, which embeds a web UI a
+			// fresh clone has not built, and whose real message is
+			// `ui/web.go:31:12: pattern app/dist: no matching files found`.
+			child.on('exit', (code) => {
+				const build = buildError(seen);
+				fail(new Error(build
+					? `Go debug: the build failed, so nothing started.\n\n${build}\n\n`
+					+ `This is the project's own build, not Burrow's — run its build steps (a Makefile target, `
+					+ `a generate step, or an embedded asset that has to be produced first) and try again.`
+					: `Delve exited before it began listening (code ${code ?? 'null'}).`
+					+ `${seen.trim() ? ` Output: ${seen.trim().slice(0, 400)}` : ' It printed nothing.'}`));
+			});
 		});
 	}
 
@@ -269,6 +460,7 @@ class GoDebugAdapterDescriptorFactory implements DebugAdapterDescriptorFactory {
 			child.kill();
 			this.servers.delete(session.id);
 		}
+		this.reported.delete(session.id);
 	}
 
 	dispose(): void {

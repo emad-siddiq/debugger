@@ -52,7 +52,26 @@ the deferred chat excision.
    positions live. Zero non-user-initiated network. No marketplace.
    `defaultChatAgent` stays (load-bearing) until the chat-excision task.
    The NodeWatch debug-env contract is preserved verbatim.
-5. **One session owns the working tree.** Added WO-60b, 2026-07-29, after a
+5. **Prove the instrument can fail before trusting that it passed.** Added WO-74,
+   2026-07-30. Every new gate, assertion or probe ships with its **red case
+   demonstrated** — not argued, run.
+
+   Already the practice here and worth making a rule because the counter-examples
+   were expensive: WO-60b showed the ledger gate failing on a planted unledgered
+   edit before claiming it passed on HEAD; WO-61 reinstated the `_pendingRebaseline`
+   bug and showed `P2-13` going 8/8 → 4/8. Against that, three work orders were
+   misdiagnosed by probes nobody had ever seen fail — WO-71 read a live debug
+   session as no session because it sampled an element's *text* and the element has
+   none; `[class*="codicon-debug-breakpoint"]` matched the unverified glyph and so
+   was true of a breakpoint that could never bind.
+
+   The corollary is the sharper half: **the absence of a signal is not evidence of
+   absence.** A probe that returns "nothing" has two readings — the thing did not
+   happen, or the probe cannot see it — and only a demonstrated red case tells them
+   apart. When the state you are watching is transient, latch it: a single sample
+   cannot distinguish "never started" from "started and ended".
+
+6. **One session owns the working tree.** Added WO-60b, 2026-07-29, after a
    second session committed three times mid-WO and swept part of another
    session's `burrow-scratch` change into a commit of its own. Nothing was lost
    that time; nothing guarantees that twice. The rule:
