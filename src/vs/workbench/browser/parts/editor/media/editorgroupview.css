@@ -282,10 +282,30 @@
 /** …and when there are no editors at all, that title bar has ZERO height, so
 	the rule above leaves a fresh window with no drag region anywhere and it
 	cannot be moved until you open a file. Measured 2026-07-27: both drag
-	elements in the DOM reported a 0×0 rect on a freshly opened window. The
-	watermark background is the handle in that state; its shortcut list and the
-	letterpress stay clickable. */
-.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container.empty {
+	elements in the DOM reported a 0×0 rect on a freshly opened window.
+
+	The whole empty container carried the drag for one release, and that was
+	wrong: with the sidebar hidden the container starts at x=48, the traffic
+	lights span x=7…61, and the zoom button's right half sat on a drag region.
+	Measured 2026-07-30 — an ancestor walk from (54,13) reached
+	`.editor-group-container.empty` with `-webkit-app-region: drag`. Same defect
+	as the strip build that swallowed every click on the buttons.
+
+	So the handle is its own element, inset below the reserved strip, which is
+	the one line that keeps it clear of the buttons no matter where the group's
+	left edge lands. `editorGroupView.ts` creates it before the watermark so the
+	shortcut list stays on top of it and stays clickable. */
+.editor-group-drag-region {
+	display: none;
+}
+
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container.empty > .editor-group-drag-region {
+	display: block;
+	position: absolute;
+	top: max(3vh, 28px); /* the reserved strip — activitybarpart.css */
+	right: 0;
+	bottom: 0;
+	left: 0;
 	-webkit-app-region: drag;
 }
 

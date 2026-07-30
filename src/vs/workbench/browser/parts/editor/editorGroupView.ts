@@ -198,6 +198,17 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 			// Container context menu
 			this.createContainerContextMenu();
 
+			// BURROW patch 0011 — the window's drag handle while this group is empty.
+			// With no editors the group's own title bar has zero height, so without
+			// this a fresh window has no drag region at all. It is a real element
+			// rather than the container itself because the container reaches under
+			// the macOS traffic lights when the sidebar is hidden, and a drag region
+			// over those buttons makes them unclickable. media/editorgroupview.css
+			// insets it below the reserved strip and turns it off everywhere else.
+			// Added BEFORE the watermark so the watermark's shortcut list paints —
+			// and so hit-tests — above it.
+			this.element.appendChild($('.editor-group-drag-region'));
+
 			// Watermark & shortcuts
 			this._register(this.instantiationService.createInstance(EditorGroupWatermark, this.element));
 
