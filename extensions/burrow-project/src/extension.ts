@@ -23,7 +23,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-	DESCRIPTOR_PATH, Project, capabilities, detect, merge, parse, serialize,
+	Capability, DESCRIPTOR_PATH, FLOW_STATE_PATH, Project, capabilities, detect, merge, parse,
+	parseFlowRun, serialize,
 } from './descriptor';
 import { DEFAULT_DB_PORT, GeneratedFile, goScaffold, postgresAddition, seedSql } from './goTemplate';
 import { installedGoVersion, treeOf, writeDescriptor, writeFiles } from './scaffold';
@@ -55,13 +56,25 @@ export function projectOf(folder: string): Project {
 	return merge(detect(tree, path.basename(folder)), parse(tree.read(DESCRIPTOR_PATH)));
 }
 
+/**
+ * Capabilities, including the ones that only a TOOL HAVING RUN can answer.
+ *
+ * `.burrow/flow.json` is read off disk rather than asked for over the extension
+ * API: a file has no activation order, so the API rail's own state cannot go
+ * missing because `burrow-flow` has not woken up yet.
+ */
+export function capabilitiesOf(folder: string): Capability[] {
+	const tree = treeOf(folder);
+	return capabilities(projectOf(folder), parseFlowRun(tree.read(FLOW_STATE_PATH)));
+}
+
 function describeWorkspace(): string {
 	const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	if (!root) {
 		return 'no folder open';
 	}
 	const project = projectOf(root);
-	const live = capabilities(project).filter((c) => c.live).map((c) => c.id);
+	const live = capabilitiesOf(root).filter((c) => c.live).map((c) => c.id);
 	return `${project.name}: ${live.join(' + ') || 'nothing Burrow recognises'}`;
 }
 
@@ -302,7 +315,7 @@ async function explain(out: vscode.OutputChannel): Promise<void> {
 		return;
 	}
 	const project = projectOf(root);
-	const caps = capabilities(project);
+	const caps = capabilitiesOf(root);
 	out.appendLine('');
 	out.appendLine(`── ${project.name}  (${root})`);
 	out.appendLine(`   descriptor: ${fs.existsSync(path.join(root, DESCRIPTOR_PATH)) ? DESCRIPTOR_PATH : 'none — detection only'}`);
@@ -318,8 +331,13 @@ async function explain(out: vscode.OutputChannel): Promise<void> {
 	if (!project.services.length) {
 		out.appendLine('   service: none detected');
 	}
+	// THREE labels, because there are three states. This printed `cap.live ? 'LIVE'
+	// : 'inert'`, which collapsed `unknown` — "nobody has run the tool" — into
+	// `inert` — "there is nothing here". They are opposite advice, and the surface
+	// that exists to explain why a rail is quiet was giving the wrong one.
 	for (const cap of caps) {
-		out.appendLine(`   ${cap.live ? 'LIVE ' : 'inert'} ${cap.id.padEnd(6)} ${cap.why}`);
+		const label = cap.state === 'live' ? 'LIVE   ' : cap.state === 'unknown' ? 'UNKNOWN' : 'inert  ';
+		out.appendLine(`   ${label} ${cap.id.padEnd(6)} ${cap.why}`);
 	}
 	out.show(true);
 }

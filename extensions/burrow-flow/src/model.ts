@@ -76,6 +76,23 @@ export function groupFlows(flows: Flow[]): Map<string, Flow[]> {
 	return groups;
 }
 
+/**
+ * The document's flows, never null.
+ *
+ * A nil Go slice marshals to `null`, not `[]`, and flowscan emits `"flows": null`
+ * whenever it found nothing — which is every library, every stdlib-mux service, and
+ * our own scaffold. It already normalises `edges` and `nodes` for this exact reason
+ * and does not normalise the top-level list.
+ *
+ * So `doc?.flows.length` throws on the one case that matters. It threw silently
+ * inside the refresh handler for the whole of a zero-route run, taking the
+ * "no routes found" notification and the rail's state with it — invisible until a
+ * repository with no routes was driven, because merkle always had 235.
+ */
+export function flowsOf(doc: FlowsDoc | undefined): readonly Flow[] {
+	return doc?.flows ?? [];
+}
+
 /** The flow's handler node, when analysis resolved one. */
 export function handlerOf(flow: Flow): FlowNode | undefined {
 	return (flow.nodes ?? []).find(n => n.kind === 'handler');

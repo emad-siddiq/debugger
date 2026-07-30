@@ -15,9 +15,16 @@ import { armSymbolBreakpoint, openSymbol } from './breakpoints';
 import { DiagramPanel } from './diagramPanel';
 import { generateHttp, parseContractFence } from './httpgen';
 import { loadSeedProfile } from './seedProfile';
-import { handlerOf } from './model';
-import { cachedDigestFile, cachedFlowsFile, detectProject, refreshFlows } from './project';
+import { flowsOf, handlerOf } from './model';
+import { cachedDigestFile, cachedFlowsFile, detectProject, flowState, refreshFlows } from './project';
 import { FlowItem, FlowsTree } from './routesTree';
+import { noBackendMessage, whereIs } from './spine';
+
+/** The open folder's name, for messages that should say where they looked. */
+function folderName(): string | undefined {
+	const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	return root ? path.basename(root) : undefined;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
 	const log = vscode.window.createOutputChannel('Burrow Flow');
@@ -31,6 +38,31 @@ export function activate(context: vscode.ExtensionContext): void {
 		tree.load(cached);
 	}
 
+	/**
+	 * The rail's own three states, as a context key.
+	 *
+	 * A context key and three `viewsWelcome` entries rather than a row in the tree:
+	 * the view contract (docs/plans/02, rule 4) says an empty view gets one sentence
+	 * and one button, never a list item pretending to be a message — and an empty
+	 * tree is what lets a welcome view render at all.
+	 *
+	 * Which matters because the single welcome text said "No routes indexed yet" in
+	 * all three situations, including after a trace that completed and found none.
+	 * That is the surface a user actually looks at, and it was telling someone to run
+	 * a tool that had already answered.
+	 */
+	const publishState = (): void => {
+		const doc = tree.document;
+		// `doc.flows` is NULL, not `[]`, when flowscan found nothing: a nil Go slice
+		// marshals to `null`. flowscan already normalises `edges` and `nodes` for
+		// exactly this reason and does not normalise the top-level list, so every
+		// consumer here has to. `doc?.flows.length` throws on it — which is what the
+		// notification below did, silently, for the whole of a zero-route refresh.
+		const state = !detectProject() ? 'nostack' : !doc ? 'untraced' : flowsOf(doc).length ? 'routes' : 'empty';
+		void vscode.commands.executeCommand('setContext', 'burrow.flow.state', state);
+	};
+	publishState();
+
 	const migrationFor = (table: string): string | undefined => tree.document?.tables?.[table];
 
 	// Panel persistence (WO-60): a restored diagram re-resolves its route out of
@@ -43,26 +75,36 @@ export function activate(context: vscode.ExtensionContext): void {
 		return {
 			backendDir: paths.backendDir,
 			migrationFor,
-			find: (method, routePath) => (tree.document?.flows ?? []).find(f => f.method === method && f.path === routePath),
+			find: (method, routePath) => flowsOf(tree.document).find(f => f.method === method && f.path === routePath),
 		};
 	}));
 
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.refresh', async () => {
 		const paths = detectProject();
 		if (!paths) {
-			void vscode.window.showWarningMessage('No Go backend found — open a project with backend/go.mod or set burrow.flow.backendDir.');
+			// Name what was looked for, not what merkle happens to have.
+			void vscode.window.showWarningMessage(noBackendMessage(folderName()));
 			return;
 		}
 		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'API Flows: tracing routes (oracle + flowscan)…' },
+			{ location: vscode.ProgressLocation.Notification, title: `API Flows: tracing ${whereIs(paths.backendRel)}…` },
 			async () => {
 				const flowsFile = await refreshFlows(context, paths, log);
 				if (flowsFile) {
 					tree.load(flowsFile);
+					publishState();
 					const doc = tree.document;
 					const cov = doc?.coverage;
+					const routes = flowsOf(doc).length;
+					const state = flowState(paths.root);
+					// A measured zero is a RESULT, and it gets a sentence rather than the
+					// same "refreshed — 0 routes" that reads like the tool did not run.
+					// This is the state that had nowhere to live: chi's honest answer.
 					void vscode.window.showInformationMessage(
-						`Flows refreshed — ${doc?.flows.length ?? 0} routes (${cov?.traced ?? 0} traced, ${cov?.partial ?? 0} partial) @ ${doc?.rev ?? '?'}`,
+						routes === 0
+							? `No routes found in ${whereIs(paths.backendRel)}. flowscan seeds its walk from NewRouter()/NewMux() call sites, so a router it does not recognise traces empty.`
+							: `Flows refreshed — ${routes} routes (${cov?.traced ?? 0} traced, ${cov?.partial ?? 0} partial) @ ${doc?.rev ?? '?'}`
+							+ (state?.loadErrors ? `  ⚠︎ ${state.loadErrors} package(s) failed to type-check — the counts are incomplete; see the "Burrow Flow" output channel.` : ''),
 					);
 				}
 			},
@@ -94,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// reading the surface by domain; this is for when you know the path. Picking
 	// does exactly what clicking a tree row does — diagram, and the code follows.
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.searchRoutes', async () => {
-		const flows = tree.document?.flows ?? [];
+		const flows = flowsOf(tree.document);
 		if (!flows.length) {
 			void vscode.window.showWarningMessage('No routes indexed yet — run "API Flows: Refresh Flows" first.');
 			return;
@@ -148,7 +190,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.flow.generateHttp', async () => {
 		const paths = detectProject();
 		const doc = tree.document;
-		if (!paths || !doc?.flows.length) {
+		const flows = flowsOf(doc);
+		if (!paths || !doc || !flows.length) {
 			void vscode.window.showWarningMessage('No flows yet — run "API Flows: Refresh Flows" first.');
 			return;
 		}
@@ -165,7 +208,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		const toggles = vscode.workspace.getConfiguration('burrow.debugConfig').get<Record<string, boolean>>('toggles') ?? {};
 		const skipAuth = toggles['skipAuth'] ?? true;
 		const content = generateHttp({
-			flows: doc.flows,
+			flows: flows.slice(),
 			contract,
 			baseUrl: config.get<string>('baseUrl', 'http://localhost:8080'),
 			authOn: !skipAuth,

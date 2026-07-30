@@ -96,11 +96,49 @@ the deferred chat excision.
      diff), say so in the report naming their SHA, and carry on. WO-60 §Changed
      is the worked example.
 
-6. **Knowledge lands in files, not just chat:** durable gotchas →
+7. **Knowledge lands in files, not just chat:** durable gotchas →
    `.claude/memory/burrow-go-ide-fork.md`; design decisions → the owning
    `burrow/docs/architecture/*.md` (FD gets `15-frontend-debugger.md` in house
    style once its architecture is fixed); upstream surprises → the relevant
    patch's Rebase notes; `burrow/README.md` status boxes updated at milestone WOs.
+
+   _(Numbered 6 until 2026-07-30, colliding with the one-session rule above.
+   Renumbered, not rewritten; citations of "rule 6" mean the tree-ownership rule.)_
+
+8. **The regression fleet — and merkle is not the measure of done.** Added
+   2026-07-30, after WO-74 measured that the incumbent target exercises less of
+   the product than any other repository we drive.
+
+   | | role | why it is in the fleet |
+   |---|---|---|
+   | **a fresh scaffold** | primary | the only project whose shape we chose; if our own output does not work, nothing else matters |
+   | **`prometheus/alertmanager`** | primary | many entry points, an embedded asset a fresh clone cannot build, a stdlib `http.NewServeMux` router |
+   | **`go-chi/chi`** | primary | a LIBRARY — zero entry points, nothing to launch, and every "nothing here" message has to be right |
+   | **`~/Projects/merkle`** | **compatibility** | the incumbent; the one repository where every feature has ever worked |
+
+   They live at `~/Projects/burrow-fleet/` (the third-party two are shallow
+   clones; the scaffold is regenerated). merkle stays where it is and **nothing
+   in it changes, ever**.
+
+   **Why merkle is demoted to compatibility.** It is the least representative
+   repository we have, in the exact areas the product is now being built out.
+   Its `launch.json` names `program`, so F5 short-circuits entry-point
+   resolution and merkle alone never exercises it. Its `backend/go.mod` was the
+   only layout detection could see, so it passed every detection change by
+   construction. It ships an oracle, so its digest path is the only one anyone
+   measures. Passing on merkle has never once predicted passing anywhere else.
+
+   The rule: **a done-state is stated against the primary fleet.** merkle's job
+   is to prove nothing broke, which is a real job and a different one. A WO that
+   can only demonstrate its feature on merkle has demonstrated it on the target
+   it was hard-coded for — which is the condition this whole run exists to end.
+
+   The corollary, which is the expensive half: **a repository can be
+   half-supported, and that is a result, not a failure.** alertmanager's
+   `amtool` debugs and its `alertmanager` binary does not, because a fresh
+   clone has not built the web UI it embeds. chi has 14 traceable routes and
+   they are all its own pprof middleware. Reporting the half is worth more than
+   picking the repository where the whole thing is green.
 
 ## Report contract
 

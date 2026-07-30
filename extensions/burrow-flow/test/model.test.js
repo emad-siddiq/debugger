@@ -9,7 +9,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { groupOf, groupFlows, handlerOf } = require('../out/model');
+const { flowsOf, groupOf, groupFlows, handlerOf } = require('../out/model');
 
 assert.strictEqual(groupOf('/api/validators/chains'), 'validators');
 assert.strictEqual(groupOf('/api/nodes'), 'nodes');
@@ -26,5 +26,13 @@ assert.deepStrictEqual([...groups.keys()], ['nodes', '(public)']);
 assert.strictEqual(groups.get('nodes').length, 2);
 assert.strictEqual(handlerOf(flows[0]).label, 'nodes.ListNodes');
 assert.strictEqual(handlerOf(flows[1]), undefined);
+
+// `"flows": null` — a nil Go slice, which is what flowscan emits for every
+// repository it found nothing in. `doc?.flows.length` throws on it, and it did:
+// silently, inside the refresh handler, for the whole of a zero-route run.
+assert.deepStrictEqual(flowsOf(undefined), []);
+assert.deepStrictEqual(flowsOf({ flows: null }), [], 'null is the case that mattered');
+assert.deepStrictEqual(flowsOf({ flows: [] }), []);
+assert.strictEqual(flowsOf({ flows }).length, 3);
 
 console.log('model.test.js OK');

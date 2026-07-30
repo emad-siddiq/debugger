@@ -67,7 +67,7 @@ Found and **not** fixed here, listed as the rule requires:
 | Where | The silent decline |
 |---|---|
 | `Debug: Start Debugging` with no configuration selected | Upstream's; it did start a session here, so it is not a decline — recorded because it was suspected and cleared |
-| `burrow-flow`'s `detectProject()` returning `undefined` | The caller shows a warning naming `backend/go.mod`, so this one already complies |
+| `burrow-flow`'s `detectProject()` returning `undefined` | ~~The caller shows a warning naming `backend/go.mod`, so this one already complies~~ **It did not comply.** It said *something*, which is not the same as saying *why*: "open a project with backend/go.mod" is a true statement about merkle and wrong advice everywhere else, and a user with a `go.mod` at the root was told to create a second one. Fixed 2026-07-30 — the message now names each directory that was searched. **A message that is confidently wrong is a worse failure than silence**, because silence at least prompts a question |
 | `sidecarTargetUrl()` returning `undefined` on an inactive extension | The browser tier logs "the sidecar reported no URL — skipped"; complies |
 
 ## Detection first, declaration second
@@ -106,6 +106,67 @@ The rails then go inert *with a reason* — `capabilities()` returns one line ea
 because a rail that goes quiet silently is exactly what made Burrow feel like it
 only worked on one repository.
 
+### `unknown` has to be able to stop being unknown
+
+Three states, and the third is the one that had nowhere to live:
+
+| state | means | `flow` reaches it when |
+|---|---|---|
+| `unknown` | **nobody has run the tool** | no `.burrow/flow.json` |
+| `live` | ran, and found something | `routes > 0` |
+| `inert` | **ran, and there is nothing here** | `routes === 0` |
+
+`flow` used to read `unknown` for every Go stack — correct at detection time,
+because only running flowscan answers it, and *still* `unknown` after flowscan had
+run and produced a number. The missing state is `inert`-by-measurement, and it is
+go-chi/chi's honest answer: the walk completed and found no router it recognised.
+Reporting that as `unknown` sends someone to run a tool that has already answered.
+
+**Where it lives: `.burrow/flow.json`, beside the descriptor and not inside it.**
+The descriptor states what a project *is* and is meant to be committed; this
+records what a tool *did*, on this machine, at a revision. Counts only — no route
+paths, no SQL, no handler names; `flows.json` keeps all of that in the extension's
+own storage. Deleting `.burrow/` returns the state to "not tried", which is true.
+
+`burrow-project` **reads the file** rather than calling `burrow-flow`, so a
+capability report never depends on another extension having activated. The two
+copies of the shape are bound by `burrow-flow/test/spine.test.js`, which requires
+both compiled modules and fails if they drift — see *Duplicate, but bind the copies*
+below.
+
+**No new affordance.** The traffic light's three states already map onto the three
+answers — *find out* / *yes* / *no*. A fourth colour would be a fourth thing to
+learn for a distinction the reason sentence carries better: "traced `.` and found no
+routes" and "no go.mod found" are both `inert` and never say the same thing, which
+is asserted.
+
+**A wrong count is worse than a missing one.** flowscan exits **zero** when packages
+fail to type-check, printing `N load error(s)` to a stream that lands in an output
+channel nobody has open. Measured: merkle traces **209 of 235** routes with a
+matching Go toolchain and **6 of 235** with an older one — the same shape of answer,
+off by two hundred, with no signal at the call site. So the load-error count rides
+along in the state file and both the notification and the capability say the counts
+are incomplete.
+
+### Duplicate, but bind the copies
+
+WO-72's precedent — duplicate detection rather than importing it, because an
+extension that cannot work until a *sibling has activated* has a new way to fail —
+is about **runtime** coupling and holds unchanged. `burrow-flow` carries its own
+copy of the search order in `src/spine.ts`.
+
+This case adds one thing WO-72's did not have: the two copies also share a
+**serialized format**. Duplication across a format drifts silently, and the symptom
+is a capability reporting the wrong state forever. So the copy stays and a
+**contract test** binds it — `test/spine.test.js` requires *both* this extension's
+`out/spine.js` and `burrow-project`'s `out/descriptor.js` and asserts they agree on
+the search order, the file paths, and every field of the state file. A test-only
+require has no runtime coupling at all, and turns drift into a red test.
+
+Both red cases were demonstrated, per standing rule 5: reordering `GO_SEARCH_ORDER`
+in one copy fails the order assertion; dropping `loadErrors` from the reader fails
+the field assertion.
+
 ### The descriptor
 
 `.burrow/project.json`, version 1. JSON, because it needs no new parser and a
@@ -131,6 +192,39 @@ place the value lives, so the descriptor is safe to paste into an issue. Asserte
 **A broken descriptor is ignored, not fatal.** `parse()` swallows anything;
 detection alone is enough to work. A config file that can stop a project opening is
 the failure mode this whole design exists to avoid.
+
+### Anything that becomes a file needs a driven case
+
+WO-74 shipped entry-point resolution with 91 green unit tests and stored the
+remembered choice as an **absolute path** — `/private/tmp/wo74-alertmanager/cmd/amtool`
+— in `.burrow/project.json`, a file meant to be committed and shared. On any other
+machine it names nothing. Every unit test passed, and they were right to: they built
+a `Project` in memory, called `chooseEntry`, and asserted on ids that were relative
+because the fixtures made them relative. Nothing was wrong with the tests. **They
+were simply not looking at the place the bug was.**
+
+The general shape, and it is not about paths:
+
+> A unit test observes the value a function returns. A descriptor observes the value
+> the **UI wrote down**. Between the two sits everything the user contributed — the
+> folder they opened, the item they picked, the absolute `fsPath` VS Code handed the
+> extension — and none of it exists in a test that constructs its own inputs.
+
+So: **anything that becomes a file gets at least one driven case.** Not a driven
+case per behaviour — one, that opens the real app, performs the real gesture, and
+reads the bytes that landed on disk. It is the only test that can see the
+contribution the UI makes to state, and by construction it is the only place a bug
+of this class can be caught.
+
+The rule earns its keep because the class is common and the symptom is delayed:
+absolute paths, `file://` URIs that should have been workspace-relative, a
+machine-local temp directory, a timestamp in a committed file, a resolved secret
+where a variable name belonged. All of them pass in memory. All of them are wrong
+the moment someone else opens the repository — which is a bug report from a
+different person, weeks later, about a file you cannot reproduce.
+
+The corollary for review: when a diff adds a field to a serialized file, the
+question is not "is it tested" but **"has anyone read the file the app writes"**.
 
 ## The scaffold engine
 
@@ -182,9 +276,18 @@ time`. If they ever diverge, one of them is second-class and the test says so.
 
 - **One Go module per project.** A monorepo with several is a real shape; detection
   stops at the first and does not guess.
-- **Nothing consumes the descriptor yet.** `projectOf()` is exported for the
-  extensions that currently hard-code merkle's shape; migrating them is the
-  follow-on, and doing it in this work order would have meant changing every rail
-  at once to a detection pass that had never run outside tests.
+- ~~**Nothing consumes the descriptor yet.**~~ `burrow-go-debug` migrated in WO-72,
+  `burrow-flow` in this work order. What remains hard-coded to merkle is the
+  frontend debugger's `MERKLE_*` env contract and `<root>/nodewatch/frontend`,
+  which belong to the browser-surface work.
+- **flowscan only recognises `NewRouter()` / `NewMux()` call sites**, so two of the
+  four fleet repositories trace **zero routes** — including the project *we*
+  scaffold, which emits `http.NewServeMux`. Measured, not inferred; see the WO
+  report. Detection is no longer the limit on the API rail, seeding is.
+- **flowscan's answer is bounded by the Go release it was built with, and it exits
+  zero when it cannot type-check.** `tools/flowscan/go.mod` pins
+  `toolchain go1.25.0`, so `make dist` is correct today; a target needing go1.26
+  silently degrades again. The defence is that the load-error count now reaches the
+  surface, not that the pin is right.
 - **Go only**, deliberately. The engine is stack-agnostic; the templates are the
   work.

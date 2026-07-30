@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-flow",
 		"watch": "gulp watch-extension:burrow-flow",
-		"test": "node test/model.test.js && node test/diagram.test.js && node test/httpgen.test.js"
+		"test": "node test/model.test.js && node test/diagram.test.js && node test/httpgen.test.js && node test/spine.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -107,15 +107,15 @@
 				"burrow.flow.backendDir": {
 					"type": "string",
 					"default": "",
-					"description": "The Go backend module directory flowscan analyzes. Empty = auto-detect: the first workspace folder containing backend/go.mod uses its backend/ subdirectory.",
+					"description": "The Go backend module directory flowscan analyzes. Empty = auto-detect: a go.mod in the workspace root, or in backend/, server/, api/, cmd/, src/ or service/ — whichever comes first. A Go stack recorded in .burrow/project.json wins over detection; this setting wins over both.",
 					"tags": [
 						"burrow"
 					]
 				},
 				"burrow.flow.oracleApp": {
 					"type": "string",
-					"default": "nodewatch",
-					"description": "App name passed to the target project's oracle (`go run ./cmd/oracle --digest <app>`). The oracle is optional — without one, flowscan still discovers every registration.",
+					"default": "",
+					"description": "App name passed to the target project's oracle (`go run ./cmd/oracle --digest <app>`). Empty = the project's name from .burrow/project.json, else the folder name. The oracle is optional — without one, flowscan still discovers every registration.",
 					"tags": [
 						"burrow"
 					]
@@ -139,7 +139,7 @@
 				"burrow.flow.baseUrl": {
 					"type": "string",
 					"default": "http://localhost:8080",
-					"description": "Default {{baseUrl}} seeded into the generated Route Runner file (editable there; your edit survives regeneration).",
+					"description": "Default {{baseUrl}} seeded into the generated Route Runner file (editable there; your edit survives regeneration). Kept as a default: :8080 is the conventional Go development port rather than any one project's, and the generated file is the primary way to change it.",
 					"tags": [
 						"burrow"
 					]
@@ -175,7 +175,18 @@
 		"viewsWelcome": [
 			{
 				"view": "burrowFlowRoutes",
+				"when": "burrow.flow.state == untraced",
 				"contents": "No routes indexed yet. Burrow starts at the file that creates the backend's router and follows every registration out from there.\n[Scan the backend](command:burrow.flow.refresh)"
+			},
+			{
+				"view": "burrowFlowRoutes",
+				"when": "burrow.flow.state == empty",
+				"contents": "Traced this module and found no routes.\n\nflowscan starts at `NewRouter()` / `NewMux()` call sites and follows every registration out from there, so a router it does not recognise — the standard library's `http.NewServeMux`, or a generated API — traces empty.\n[Scan again](command:burrow.flow.refresh)"
+			},
+			{
+				"view": "burrowFlowRoutes",
+				"when": "burrow.flow.state == nostack",
+				"contents": "No Go module here.\n\nBurrow looked for a `go.mod` in the workspace root and in backend/, server/, api/, cmd/, src/ and service/.\n[What is this project?](command:burrow.project.explain)"
 			}
 		]
 	}

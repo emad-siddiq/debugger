@@ -584,7 +584,50 @@ export interface Capability {
 	readonly live: boolean;
 }
 
-export function capabilities(project: Project): Capability[] {
+/**
+ * What `burrow-flow` recorded the last time it actually traced this project.
+ *
+ * Written by `burrow-flow` at `.burrow/flow.json`, read here — a FILE, not a call
+ * into a sibling extension, so a capability report never depends on another
+ * extension having activated. The two copies of this shape are bound by
+ * `burrow-flow/test/spine.test.js`, which requires both modules and asserts they
+ * agree field by field.
+ */
+export interface FlowRun {
+	readonly routes: number;
+	readonly traced: number;
+	readonly partial: number;
+	readonly unknown: number;
+	readonly ranAt?: string;
+	readonly loadErrors?: number;
+}
+
+export const FLOW_STATE_PATH = '.burrow/flow.json';
+export const FLOW_STATE_VERSION = 1;
+
+/** Parse `.burrow/flow.json`, tolerating anything — a corrupt cache means "not
+ *  tried", which is the state the surface already knows how to say. */
+export function parseFlowRun(text: string | undefined): FlowRun | undefined {
+	if (!text) {
+		return undefined;
+	}
+	try {
+		const v = JSON.parse(text) as Partial<FlowRun> & { version?: number };
+		if (!v || typeof v !== 'object' || v.version !== FLOW_STATE_VERSION || typeof v.routes !== 'number') {
+			return undefined;
+		}
+		const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+		return {
+			routes: v.routes, traced: n(v.traced), partial: n(v.partial), unknown: n(v.unknown),
+			ranAt: typeof v.ranAt === 'string' ? v.ranAt : undefined,
+			loadErrors: typeof v.loadErrors === 'number' ? v.loadErrors : undefined,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+export function capabilities(project: Project, flow?: FlowRun): Capability[] {
 	const go = project.stacks.find((s) => s.id === 'go');
 	const pg = project.services.find((s) => s.kind === 'postgres');
 	const cap = (id: string, state: Liveness, why: string): Capability => ({ id, state, why, live: state === 'live' });
@@ -596,13 +639,27 @@ export function capabilities(project: Project): Capability[] {
 		cap('test', go ? 'live' : 'inert',
 			go ? 'the Go stack supplies the test packages' : 'needs a Go stack'),
 
-		// NOT measured by the tree. Whether flowscan finds anything depends on the
-		// code, not the layout — a Go module with no router to walk yields an empty
-		// diagram, and detection cannot tell from here.
-		cap('flow', go ? 'unknown' : 'inert',
-			go
-				? `flowscan can analyse ${go.root}, but whether it finds routes depends on there being a router to seed from — run "API Flows: Refresh Flows" to find out`
-				: 'needs a Go stack'),
+		// NOT measured by the tree — and, until a trace has run, not measured at all.
+		//
+		// THE THREE STATES, and the third is the point. `unknown` was correct at
+		// detection time and stayed correct forever, including after the tool had run
+		// and produced a number. What a user has to be able to tell apart is:
+		//
+		//   not tried            no .burrow/flow.json  → unknown
+		//   tried, found routes  routes > 0            → live, with the count
+		//   tried, found NONE    routes === 0          → inert, with the reason
+		//
+		// The last one had nowhere to live and is go-chi/chi's honest state: flowscan
+		// ran, walked the module, and there was nothing it recognised as a router.
+		// Reporting that as `unknown` sends someone to run a tool that has already
+		// answered; reporting it as `live` sends them to an empty rail.
+		//
+		// (Delegated: no NEW affordance. The traffic light's three states already map
+		// onto the three answers — find out / yes / no — and a fourth colour would be
+		// a fourth thing to learn for a distinction the reason sentence carries
+		// better. What "tried and found none" earns is a DIFFERENT SENTENCE from "no
+		// Go stack", and it has one.)
+		cap('flow', ...flowState(go, flow)),
 
 		// Whether anything can be STARTED. Zero entry points is not `unknown` — it is
 		// measured, and 'inert' with the reason is exactly right: a library has
@@ -621,6 +678,33 @@ export function capabilities(project: Project): Capability[] {
 		cap('data', pg ? 'live' : 'inert',
 			pg ? pgWhy(pg) : 'no Postgres service in a compose file and no postgres:// URL in an env file'),
 	];
+}
+
+/** The `flow` capability's state and reason. Split out because it is the one
+ *  capability whose answer changes after something has RUN. */
+function flowState(go: Stack | undefined, flow: FlowRun | undefined): [Liveness, string] {
+	if (!go) {
+		return ['inert', 'needs a Go stack'];
+	}
+	// `'.'` is the project root; "traced . and found no routes" reads as a typo.
+	const where = go.root === '.' ? 'this module' : go.root;
+	if (!flow) {
+		return ['unknown',
+			`flowscan can analyse ${where}, but whether it finds routes depends on there being a router to seed from — run "API Flows: Refresh Flows" to find out`];
+	}
+	const when = flow.ranAt ? ` (last run ${flow.ranAt})` : '';
+	// A degraded run is not a clean one. flowscan exits zero when packages fail to
+	// type-check, and the counts it prints are then wrong rather than missing —
+	// merkle traces 209 of 235 with a matching toolchain and 6 of 235 without.
+	const degraded = flow.loadErrors
+		? ` — but ${flow.loadErrors} package(s) failed to type-check, so these counts are incomplete`
+		: '';
+	if (flow.routes === 0) {
+		return ['inert',
+			`traced ${where} and found no routes${when} — flowscan seeds its walk from NewRouter()/NewMux() call sites, so a router it does not recognise traces empty${degraded}`];
+	}
+	return ['live',
+		`${flow.routes} routes traced from ${where} (${flow.traced} full, ${flow.partial} partial, ${flow.unknown} unresolved)${when}${degraded}`];
 }
 
 function pgWhy(pg: Service): string {

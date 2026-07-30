@@ -6,47 +6,101 @@
 // project.ts — resolve where the target backend lives and run the two host
 // tools that feed the view: the target project's own oracle (optional, for the
 // authoritative digest) and flowscan (the call-chain extractor shipped in the
-// Burrow repo at tools/flowscan). Config source is Burrow settings +
-// workspace-folder auto-detect — never the legacy launcher /config.
+// Burrow repo at tools/flowscan). Config source is Burrow settings + the project
+// spine's detection — never the legacy launcher /config, and never MERKLE_ROOT.
 
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import {
+	DESCRIPTOR_PATH, FLOW_STATE_PATH, FLOW_STATE_VERSION, FlowState, Tree,
+	goStack, loadErrorCount, oracleAppName, parseFlowState, serializeFlowState,
+} from './spine';
 
 export interface ProjectPaths {
-	/** Project root (the dir holding backend/ and, when present, test/cmd/oracle). */
+	/** The workspace folder — the project root, whatever the module's depth. */
 	readonly root: string;
-	/** The Go backend module dir flowscan analyzes. */
+	/** The Go backend module dir flowscan analyzes. Absolute. */
 	readonly backendDir: string;
+	/** The same, relative to `root`, which is what gets recorded and displayed. */
+	readonly backendRel: string;
 	/** Dir to run the oracle from (contains cmd/oracle), when the project ships one. */
 	readonly oracleDir?: string;
+	/** How the module was found — a setting, the descriptor, or the tree. */
+	readonly from: 'setting' | 'descriptor' | 'detected';
 }
 
+/** A `Tree` over a real folder. Never throws: detection runs on folders that do
+ *  not have most of these paths. */
+export function treeOf(root: string): Tree {
+	return {
+		exists: (rel) => fs.existsSync(path.join(root, rel)),
+		read: (rel) => {
+			try {
+				return fs.readFileSync(path.join(root, rel), 'utf8');
+			} catch {
+				return undefined;
+			}
+		},
+	};
+}
+
+/**
+ * The Go module whose routes this window is about.
+ *
+ * Setting → descriptor → detection, which is `spine.goStack`'s order. The three
+ * merkle assumptions this replaced are gone: `<root>/backend/go.mod` is now one
+ * candidate among seven rather than the only one, `router.go` is not required for
+ * a root module to count, and `MERKLE_ROOT` is not consulted at all.
+ */
 export function detectProject(): ProjectPaths | undefined {
 	const configured = vscode.workspace.getConfiguration('burrow.flow').get<string>('backendDir', '');
+	const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+	// An explicit setting can point outside the workspace, so it is resolved
+	// against the filesystem rather than the tree.
 	if (configured) {
-		const backendDir = path.resolve(configured);
+		const backendDir = path.resolve(folder ?? '', configured);
 		if (fs.existsSync(path.join(backendDir, 'go.mod'))) {
-			const root = path.dirname(backendDir);
-			return { root, backendDir, oracleDir: oracleDirUnder(root) };
+			const root = folder ?? path.dirname(backendDir);
+			return {
+				root, backendDir, from: 'setting',
+				backendRel: path.relative(root, backendDir) || '.',
+				oracleDir: oracleDirUnder(root),
+			};
 		}
 	}
-	for (const folder of vscode.workspace.workspaceFolders ?? []) {
-		const root = folder.uri.fsPath;
-		if (fs.existsSync(path.join(root, 'backend', 'go.mod'))) {
-			return { root, backendDir: path.join(root, 'backend'), oracleDir: oracleDirUnder(root) };
-		}
-		// A workspace opened directly on the backend module.
-		if (fs.existsSync(path.join(root, 'go.mod')) && fs.existsSync(path.join(root, 'router.go'))) {
-			return { root, backendDir: root, oracleDir: oracleDirUnder(path.dirname(root)) };
-		}
+	if (!folder) {
+		return undefined;
 	}
-	const envRoot = process.env['MERKLE_ROOT'];
-	if (envRoot && fs.existsSync(path.join(envRoot, 'backend', 'go.mod'))) {
-		return { root: envRoot, backendDir: path.join(envRoot, 'backend'), oracleDir: oracleDirUnder(envRoot) };
+	const stack = goStack(treeOf(folder), undefined);
+	if (!stack) {
+		return undefined;
 	}
-	return undefined;
+	return {
+		root: folder,
+		backendDir: stack.root === '.' ? folder : path.join(folder, stack.root),
+		backendRel: stack.root,
+		from: stack.from,
+		oracleDir: oracleDirUnder(folder),
+	};
+}
+
+/**
+ * The app name the oracle's `--digest <app>` takes.
+ *
+ * Setting first, then the descriptor's project name, then the folder's. The
+ * setting's `default` used to be the literal `nodewatch`, which is merkle's app —
+ * a hard-coded target hiding in a `package.json` default value, where nobody
+ * reading the code would find it.
+ */
+export function oracleApp(paths: ProjectPaths): string {
+	const configured = vscode.workspace.getConfiguration('burrow.flow').get<string>('oracleApp', '');
+	if (configured) {
+		return configured;
+	}
+	return oracleAppName(treeOf(paths.root).read(DESCRIPTOR_PATH), path.basename(paths.root));
 }
 
 function oracleDirUnder(root: string): string | undefined {
@@ -123,7 +177,7 @@ export async function refreshFlows(
 
 	let digestArg: string[] = [];
 	if (paths.oracleDir) {
-		const app = vscode.workspace.getConfiguration('burrow.flow').get<string>('oracleApp', 'nodewatch');
+		const app = oracleApp(paths);
 		const oracle = await run(goBin(), ['run', './cmd/oracle', '--digest', app], paths.oracleDir, log);
 		if (oracle.code === 0 && oracle.stdout.includes('```routes')) {
 			fs.writeFileSync(digestFile, oracle.stdout);
@@ -144,7 +198,51 @@ export async function refreshFlows(
 		void vscode.window.showErrorMessage(`flowscan failed (exit ${scan.code}) — see the "Burrow Flow" output channel.`);
 		return undefined;
 	}
+	// The trace HAPPENED. Record that, whatever it found — a zero that was measured
+	// and a zero that was never attempted are different facts, and until now the
+	// second was the only one anything could see.
+	writeFlowState(paths, flowsFile, loadErrorCount(scan.stderr), log);
 	return flowsFile;
+}
+
+/**
+ * `.burrow/flow.json` — the summary a sibling extension is allowed to read.
+ *
+ * Counts only. flows.json keeps the routes, the handlers and the SQL in this
+ * extension's own storage; nothing of that belongs in a file that sits in the
+ * user's project directory.
+ *
+ * A failure to write costs the traffic light its third state, not the trace, so it
+ * is logged and swallowed — a read-only checkout must still be able to trace.
+ */
+function writeFlowState(paths: ProjectPaths, flowsFile: string, loadErrors: number, log: vscode.OutputChannel): void {
+	try {
+		const doc = JSON.parse(fs.readFileSync(flowsFile, 'utf8')) as {
+			rev?: string; coverage?: { routes?: number; traced?: number; partial?: number; unknown?: number };
+		};
+		const c = doc.coverage ?? {};
+		const state: FlowState = {
+			version: FLOW_STATE_VERSION,
+			ranAt: new Date().toISOString(),
+			backend: paths.backendRel,
+			rev: doc.rev || undefined,
+			routes: c.routes ?? 0,
+			traced: c.traced ?? 0,
+			partial: c.partial ?? 0,
+			unknown: c.unknown ?? 0,
+			loadErrors: loadErrors || undefined,
+		};
+		const target = path.join(paths.root, FLOW_STATE_PATH);
+		fs.mkdirSync(path.dirname(target), { recursive: true });
+		fs.writeFileSync(target, serializeFlowState(state), 'utf8');
+	} catch (err) {
+		log.appendLine(`could not record the trace in ${FLOW_STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+/** What the last trace found here, if one has ever run. */
+export function flowState(root: string): FlowState | undefined {
+	return parseFlowState(treeOf(root).read(FLOW_STATE_PATH));
 }
 
 /** The cached flows.json path from the last refresh, if it exists. */
