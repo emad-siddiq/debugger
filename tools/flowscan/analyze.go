@@ -19,9 +19,14 @@ type declSite struct {
 }
 
 type analyzer struct {
-	backendDir  string
-	fset        *token.FileSet
-	pkgs        []*packages.Package
+	backendDir string
+	fset       *token.FileSet
+	pkgs       []*packages.Package
+	// Every function body, keyed by its type object. `func init()` IS in here —
+	// worth stating, because the obvious guess is that it is not (the spec says
+	// the identifier `init` is declared in no scope) and a whole detour was spent
+	// adding a second index for it. `TypesInfo.Defs` does give `init` a
+	// `*types.Func`; measured, not assumed.
 	decls       map[*types.Func]declSite
 	sqlPkgs     map[*types.Package]bool // package contains querier calls (recursion prune)
 	knownTables map[string]string

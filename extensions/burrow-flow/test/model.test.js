@@ -9,7 +9,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { flowsOf, groupOf, groupFlows, handlerOf } = require('../out/model');
+const { flowsOf, groupOf, groupFlows, handlerOf, railMessage, unfollowedOf } = require('../out/model');
 
 assert.strictEqual(groupOf('/api/validators/chains'), 'validators');
 assert.strictEqual(groupOf('/api/nodes'), 'nodes');
@@ -34,5 +34,28 @@ assert.deepStrictEqual(flowsOf(undefined), []);
 assert.deepStrictEqual(flowsOf({ flows: null }), [], 'null is the case that mattered');
 assert.deepStrictEqual(flowsOf({ flows: [] }), []);
 assert.strictEqual(flowsOf({ flows }).length, 3);
+
+// A router flowscan RECOGNISED and could not follow (WO-77). The count is not a
+// route count — we do not know how many routes are behind one — so the sentence
+// has to make a floor read like a floor.
+assert.strictEqual(railMessage(2, []), undefined, 'nothing to say means no chrome');
+assert.strictEqual(unfollowedOf(undefined).length, 0);
+assert.strictEqual(unfollowedOf({ coverage: {} }).length, 0);
+
+const one = railMessage(13, [{ file: 'api/api.go', line: 171, reason: 'handed in from elsewhere' }]);
+assert.match(one, /13 routes traced/);
+assert.match(one, /1 router that could not be followed/);
+assert.match(one, /there may be more/, 'the count is a floor and must read like one');
+assert.match(one, /api\/api\.go:171 — handed in from elsewhere/, '"somewhere" is not actionable');
+assert.ok(!/\(\+/.test(one), 'no "+N more" when there is only one');
+
+const two = railMessage(13, [
+	{ file: 'api/api.go', line: 171, reason: 'handed in from elsewhere' },
+	{ file: 'app/app.go', line: 522, reason: 'WithPrefix' },
+]);
+assert.match(two, /2 routers that could not be followed/);
+assert.match(two, /\(\+1 more\)/);
+
+assert.match(railMessage(1, [{ file: 'a.go', line: 1, reason: 'r' }]), /1 route traced/, 'singular');
 
 console.log('model.test.js OK');

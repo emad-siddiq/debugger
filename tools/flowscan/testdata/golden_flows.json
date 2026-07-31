@@ -4,10 +4,17 @@
  "rev": "",
  "generatedAt": "",
  "coverage": {
-  "routes": 8,
-  "traced": 6,
+  "routes": 10,
+  "traced": 8,
   "partial": 2,
-  "unknown": 0
+  "unknown": 0,
+  "unfollowed": [
+   {
+    "file": "app.go",
+    "line": 74,
+    "reason": "the router passes through .WithPrefix(…), which takes a string and may prefix every path behind it. Those routes are listed at their UNPREFIXED paths — right when the prefix is empty, short by it when it is not."
+   }
+  ]
  },
  "flows": [
   {
@@ -43,6 +50,51 @@
      "col": 7,
      "sql": "DELETE FROM widgets WHERE id = $1",
      "sqlKind": "write",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/after-prefix",
+   "file": "app.go",
+   "line": 75,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.ListWidgets",
+     "file": "widgets/widgets.go",
+     "line": 13,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16,
+     "sql": "SELECT id, name, created_at FROM widgets WHERE org_id = $1 ORDER BY created_at",
+     "sqlKind": "read",
      "tables": [
       "widgets"
      ]
@@ -338,6 +390,51 @@
      0,
      1
     ]
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/instrumented",
+   "file": "app.go",
+   "line": 73,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "widgets.ListWidgets",
+     "file": "widgets/widgets.go",
+     "line": 13,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16,
+     "sql": "SELECT id, name, created_at FROM widgets WHERE org_id = $1 ORDER BY created_at",
+     "sqlKind": "read",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
    ],
    "status": "traced"
   },

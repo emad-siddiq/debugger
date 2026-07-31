@@ -154,3 +154,127 @@ func splitStdlibPattern(pattern string) (method, host, path string) {
 	}
 	return method, host, rest
 }
+
+// --- structural recognition -------------------------------------------------
+//
+// WHY THIS EXISTS, AND WHY IT SUPERSEDES HALF OF THE TABLE ABOVE.
+//
+// WO-76 argued that the dialect has to travel with the constructor's NAME. That
+// was right about the dialect and wrong about the name. A name list only ever
+// recognises routers somebody thought to list, and the first repository it was
+// measured against proved the point: `alertmanager` reports 2 routes and has 22,
+// because its router comes from `prometheus/common/route` and nothing named
+// `route.New`.
+//
+// Adding that name would have been special-casing one package — and the file's
+// own design note has said the right answer since it was written: *"All
+// structural — no chi import required — so it works on any chi-shaped router
+// including test fixtures."* That was true of the registration methods and never
+// true of the seeding.
+//
+// So a router is recognised by its TYPE'S METHOD SET:
+//
+//	verbs (Get/Post/Put/Patch/Delete/Del/Head/Options taking a string first)
+//	    → chi-shaped. chi, gorilla, goji, prometheus/common/route, the fixture.
+//	Handle + HandleFunc and NO verbs
+//	    → mux-shaped, which is the stdlib dialect: with no per-verb method, the
+//	      method has nowhere to live except inside the pattern.
+//
+// The name table stays, for the two things a type cannot answer:
+// `http.DefaultServeMux` has no value to inspect, and a constructor returning a
+// deliberately thin interface may not carry the shape.
+
+// Registration methods whose FIRST parameter is a path string. `Del` is here
+// because prometheus/common/route spells it that way — one more reason not to
+// key off names at the package level while keeping a name set at the method
+// level, where the surface is small and stable.
+var verbMethodNames = map[string]bool{
+	"Get": true, "Post": true, "Put": true, "Patch": true,
+	"Delete": true, "Del": true, "Head": true, "Options": true,
+}
+
+// How many distinct verb methods make a type a router rather than a coincidence.
+// Two would match a cache with Get/Put; three is the smallest set no non-router
+// type in the fleet has.
+const minVerbMethods = 3
+
+// routerShapeOf reports the dialect of a router-shaped type, if it is one.
+func routerShapeOf(t types.Type) (dialect, bool) {
+	if t == nil {
+		return 0, false
+	}
+	verbs, handle, handleFunc := 0, false, false
+	seen := map[string]bool{}
+	for _, m := range methodsOf(t) {
+		sig, ok := m.Type().(*types.Signature)
+		if !ok || !firstParamIsString(sig) {
+			continue
+		}
+		name := m.Name()
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		switch {
+		case verbMethodNames[name]:
+			verbs++
+		case name == "Handle":
+			handle = true
+		case name == "HandleFunc":
+			handleFunc = true
+		}
+	}
+	if verbs >= minVerbMethods {
+		return dialectChi, true
+	}
+	if handle && handleFunc {
+		return dialectStdlib, true
+	}
+	return 0, false
+}
+
+// methodsOf collects the method set of a named type, its pointer, or an
+// interface — the three ways a router is spelled in a signature.
+func methodsOf(t types.Type) []*types.Func {
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	switch u := types.Unalias(t).(type) {
+	case *types.Named:
+		if iface, ok := u.Underlying().(*types.Interface); ok {
+			return interfaceMethods(iface)
+		}
+		out := make([]*types.Func, 0, u.NumMethods())
+		for i := 0; i < u.NumMethods(); i++ {
+			out = append(out, u.Method(i))
+		}
+		// Value-receiver method sets omit pointer-receiver methods, and routers
+		// are conventionally pointer receivers, so ask for the pointer's set too.
+		ptr := types.NewMethodSet(types.NewPointer(u))
+		for i := 0; i < ptr.Len(); i++ {
+			if fn, ok := ptr.At(i).Obj().(*types.Func); ok {
+				out = append(out, fn)
+			}
+		}
+		return out
+	case *types.Interface:
+		return interfaceMethods(u)
+	}
+	return nil
+}
+
+func interfaceMethods(iface *types.Interface) []*types.Func {
+	out := make([]*types.Func, 0, iface.NumMethods())
+	for i := 0; i < iface.NumMethods(); i++ {
+		out = append(out, iface.Method(i))
+	}
+	return out
+}
+
+func firstParamIsString(sig *types.Signature) bool {
+	if sig.Params().Len() == 0 {
+		return false
+	}
+	b, ok := types.Unalias(sig.Params().At(0).Type()).(*types.Basic)
+	return ok && b.Kind() == types.String
+}

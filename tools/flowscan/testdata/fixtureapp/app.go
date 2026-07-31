@@ -57,3 +57,21 @@ func (a *App) registerSubRoutes(r Router, base string) {
 		r.Get("/things", widgets.ListWidgets(a.Pool))
 	})
 }
+
+// setupInstrumented — the BUILDER CHAIN shapes, both of them.
+//
+// `NewRouter().WithInstrumentation(h)` is a constructor that is the receiver of a
+// method call rather than the bare right-hand side of an assignment. Tracking only
+// the bare form is why `alertmanager` reported 2 routes and had 22.
+//
+// `r = r.WithPrefix("/v2")` is the same chain shape with a string argument, and
+// that one is NOT safe to follow through: we do not model the prefix, so every
+// path after it may be wrong. It is noted instead, and the routes keep their
+// unprefixed paths — which is what the app serves when the prefix is empty.
+func (a *App) setupInstrumented() Router {
+	r := NewRouter().WithInstrumentation(nil)
+	r.Get("/instrumented", widgets.ListWidgets(a.Pool))
+	r = r.WithPrefix("/v2")
+	r.Get("/after-prefix", widgets.ListWidgets(a.Pool))
+	return r
+}

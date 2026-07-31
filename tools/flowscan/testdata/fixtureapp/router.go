@@ -13,6 +13,12 @@ type Router interface {
 	Use(mw ...Middleware)
 	Route(pattern string, fn func(Router)) Router
 	Group(fn func(Router)) Router
+
+	// BUILDER STEPS. Both return the router, and the difference between them is
+	// the whole rule: a step taking a STRING may move every path behind it, and a
+	// step taking anything else cannot.
+	WithInstrumentation(h func(http.Handler) http.Handler) Router
+	WithPrefix(prefix string) Router
 }
 
 func NewRouter() Router { return nil }

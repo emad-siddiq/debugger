@@ -180,6 +180,15 @@ export interface FlowState {
 	 * the cause.
 	 */
 	readonly loadErrors?: number;
+	/**
+	 * How many routers the trace recognised and could not follow (WO-77).
+	 *
+	 * A count, not the list: the reasons are long, this file is a summary a sibling
+	 * extension reads, and `flows.json` keeps the detail. But the count has to be
+	 * here, because without it a capability saying "13 routes" cannot know whether
+	 * 13 is the answer or the part of the answer we could reach.
+	 */
+	readonly unfollowed?: number;
 }
 
 export const FLOW_STATE_PATH = '.burrow/flow.json';
@@ -205,6 +214,7 @@ export function parseFlowState(text: string | undefined): FlowState | undefined 
 		partial: num(value.partial),
 		unknown: num(value.unknown),
 		loadErrors: typeof value.loadErrors === 'number' ? value.loadErrors : undefined,
+		unfollowed: typeof value.unfollowed === 'number' ? value.unfollowed : undefined,
 	};
 }
 

@@ -218,7 +218,11 @@ export async function refreshFlows(
 function writeFlowState(paths: ProjectPaths, flowsFile: string, loadErrors: number, log: vscode.OutputChannel): void {
 	try {
 		const doc = JSON.parse(fs.readFileSync(flowsFile, 'utf8')) as {
-			rev?: string; coverage?: { routes?: number; traced?: number; partial?: number; unknown?: number };
+			rev?: string;
+			coverage?: {
+				routes?: number; traced?: number; partial?: number; unknown?: number;
+				unfollowed?: { file: string; line: number; reason: string }[];
+			};
 		};
 		const c = doc.coverage ?? {};
 		const state: FlowState = {
@@ -231,6 +235,7 @@ function writeFlowState(paths: ProjectPaths, flowsFile: string, loadErrors: numb
 			partial: c.partial ?? 0,
 			unknown: c.unknown ?? 0,
 			loadErrors: loadErrors || undefined,
+			unfollowed: c.unfollowed?.length || undefined,
 		};
 		const target = path.join(paths.root, FLOW_STATE_PATH);
 		fs.mkdirSync(path.dirname(target), { recursive: true });

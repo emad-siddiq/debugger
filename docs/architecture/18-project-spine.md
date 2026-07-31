@@ -281,6 +281,38 @@ At create time via the quick-pick, **and** afterwards via `addPostgres`, because
 identical: `adding Postgres afterwards yields the same files as asking at create
 time`. If they ever diverge, one of them is second-class and the test says so.
 
+### A router recognised and not followed
+
+Not a route, and deliberately **not a fifth route bucket**. `unknown` means "the
+route is real and the handler did not resolve", which presumes a route; here we do
+not know how many routes are behind the thing we lost, so there is nothing to file.
+It is one level up, and it lives in `Coverage.unfollowed` as a list of
+`{file, line, reason}`.
+
+This is the test WO-76 applied when it refused a new word for an unfollowable
+*handler*, run again and answered the other way — because this time the existing
+vocabulary genuinely could not carry it. A count of routes is an answer; a count of
+routes with an unfollowed router beside it is a **floor**, and the surface has to
+say which it is:
+
+```
+13 routes traced, and 2 routers that could not be followed — so there may be more.
+api/api.go:171 — a router is handed to this function and the walk did not track
+                 where it came from, so its registrations are not counted  (+1 more)
+```
+
+That is `TreeView.message`, above the rail — not a tree row, which the view contract
+(`docs/plans/02` rule 4) forbids for messages. The `flow` capability carries the
+same caveat, and a project with a measured zero **and** an unfollowed router reads
+`unknown` rather than `inert`: "there is nothing here" is a claim we have not
+earned when a router went unread.
+
+**Notes are withdrawn when they turn out to be wrong.** One function can be reached
+by two seeded walks — `api.Register` builds a `ServeMux` and also takes a chi router
+— and in one of them the other router is untracked, which looks exactly like an
+unfollowable one. A note on a line that produced a route is a false alarm, and a
+signal that cries wolf gets ignored precisely when it is right.
+
 ## Known gaps
 
 - **One Go module per project.** A monorepo with several is a real shape; detection
@@ -289,13 +321,36 @@ time`. If they ever diverge, one of them is second-class and the test says so.
   `burrow-flow` in this work order. What remains hard-coded to merkle is the
   frontend debugger's `MERKLE_*` env contract and `<root>/nodewatch/frontend`,
   which belong to the browser-surface work.
-- ~~**flowscan only recognises `NewRouter()` / `NewMux()` call sites**~~ — fixed in
-  WO-76. The seed is now a table in `tools/flowscan/routers.go` carrying a
-  **dialect** as well as a name, because chi puts the method in the CALL
-  (`r.Get("/x", h)`) and Go 1.22's `ServeMux` puts it in the PATTERN
-  (`mux.HandleFunc("GET /x", h)`) — a list of bare names cannot express that.
-  `http.DefaultServeMux` is seeded separately, since `http.HandleFunc("/x", h)` in a
-  `main` is a complete service with no router value to find.
+- ~~**flowscan only recognises `NewRouter()` / `NewMux()` call sites**~~ — fixed
+  across WO-76 and WO-77, and the second half **superseded the first's reasoning**.
+  WO-76 made the seed a table of constructor NAMES carrying a dialect; WO-77
+  measured that against `alertmanager`, which reported 2 routes and has 22, because
+  its router is `prometheus/common/route` and no list contains every package.
+
+  Recognition is now **structural — a router is a type whose method set says so**,
+  which is what the walker's own design note had claimed since it was written
+  (*"All structural — no chi import required"*). That was true of the registration
+  methods and never true of the seeding. Three or more verb methods taking a path
+  string is chi-shaped; `Handle` + `HandleFunc` with no verbs is mux-shaped, and
+  with no per-verb method the HTTP method has nowhere to live but inside the
+  pattern — so the **dialect falls out of the shape** rather than out of a name.
+  The name table survives for the two things a type cannot answer:
+  `http.DefaultServeMux` has no value to inspect, and a constructor returning a
+  deliberately thin interface may not carry the shape.
+
+- ~~**Builder chains**~~ and ~~**package-level router vars**~~ — both followed in
+  WO-77, and they are **different problems** despite arriving together.
+  `route.New().WithInstrumentation(h)` is a TRACKING failure inside a function the
+  walk already visits; `var mux = http.NewServeMux()` is a SEEDING failure, where
+  the constructor is in no function body and no scope ever starts. Chain-following
+  could not have reached the second and a longer seed list could not have reached
+  either.
+
+  A builder step that takes a **string** is not followed through: `WithPrefix(p)`
+  may move every path behind it, and **a wrong path is worse than a missing one**.
+  Those routes keep their unprefixed paths and the router is noted. A step taking
+  anything else cannot move a path, so it is followed. The rule names no method and
+  no package — only the argument's type.
 - **flowscan's coverage can collapse without its exit code changing, and the cause
   is unknown.** Measured once (235/209 vs 235/6 on the same tree); the obvious
   suspect — the Go release the tracer was built with — does not reproduce. `P2-15`

@@ -4,10 +4,10 @@
  "rev": "",
  "generatedAt": "",
  "coverage": {
-  "routes": 13,
-  "traced": 11,
+  "routes": 15,
+  "traced": 12,
   "partial": 0,
-  "unknown": 2
+  "unknown": 3
  },
  "flows": [
   {
@@ -41,6 +41,21 @@
    ],
    "edges": null,
    "status": "traced"
+  },
+  {
+   "method": "*",
+   "path": "/pkgvar/sub/",
+   "file": "pkgvar.go",
+   "line": 20,
+   "nodes": [
+    {
+     "kind": "unknown",
+     "label": "http.StripPrefix",
+     "reason": "handler declared outside the analyzed module"
+    }
+   ],
+   "edges": null,
+   "status": "unknown"
   },
   {
    "method": "*",
@@ -255,6 +270,23 @@
      "file": "default.go",
      "line": 16,
      "col": 31
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/pkgvar/status",
+   "file": "pkgvar.go",
+   "line": 19,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "stdlibapp.pkgStatus",
+     "file": "pkgvar.go",
+     "line": 23,
+     "col": 6
     }
    ],
    "edges": null,

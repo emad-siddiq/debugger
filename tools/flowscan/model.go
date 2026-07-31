@@ -20,6 +20,18 @@ type Coverage struct {
 	Unknown   int      `json:"unknown"`
 	Unmatched []string `json:"unmatched,omitempty"` // digest routes with no discovered registration
 	Extra     []string `json:"extra,omitempty"`     // discovered registrations absent from the digest
+	// Routers the walk RECOGNISED and could not follow. Not routes — we do not
+	// know how many are behind one — so this is a separate list rather than a
+	// fifth bucket. It is what lets a surface distinguish "this app has N routes"
+	// from "I found N and there is a router in here I cannot read".
+	Unfollowed []Unfollowed `json:"unfollowed,omitempty"`
+}
+
+// Unfollowed is one router hand-off the walk recognised and could not track.
+type Unfollowed struct {
+	File   string `json:"file"` // backend-relative
+	Line   int    `json:"line"`
+	Reason string `json:"reason"`
 }
 
 // Flow is one route's wire: middleware -> handler -> store methods -> SQL -> tables.

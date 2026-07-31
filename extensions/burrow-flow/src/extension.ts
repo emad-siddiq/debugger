@@ -15,7 +15,7 @@ import { armSymbolBreakpoint, openSymbol } from './breakpoints';
 import { DiagramPanel } from './diagramPanel';
 import { generateHttp, parseContractFence } from './httpgen';
 import { loadSeedProfile } from './seedProfile';
-import { flowsOf, handlerOf } from './model';
+import { flowsOf, handlerOf, railMessage, unfollowedOf } from './model';
 import { cachedDigestFile, cachedFlowsFile, detectProject, flowState, refreshFlows } from './project';
 import { FlowItem, FlowsTree } from './routesTree';
 import { noBackendMessage, whereIs } from './spine';
@@ -31,7 +31,14 @@ export function activate(context: vscode.ExtensionContext): void {
 	const tree = new FlowsTree();
 	const panel = new DiagramPanel();
 	context.subscriptions.push(log, tree, panel);
-	context.subscriptions.push(vscode.window.registerTreeDataProvider('burrowFlowRoutes', tree));
+	// `createTreeView`, not `registerTreeDataProvider`, for one reason: `message`.
+	//
+	// A router flowscan recognised and could not follow has to be VISIBLE, and the
+	// view contract (docs/plans/02 rule 4) forbids a tree row pretending to be a
+	// message. `TreeView.message` is the surface built for exactly this — a
+	// sentence above the tree, present only when there is something to say.
+	const view = vscode.window.createTreeView('burrowFlowRoutes', { treeDataProvider: tree });
+	context.subscriptions.push(view);
 
 	const cached = cachedFlowsFile(context);
 	if (cached) {
@@ -53,6 +60,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	 */
 	const publishState = (): void => {
 		const doc = tree.document;
+		// The rail's own sentence. Undefined clears it, so a project with nothing
+		// to warn about gets no chrome.
+		view.message = railMessage(flowsOf(doc).length, unfollowedOf(doc));
 		// `doc.flows` is NULL, not `[]`, when flowscan found nothing: a nil Go slice
 		// marshals to `null`. flowscan already normalises `edges` and `nodes` for
 		// exactly this reason and does not normalise the top-level list, so every
@@ -97,13 +107,20 @@ export function activate(context: vscode.ExtensionContext): void {
 					const cov = doc?.coverage;
 					const routes = flowsOf(doc).length;
 					const state = flowState(paths.root);
+					// A route count with an unfollowed router behind it is a FLOOR, not
+					// an answer. Saying "13 routes" flat would be the one place this
+					// fork breaks grey-with-a-reason inside its own differentiator.
+					const notFollowed = unfollowedOf(doc);
+					const caveat = notFollowed.length
+						? `  ⚠︎ ${notFollowed.length} router(s) could not be followed, so there may be more — see the rail.`
+						: '';
 					// A measured zero is a RESULT, and it gets a sentence rather than the
 					// same "refreshed — 0 routes" that reads like the tool did not run.
 					// This is the state that had nowhere to live: chi's honest answer.
 					void vscode.window.showInformationMessage(
 						routes === 0
-							? `No routes found in ${whereIs(paths.backendRel)}. flowscan seeds its walk from NewRouter()/NewMux() call sites, so a router it does not recognise traces empty.`
-							: `Flows refreshed — ${routes} routes (${cov?.traced ?? 0} traced, ${cov?.partial ?? 0} partial) @ ${doc?.rev ?? '?'}`
+							? `No routes found in ${whereIs(paths.backendRel)}. flowscan seeds its walk from a router's own method set, so a value it never sees constructed traces empty.${caveat}`
+							: `Flows refreshed — ${routes} routes (${cov?.traced ?? 0} traced, ${cov?.partial ?? 0} partial) @ ${doc?.rev ?? '?'}${caveat}`
 							+ (state?.loadErrors ? `  ⚠︎ ${state.loadErrors} package(s) failed to type-check — the counts are incomplete; see the "Burrow Flow" output channel.` : ''),
 					);
 				}

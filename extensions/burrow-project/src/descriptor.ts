@@ -600,6 +600,7 @@ export interface FlowRun {
 	readonly unknown: number;
 	readonly ranAt?: string;
 	readonly loadErrors?: number;
+	readonly unfollowed?: number;
 }
 
 export const FLOW_STATE_PATH = '.burrow/flow.json';
@@ -621,6 +622,7 @@ export function parseFlowRun(text: string | undefined): FlowRun | undefined {
 			routes: v.routes, traced: n(v.traced), partial: n(v.partial), unknown: n(v.unknown),
 			ranAt: typeof v.ranAt === 'string' ? v.ranAt : undefined,
 			loadErrors: typeof v.loadErrors === 'number' ? v.loadErrors : undefined,
+			unfollowed: typeof v.unfollowed === 'number' ? v.unfollowed : undefined,
 		};
 	} catch {
 		return undefined;
@@ -700,12 +702,18 @@ function flowState(go: Stack | undefined, flow: FlowRun | undefined): [Liveness,
 	const degraded = flow.loadErrors
 		? ` — but ${flow.loadErrors} package(s) failed to type-check, so these counts are incomplete`
 		: '';
+	// A router we recognised and could not follow means the count is a FLOOR, not
+	// an answer. Saying "13 routes" without it is the one place this fork breaks
+	// its own grey-with-a-reason rule inside its own differentiator.
+	const unfollowed = flow.unfollowed
+		? ` — and ${flow.unfollowed} router(s) it could not follow, so there may be more`
+		: '';
 	if (flow.routes === 0) {
-		return ['inert',
-			`traced ${where} and found no routes${when} — flowscan seeds its walk from NewRouter()/NewMux() call sites, so a router it does not recognise traces empty${degraded}`];
+		return [flow.unfollowed ? 'unknown' : 'inert',
+			`traced ${where} and found no routes${unfollowed}${when} — flowscan seeds its walk from NewRouter()/NewMux() call sites, so a router it does not recognise traces empty${degraded}`];
 	}
 	return ['live',
-		`${flow.routes} routes traced from ${where} (${flow.traced} full, ${flow.partial} partial, ${flow.unknown} unresolved)${when}${degraded}`];
+		`${flow.routes} routes traced from ${where} (${flow.traced} full, ${flow.partial} partial, ${flow.unknown} unresolved)${unfollowed}${when}${degraded}`];
 }
 
 function pgWhy(pg: Service): string {

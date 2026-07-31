@@ -55,8 +55,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	terminals := discoverTerminals(a)
-	doc := assemble(a, terminals, digest, *filter)
+	terminals, unfollowed := discoverRouters(a)
+	doc := assembleWith(a, terminals, unfollowed, digest, *filter)
 	doc.Backend = *backend
 	doc.Rev = gitRev(*backend)
 	doc.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
@@ -87,6 +87,12 @@ func main() {
 		fmt.Fprintf(warnw, "flowscan: write %s: %v\n", *out, err)
 		os.Exit(1)
 	}
+	if n := len(doc.Coverage.Unfollowed); n > 0 {
+		fmt.Fprintf(warnw, "flowscan: %d router(s) recognised but not followed:\n", n)
+		for _, u := range doc.Coverage.Unfollowed {
+			fmt.Fprintf(warnw, "  %s:%d — %s\n", u.File, u.Line, u.Reason)
+		}
+	}
 	fmt.Fprintf(warnw, "flowscan: %d flows (%d traced, %d partial, %d unknown) → %s\n",
 		len(doc.Flows), doc.Coverage.Traced, doc.Coverage.Partial, doc.Coverage.Unknown, *out)
 }
@@ -94,7 +100,14 @@ func main() {
 // assemble builds flows for every discovered terminal, ordered by the digest
 // catalog when present, and computes coverage reconciliation.
 func assemble(a *analyzer, terminals []*terminal, digest *Digest, filter string) *Output {
+	return assembleWith(a, terminals, nil, digest, filter)
+}
+
+// assembleWith is `assemble` plus the routers the walk could not follow. They are
+// carried on Coverage rather than folded into a route bucket — see Unfollowed.
+func assembleWith(a *analyzer, terminals []*terminal, unfollowed []Unfollowed, digest *Digest, filter string) *Output {
 	doc := &Output{Schema: 1, Tables: a.knownTables}
+	doc.Coverage.Unfollowed = unfollowed
 
 	byKey := map[string]*terminal{}
 	var order []string

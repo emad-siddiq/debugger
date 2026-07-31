@@ -19,9 +19,25 @@ export interface FlowsDoc {
 		readonly unknown: number;
 		readonly unmatched?: string[];
 		readonly extra?: string[];
+		/**
+		 * Routers flowscan RECOGNISED and could not follow (WO-77).
+		 *
+		 * Not routes. We do not know how many routes are behind one, so there is
+		 * nothing to put in `unknown` — that state means "the route is real and the
+		 * handler did not resolve", which presumes a route. This is one level up,
+		 * and it is what separates "this app has 13 routes" from "I found 13 and
+		 * there is a router in here I cannot read".
+		 */
+		readonly unfollowed?: Unfollowed[];
 	};
 	readonly tables?: Record<string, string>;
 	readonly flows: Flow[];
+}
+
+export interface Unfollowed {
+	readonly file: string;
+	readonly line: number;
+	readonly reason: string;
 }
 
 export interface Flow {
@@ -91,6 +107,31 @@ export function groupFlows(flows: Flow[]): Map<string, Flow[]> {
  */
 export function flowsOf(doc: FlowsDoc | undefined): readonly Flow[] {
 	return doc?.flows ?? [];
+}
+
+/** Routers the last trace could not follow. Never undefined. */
+export function unfollowedOf(doc: FlowsDoc | undefined): readonly Unfollowed[] {
+	return doc?.coverage?.unfollowed ?? [];
+}
+
+/**
+ * The sentence the rail shows above the tree.
+ *
+ * The whole point of the state: a user must be able to tell "this app has N
+ * routes" from "I found N and there is a router I cannot read". So the count of
+ * unfollowed routers is never silent, and the first one is named with its file
+ * and line, because "somewhere" is not actionable.
+ */
+export function railMessage(routes: number, unfollowed: readonly Unfollowed[]): string | undefined {
+	if (!unfollowed.length) {
+		return undefined;
+	}
+	const n = unfollowed.length;
+	const first = unfollowed[0];
+	const more = n > 1 ? `  (+${n - 1} more)` : '';
+	return `${routes} route${routes === 1 ? '' : 's'} traced, and ${n} router${n === 1 ? '' : 's'} `
+		+ `that could not be followed — so there may be more.\n`
+		+ `${first.file}:${first.line} — ${first.reason}${more}`;
 }
 
 /** The flow's handler node, when analysis resolved one. */

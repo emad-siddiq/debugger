@@ -22,8 +22,34 @@ func TestFixtureFlows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAnalyzer: %v", err)
 	}
-	terminals := discoverTerminals(a)
-	doc := assemble(a, terminals, nil, "")
+	terminals, unfollowed := discoverRouters(a)
+	doc := assembleWith(a, terminals, unfollowed, nil, "")
+
+	// The BUILDER CHAIN shapes (WO-77 §1), asserted by hand so a careless golden
+	// refresh cannot quietly restore the old behaviour.
+	byKey := map[string]*Flow{}
+	for _, f := range doc.Flows {
+		byKey[f.Method+" "+f.Path] = f
+	}
+	// `NewRouter().WithInstrumentation(h)` — a constructor that is the RECEIVER of
+	// a method call rather than the bare RHS of an assignment. Tracking only the
+	// bare form is why alertmanager reported 2 routes and had 22.
+	if byKey["GET /instrumented"] == nil {
+		t.Error("a router built through a non-string builder step was not followed")
+	}
+	// `r = r.WithPrefix("/v2")` — the same chain shape with a STRING argument. The
+	// routes stay (at their unprefixed paths) and the router is NOTED.
+	if byKey["GET /after-prefix"] == nil {
+		t.Error("routes after an opaque builder step were dropped; they should be kept and noted")
+	}
+	if len(doc.Coverage.Unfollowed) != 1 {
+		t.Fatalf("want exactly one unfollowed router (the WithPrefix step), got %d", len(doc.Coverage.Unfollowed))
+	}
+	if u := doc.Coverage.Unfollowed[0]; !strings.Contains(u.Reason, "WithPrefix") {
+		t.Errorf("the note must name the step it could not interpret, got %q", u.Reason)
+	} else if strings.Contains(u.Reason, "left untraced") {
+		t.Error("the note contradicts the behaviour: those routes ARE traced")
+	}
 
 	got, err := json.MarshalIndent(doc, "", " ")
 	if err != nil {
@@ -66,7 +92,8 @@ func TestStdlibFixtureFlows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAnalyzer: %v", err)
 	}
-	doc := assemble(a, discoverTerminals(a), nil, "")
+	terminals, unfollowed := discoverRouters(a)
+	doc := assembleWith(a, terminals, unfollowed, nil, "")
 
 	// The claims worth asserting by hand, so a careless golden refresh cannot
 	// quietly restore the old behaviour.
@@ -97,6 +124,13 @@ func TestStdlibFixtureFlows(t *testing.T) {
 			t.Errorf("route %q %q has whitespace in its path — the method was not split out", f.Method, f.Path)
 		}
 	}
+	// Every router here is followed, so nothing may be noted. A false note is the
+	// failure mode this state exists to avoid — a signal that cries wolf gets
+	// ignored exactly when it is right.
+	if n := len(doc.Coverage.Unfollowed); n != 0 {
+		t.Errorf("no router in this fixture is unfollowable, got %d note(s): %+v", n, doc.Coverage.Unfollowed)
+	}
+
 	// The handler is a composed expression, so it cannot be followed. The route
 	// still has to be LISTED, with a reason.
 	if f := byPath["* /debug/"]; f != nil {
