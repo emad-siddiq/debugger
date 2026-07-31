@@ -57,6 +57,7 @@ function onExtensionCompilationEnd(): void {
 // a stale entry points gulp at a missing tsconfig and fails the build.
 const compilations = [
 	'extensions/burrow-agent/tsconfig.json',
+	'extensions/burrow-chat/tsconfig.json',
 	'extensions/burrow-core/tsconfig.json',
 	'extensions/burrow-db/tsconfig.json',
 	'extensions/burrow-docker/tsconfig.json',

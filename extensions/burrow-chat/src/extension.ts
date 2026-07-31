@@ -1,0 +1,40 @@
+/*---------------------------------------------------------------------------------------------
+ *  Burrow Chat — Claude Code behind the stock chat panel.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+import { ClaudeModelProvider } from './modelProvider';
+import { BurrowChatParticipant } from './participant';
+
+export function activate(context: vscode.ExtensionContext): void {
+	context.subscriptions.push(new BurrowChatParticipant(context).register());
+	// Vendor id 'copilot' is this fork's "first-party model provider" slot: the
+	// renderer hard-codes the default-model vendor (languageModels.ts
+	// COPILOT_VENDOR_ID) in its descriptor, picker and ext-host default lookups.
+	// Any other id would need core patches in five places for zero user-visible
+	// difference — the id never renders, the displayName does.
+	context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider('copilot', new ClaudeModelProvider()));
+
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.chat.explainSelection', () => openChatWithSelection('/explain this selection')));
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.chat.fixSelection', () => openChatWithSelection('/fix this selection')));
+}
+
+async function openChatWithSelection(query: string): Promise<void> {
+	const editor = vscode.window.activeTextEditor;
+	if (!editor) {
+		await vscode.commands.executeCommand('workbench.action.chat.open', { query, mode: 'agent' });
+		return;
+	}
+	const selection = editor.selection;
+	const range = selection.isEmpty ? undefined : {
+		startLineNumber: selection.start.line + 1,
+		startColumn: selection.start.character + 1,
+		endLineNumber: selection.end.line + 1,
+		endColumn: selection.end.character + 1,
+	};
+	await vscode.commands.executeCommand('workbench.action.chat.open', {
+		query,
+		mode: 'agent',
+		attachFiles: [range ? { uri: editor.document.uri, range } : editor.document.uri],
+	});
+}

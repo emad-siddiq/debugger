@@ -1,0 +1,135 @@
+{
+	"name": "burrow-chat",
+	"displayName": "Burrow Chat",
+	"description": "Claude Code backend for the Burrow chat panel — the default chat participant, Claude models in the picker, and editor entry points.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"main": "./out/extension.js",
+	"enabledApiProposals": [
+		"defaultChatParticipant",
+		"chatParticipantAdditions",
+		"chatParticipantPrivate",
+		"chatProvider",
+		"languageModelThinkingPart"
+	],
+	"activationEvents": [
+		"onChatParticipant:burrow.chat",
+		"onLanguageModelChatProvider:copilot"
+	],
+	"scripts": {
+		"compile": "gulp compile-extension:burrow-chat",
+		"watch": "gulp watch-extension:burrow-chat"
+	},
+	"contributes": {
+		"chatParticipants": [
+			{
+				"id": "burrow.chat",
+				"name": "burrow",
+				"fullName": "Burrow",
+				"description": "Ask about your code, or let the agent work on it",
+				"isDefault": true,
+				"isSticky": true,
+				"modes": [
+					"agent",
+					"ask",
+					"edit"
+				],
+				"locations": [
+					"panel"
+				],
+				"commands": [
+					{
+						"name": "explain",
+						"description": "Explain the attached code or selection"
+					},
+					{
+						"name": "fix",
+						"description": "Propose a fix for the attached code or diagnostics"
+					},
+					{
+						"name": "review",
+						"description": "Review the attached code for defects and improvements"
+					},
+					{
+						"name": "tests",
+						"description": "Generate tests for the attached code"
+					},
+					{
+						"name": "doc",
+						"description": "Write documentation for the attached code"
+					},
+					{
+						"name": "init",
+						"description": "Generate CLAUDE.md agent instructions for this workspace"
+					}
+				]
+			}
+		],
+		"languageModelChatProviders": [
+			{
+				"vendor": "copilot",
+				"displayName": "Anthropic (Claude Code)"
+			}
+		],
+		"configuration": {
+			"title": "Burrow Chat",
+			"properties": {
+				"burrow.chat.cliPath": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Path to the `claude` CLI. Leave empty to resolve from PATH and the usual install locations."
+				},
+				"burrow.chat.permissionMode": {
+					"type": "string",
+					"enum": [
+						"approvals",
+						"plan",
+						"acceptEdits",
+						"bypassPermissions"
+					],
+					"default": "approvals",
+					"enumDescriptions": [
+						"Follow the chat Approvals control: Default asks in chat, Auto Approve approves everything.",
+						"Claude Code plan mode: read-only analysis, no edits or commands.",
+						"Auto-approve file edits; everything else asks.",
+						"Never ask. Equivalent to the CLI's bypassPermissions."
+					],
+					"description": "How tool permissions are decided for Claude Code runs."
+				}
+			}
+		},
+		"commands": [
+			{
+				"command": "burrow.chat.explainSelection",
+				"title": "Explain with Burrow",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.chat.fixSelection",
+				"title": "Fix with Burrow",
+				"category": "Burrow"
+			}
+		],
+		"menus": {
+			"editor/context": [
+				{
+					"command": "burrow.chat.explainSelection",
+					"when": "editorHasSelection",
+					"group": "1_chat@1"
+				},
+				{
+					"command": "burrow.chat.fixSelection",
+					"when": "editorHasSelection",
+					"group": "1_chat@2"
+				}
+			]
+		}
+	}
+}
