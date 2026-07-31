@@ -10,7 +10,6 @@ import { isCancellationError } from '../../../../base/common/errors.js';
 import { StopWatch } from '../../../../base/common/stopwatch.js';
 import { URI } from '../../../../base/common/uri.js';
 import { isWindows, isMacintosh, isLinux } from '../../../../base/common/platform.js';
-import { assertDefined } from '../../../../base/common/types.js';
 import { FileAccess } from '../../../../base/common/network.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
@@ -77,7 +76,9 @@ type OnboardingActionEvent = {
 
 type EnterpriseSignInUiState = 'options' | 'instance' | 'progress';
 
-assertDefined(product.defaultChatAgent, 'Onboarding requires a default chat agent product configuration.');
+// burrow(WO-80, patch 0015): Burrow ships no defaultChatAgent, and this wizard's
+// sign-in step is built around one. The module must still load (IOnboardingService
+// is injected by the startup page), so the assert is gone and show() bails instead.
 const defaultChat = product.defaultChatAgent;
 
 /**
@@ -167,6 +168,12 @@ export class OnboardingVariationA extends Disposable implements IOnboardingServi
 	}
 
 	show(): void {
+		if (!defaultChat) {
+			// No default chat agent product configuration — the sign-in wizard
+			// has nothing to sign in to.
+			this._onDidDismiss.fire();
+			return;
+		}
 		if (this.overlay) {
 			return;
 		}
