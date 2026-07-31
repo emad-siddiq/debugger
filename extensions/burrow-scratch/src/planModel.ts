@@ -113,6 +113,34 @@ export interface ScratchStep {
 
 export type StageClass = 'foundations' | 'schema' | 'go' | 'web' | 'rest';
 
+/**
+ * A point where the thing you are building **does something**.
+ *
+ * 164 steps before the first command that executes code the learner wrote, 605
+ * before the app compiles, 1,953 before a page renders (WO-78 §2c) — and nothing
+ * anywhere in 2,093 steps says *now run it*. Reordering to fix that was refused
+ * twice and correctly: the topological invariant is the feature. So the fix is
+ * to name the moments that already exist.
+ *
+ * DERIVED, never a list. Every milestone below is a stage that contains the
+ * files a particular command needs, found by looking at what is in it.
+ *
+ * A MILESTONE THAT LIES IS WORSE THAN NONE — the same rule as the checks. `go
+ * build ./...` on an empty module exits 0 and proves nothing, so a milestone
+ * carries the same {@link Precondition} the generate checks do, and reports
+ * "could not run yet" rather than a success it did not earn.
+ */
+export interface Milestone {
+	/** What happens, in the imperative. Shown as the button. */
+	readonly label: string;
+	/** Why this is a moment rather than another command. One sentence. */
+	readonly why: string;
+	readonly command: string;
+	readonly cwd: string;
+	/** What has to be in place for the command to mean anything. */
+	readonly needs?: Precondition;
+}
+
 export interface ScratchStage {
 	readonly id: string;
 	readonly title: string;
@@ -125,6 +153,8 @@ export interface ScratchStage {
 	readonly checks: readonly Check[];
 	/** Burrow tools this stage lights up, with the reason. */
 	readonly tools: readonly ToolHint[];
+	/** The moment this stage's work starts doing something, if it does. */
+	readonly milestone?: Milestone;
 }
 
 export interface ScratchPlan {
@@ -526,11 +556,45 @@ export function leadingComment(text: string, kind: StepKind): string {
  * (impossible for Go, occasional for TS) and are appended in tie-break order
  * rather than dropped — a cycle is not a reason to lose a file.
  */
-export function topoSort(nodes: readonly string[], edges: ReadonlyMap<string, ReadonlySet<string>>): string[] {
-	const rank = (a: string, b: string): number => {
+/**
+ * A topological order that stays as close to the order it was given as the edges
+ * allow: repeatedly emit the FIRST node whose dependencies are already out.
+ *
+ * `topoSort` emits in waves — every ready node at once — which is right for a
+ * directory graph and wrong here. A lockfile depends on its manifest, so a wave
+ * pass drops it into round two and it lands behind every unrelated config in the
+ * stage. The reader should meet `package.json` and `package-lock.json` together;
+ * the edge decides which of the two comes first and nothing more.
+ *
+ * A cycle cannot deadlock it: with nothing ready, it takes the first remaining
+ * node and moves on.
+ */
+export function stableTopo(order: readonly string[], depsOf: (id: string) => readonly string[]): string[] {
+	const present = new Set(order);
+	const out: string[] = [];
+	const done = new Set<string>();
+	const pending = [...order];
+	while (pending.length) {
+		const i = pending.findIndex((p) => depsOf(p).every((d) => !present.has(d) || done.has(d) || d === p));
+		const [next] = pending.splice(i < 0 ? 0 : i, 1);
+		out.push(next);
+		done.add(next);
+	}
+	return out;
+}
+
+export function topoSort(
+	nodes: readonly string[],
+	edges: ReadonlyMap<string, ReadonlySet<string>>,
+	/** How to break ties between nodes that are all ready at once. Defaults to
+	 *  shallowest-then-alphabetical, which is right for directories. Foundations
+	 *  passes its own, because "roots first, then manifests, then locks" is an
+	 *  order with a reason and a topological pass must not throw it away. */
+	rank: (a: string, b: string) => number = (a, b) => {
 		const da = a.split('/').length, db = b.split('/').length;
 		return da !== db ? da - db : a < b ? -1 : a > b ? 1 : 0;
-	};
+	},
+): string[] {
 	const present = new Set(nodes);
 	const remaining = new Map<string, Set<string>>();
 	for (const n of nodes) {
@@ -839,6 +903,87 @@ interface ToolReadiness {
  * API view 22 stages and the Data grid 18 stages before their tools had anything
  * to show.
  */
+/**
+ * The milestone a stage earns, from what is in it. One per stage at most, and
+ * the first match wins — a stage that both serves and tests is remembered for
+ * the serving, which is the bigger moment.
+ */
+/** `go <verb>` against a package, from the module root down. The module root is
+ *  the cwd, so the argument is the rest of the path — and `.` when there is no
+ *  rest, never `./.`. */
+function goPkgCommand(verb: string, dir: string): string {
+	const rest = dir.split('/').slice(1).join('/');
+	return `go ${verb} ${rest ? `./${rest}` : '.'}`;
+}
+
+export function milestoneFor(paths: readonly string[], text: (p: string) => string): Milestone | undefined {
+	// A database, from a compose file that declares one. This is the only kind
+	// that needs nothing written first: the file IS the thing that runs.
+	const compose = paths.find((p) => /docker-compose\.ya?ml$|(^|\/)compose\.ya?ml$/.test(p) && composeDatabase(text(p)));
+	if (compose) {
+		const db = composeDatabase(text(compose))!;
+		return {
+			label: 'Start the database',
+			why: `Everything after this stage is about a database — the migrations first. \`${db.service}\` is one command away, `
+				+ 'and starting it is the first point in the plan where the project does something rather than describing itself.',
+			// NAMED, not the whole file. A compose file that also declares the app
+			// would otherwise try to build an image from source that does not
+			// exist yet — the milestone is the database, and the database is one
+			// service. `ps` after it because `up -d` says nothing about health.
+			command: `docker compose -f ${compose} up -d ${db.service} && docker compose -f ${compose} ps ${db.service}`,
+			cwd: '',
+			needs: { dir: dirName(compose), match: baseName(compose), why: 'the compose file is not written yet.' },
+		};
+	}
+
+	// A server, from a main package that starts one.
+	//
+	// PER STAGE, not per file: a Go main package is a directory. merkle declares
+	// `func main()` in `main.go` and calls `ListenAndServe` from `app.go`, and a
+	// per-file test found neither half — the biggest milestone in the plan, missed
+	// by asking the question of the wrong unit.
+	const go = paths.filter((p) => p.endsWith('.go') && !isTestPath(p));
+	const main = go.find((p) => /func main\(/.test(text(p)));
+	if (main && go.some((p) => /http\.(ListenAndServe|Server)\b|\.ListenAndServe\(/.test(text(p)))) {
+		const dir = dirName(main);
+		return {
+			label: 'Run it',
+			why: 'This package starts an HTTP server. Running it is the first time the thing you are building answers anything.',
+			command: goPkgCommand('run', dir),
+			cwd: dir.split('/')[0] || '',
+			needs: { dir, match: '.go', why: 'the package has no Go files yet.' },
+		};
+	}
+
+	// A web app, from the entry document a dev server serves.
+	const html = paths.find((p) => p.endsWith('index.html'));
+	if (html) {
+		const dir = dirName(html);
+		return {
+			label: 'Serve the page',
+			why: 'This is the document a dev server hands a browser. It is the first thing here you can look at rather than read.',
+			command: 'npm run dev',
+			cwd: dir,
+			needs: { dir, match: 'index.html', why: 'the entry document is not written yet.' },
+		};
+	}
+
+	// A package with tests. Last, because it is the smallest of the four — but it
+	// is the earliest one most projects reach, and it executes code you wrote.
+	const tests = paths.filter((p) => isTestPath(p) && p.endsWith('.go'));
+	if (tests.length) {
+		const dir = dirName(tests[0]);
+		return {
+			label: 'Run its tests',
+			why: `${tests.length} test file${tests.length === 1 ? '' : 's'} in this package. This is code you wrote, executing.`,
+			command: goPkgCommand('test', dir),
+			cwd: dir.split('/')[0] || '',
+			needs: { dir, match: '.go', why: 'the package has no Go files yet.' },
+		};
+	}
+	return undefined;
+}
+
 function stageTools(
 	paths: readonly string[],
 	text: (p: string) => string,
@@ -894,7 +1039,20 @@ function stageTools(
 
 export function buildPlan(
 	files: readonly SourceFile[],
-	options: { name: string; reference: string; routes?: ReadonlyMap<string, readonly string[]> },
+	options: {
+		name: string;
+		reference: string;
+		routes?: ReadonlyMap<string, readonly string[]>;
+		/**
+		 * Authored notes about THIS project's files, keyed by step id — the one
+		 * class of prose that cannot be a concept because it is not about a
+		 * concept. Discovered in the reference (see `loadNotes`), never written
+		 * here: a note stored in the plan would be lost on the next re-plan, and
+		 * a note in the extension would be Burrow shipping opinions about
+		 * somebody else's repository.
+		 */
+		notes?: ReadonlyMap<string, string>;
+	},
 ): ScratchPlan {
 	// go.sum is project content but never a step: `go mod tidy`, which the go.mod
 	// step runs, writes it. Dropped from the step universe rather than from
@@ -944,12 +1102,22 @@ export function buildPlan(
 		// it. Computed per stage so the comparison is against files the reader has
 		// already written, not against the whole project.
 		const noteFor = (p: string): { note?: string } => {
-			if (!/docker-compose\.ya?ml$|(^|\/)compose\.ya?ml$/.test(p)) {
-				return {};
+			const parts: string[] = [];
+			if (/docker-compose\.ya?ml$|(^|\/)compose\.ya?ml$/.test(p)) {
+				const others = new Map(paths.filter((q) => q !== p).map((q) => [q, textOf(q)]));
+				const derived = databaseNote(textOf(p), others);
+				if (derived) {
+					parts.push(derived);
+				}
 			}
-			const others = new Map(paths.filter((q) => q !== p).map((q) => [q, textOf(q)]));
-			const note = databaseNote(textOf(p), others);
-			return note ? { note } : {};
+			// The authored note comes SECOND. What the planner worked out is a fact
+			// about the file as it stands; what a person wrote is context around it,
+			// and a fact that arrives after its commentary reads as an afterthought.
+			const authored = options.notes?.get(p);
+			if (authored) {
+				parts.push(authored.trim());
+			}
+			return parts.length ? { note: parts.join('\n\n') } : {};
 		};
 		for (const p of paths) {
 			const a = analysed.get(p)!;
@@ -976,7 +1144,12 @@ export function buildPlan(
 			};
 			claimed.add(p);
 		}
-		stages.push({ ...stage, steps: paths, tools: stage.tools.length ? stage.tools : stageTools(paths, textOf, depDirsOf, ready) });
+		const milestone = milestoneFor(paths, textOf);
+		stages.push({
+			...stage, steps: paths,
+			tools: stage.tools.length ? stage.tools : stageTools(paths, textOf, depDirsOf, ready),
+			...(milestone ? { milestone } : {}),
+		});
 	};
 
 	// 1 — Foundations. Every manifest and lockfile in the project, roots first.
@@ -992,6 +1165,17 @@ export function buildPlan(
 			};
 			return weight(a) - weight(b) || a.split('/').length - b.split('/').length || (a < b ? -1 : 1);
 		});
+	// …and then made to OBEY the edges inside it, with that order as the tie-break.
+	//
+	// The weight sort is an argument about kinds — a module root before a manifest
+	// before a lockfile — and it says nothing about two files of the same kind that
+	// name each other. So `tsconfig.json` came before the `tsconfig.node.json` it
+	// references, and `.vite.mockport.config.ts` before the `vite.config.ts` it
+	// imports, both by alphabetical accident. That was always a violation of this
+	// plan's one invariant; it was invisible only because the analyser did not read
+	// those files (WO-79 §3). Reading them without obeying them would have been the
+	// worse half of the fix.
+	const foundationSteps = stableTopo(foundations, (p) => analysed.get(p)?.deps ?? []);
 	addStage({
 		id: '@foundations',
 		title: 'Foundations',
@@ -1004,7 +1188,7 @@ export function buildPlan(
 		],
 		checks: [],
 		tools: [],
-	}, foundations);
+	}, foundationSteps);
 
 	// 2 — Schema. Directories that are mostly .sql: the tables everything below
 	//     stores into. They come before the Go that queries them.

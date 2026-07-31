@@ -25,7 +25,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CheckRun, runChecks, summarize } from './checks';
+import { CheckRun, preconditionMet, runChecks, summarize } from './checks';
 import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, routeIndex } from './planModel';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
@@ -97,6 +97,53 @@ function loadRoutes(reference: string, log: vscode.OutputChannel): ReadonlyMap<s
 	return index;
 }
 
+/**
+ * Notes a person wrote about THIS project's files, discovered in the reference.
+ *
+ * `<reference>/.burrow/scratch-notes/<step path>.md` — so `vite.config.ts`'s note
+ * is `.burrow/scratch-notes/frontend/vite.config.ts.md`. The path IS the key;
+ * there is no index to keep in step with the tree.
+ *
+ * WHY THE REFERENCE AND NOT THE EXTENSION. A concept paragraph is about a tool
+ * and belongs to Burrow (`concepts.ts`). A note about why *this* config file has
+ * a proxy block in it is about somebody's application, and shipping it inside an
+ * IDE would make Burrow the author of opinions about a repository it has never
+ * seen. It also goes stale the moment that repository moves, where the repository
+ * itself does not.
+ *
+ * `burrow.scratch.notesDir` overrides the location, which is what makes the
+ * mechanism usable against a reference you cannot write to.
+ */
+function loadNotes(reference: string, log: vscode.OutputChannel): ReadonlyMap<string, string> | undefined {
+	const configured = vscode.workspace.getConfiguration('burrow.scratch').get<string>('notesDir', '');
+	const dir = configured ? configured.replace(/^~/, os.homedir()) : path.join(reference, '.burrow', 'scratch-notes');
+	const notes = new Map<string, string>();
+	const walk = (abs: string): void => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(abs, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const next = path.join(abs, entry.name);
+			if (entry.isDirectory()) {
+				walk(next);
+			} else if (entry.name.endsWith('.md')) {
+				const rel = path.relative(dir, next).split(path.sep).join('/').replace(/\.md$/, '');
+				try {
+					notes.set(rel, fs.readFileSync(next, 'utf8'));
+				} catch { /* unreadable note — the plan is not worth failing for one */ }
+			}
+		}
+	};
+	walk(dir);
+	log.appendLine(notes.size
+		? `authored notes: ${notes.size} from ${dir}`
+		: `no authored notes: nothing under ${dir} (set burrow.scratch.notesDir to point elsewhere)`);
+	return notes.size ? notes : undefined;
+}
+
 /** flows.json records an absolute backend dir; prefer it, fall back to the
  *  conventional layout so a hand-copied file still resolves. */
 function guessBackend(reference: string): string {
@@ -142,7 +189,7 @@ async function startScratch(log: vscode.OutputChannel): Promise<void> {
 			progress.report({ message: `${scan.files.length} files — working out the order…` });
 			// Yield once so the notification paints before the plan is built.
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			const built = buildPlan(scan.files, { name: folder.name, reference, routes: loadRoutes(reference, log) });
+			const built = buildPlan(scan.files, { name: folder.name, reference, routes: loadRoutes(reference, log), notes: loadNotes(reference, log) });
 			log.appendLine(`planned ${folder.name}: ${built.counts.steps} steps in ${built.counts.stages} stages, ${built.counts.lines} lines (${scan.skipped} binary/oversized files left out)`);
 			return built;
 		},
@@ -311,6 +358,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			}
 			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
 			case 'setup': return void vscode.commands.executeCommand('burrow.scratch.setup');
+			case 'milestone': return void vscode.commands.executeCommand('burrow.scratch.milestone');
 			case 'goto': return void goto(message.id);
 			case 'tool': {
 				try {
@@ -465,9 +513,38 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 	}) as never);
 
+	/**
+	 * The stage's milestone, in a terminal the learner keeps.
+	 *
+	 * A terminal and not a task or a spawned child, for the reason the command is
+	 * printed on the page as well as buttoned: this is the first thing the project
+	 * DOES, and the output belongs somewhere the learner can scroll back to, run
+	 * again, and edit. A milestone whose result vanishes into a notification is a
+	 * magic trick.
+	 *
+	 * The precondition is checked first and refuses rather than running: a
+	 * `docker compose up` against a compose file nobody has written yet fails with
+	 * the tool's own words, which are about YAML rather than about the plan.
+	 */
+	register('burrow.scratch.milestone', (async () => {
+		const stage = plan.stages.find((s) => s.id === plan.steps[currentId() ?? '']?.stage);
+		const milestone = stage?.milestone;
+		if (!stage || !milestone) {
+			return;
+		}
+		if (milestone.needs && !preconditionMet(root, milestone.needs)) {
+			void vscode.window.showWarningMessage(`${milestone.label} — not yet: ${milestone.needs.why}`);
+			return;
+		}
+		const terminal = vscode.window.createTerminal({ name: `Scratch — ${stage.title}`, cwd: path.join(root, milestone.cwd) });
+		terminal.show();
+		terminal.sendText(milestone.command);
+		log.appendLine(`milestone ${stage.id}: ${milestone.command} (cwd ${milestone.cwd || '.'})`);
+	}) as never);
+
 	register('burrow.scratch.replan', (async () => {
 		const scan = scanProject(plan.reference);
-		const rebuilt = buildPlan(scan.files, { name: plan.name, reference: plan.reference, routes: loadRoutes(plan.reference, log) });
+		const rebuilt = buildPlan(scan.files, { name: plan.name, reference: plan.reference, routes: loadRoutes(plan.reference, log), notes: loadNotes(plan.reference, log) });
 		const kept = order(rebuilt).filter((id) => isSettled(stateOf(progress, id))).length;
 		const lost = order(plan).filter((id) => isSettled(stateOf(progress, id)) && !rebuilt.steps[id]);
 		const ok = await vscode.window.showWarningMessage(

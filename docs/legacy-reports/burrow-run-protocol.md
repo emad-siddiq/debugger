@@ -157,6 +157,31 @@ the deferred chat excision.
    they are all its own pprof middleware. Reporting the half is worth more than
    picking the repository where the whole thing is green.
 
+9. **Anything that becomes a file on disk, or that the editor touches, needs a
+   driven case.** Added 2026-07-31 (WO-80 §0b), on the third occurrence.
+
+   Unit tests cannot see what the UI contributes to state. They construct the
+   inputs themselves, so they never observe the workbench writing a file, opening
+   a document, resolving a path, or rendering into a webview — and every one of
+   those is a place where a green suite and a broken product coexist happily.
+
+   The three, all found by driving and all invisible to full green suites:
+
+   | | what a passing suite said | what the product did |
+   |---|---|---|
+   | **WO-74** | 91 tests green on relative step ids | the UI wrote them into a *file*, where a relative id resolves against the wrong root |
+   | **WO-79** | `generate` steps carry a command and a precondition | opening a step called `ensureFile`, which created the empty `go.mod` that `go mod init` **refuses to overwrite** — step 1 of 16, unpassable, forever |
+   | **WO-72** | the probe reported "no session, no error" | 130 seconds of a working debugger, read through `.debug-toolbar`'s `innerText`, which is empty in this fork |
+
+   The trigger is not "is this feature big". It is **does a real run put something
+   on disk, or through the editor, that the test constructs by hand.** If yes,
+   drive it once, from the installed bundle, and paste what the surface said.
+   That is a paragraph of report and it has now caught three defects that no
+   amount of unit coverage would have.
+
+   Rule 5 is the sibling and not the same: rule 5 says *prove the instrument can
+   fail*, this one says *prove the instrument was ever pointed at the product*.
+
 ## Report contract
 
 File at `.claude/reports/WO-nn-report.md` **and** paste back to the user.

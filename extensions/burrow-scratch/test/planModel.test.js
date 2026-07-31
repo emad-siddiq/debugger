@@ -453,6 +453,83 @@ const cases = {
 		}
 	},
 
+	// --- WO-80 -----------------------------------------------------------------
+
+	// §0a. Foundations was sorted by KIND, which says nothing about two files of
+	// the same kind that name each other — so alphabetical order decided, and got
+	// both of merkle's pairs backwards. Reading an edge and not obeying it is the
+	// worse half of a fix.
+	'Foundations obeys the edges inside it, and keeps its kind order otherwise': () => {
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		const steps = plan.stages[0].steps;
+		const at = (id) => steps.indexOf(id);
+		assert.ok(at('web/vite.config.ts') < at('web/.vite.mockport.config.ts'), `the imported config comes first:\n${steps.join('\n')}`);
+		assert.ok(at('web/tsconfig.app.json') < at('web/tsconfig.json'), 'the referenced config comes first');
+		assert.ok(at('web/package.json') < at('web/package-lock.json'), 'the manifest comes before its lockfile');
+		// …and the kind order still holds where no edge overrules it: a module
+		// root before a manifest, and the lockfile still beside its manifest
+		// rather than pushed behind every unrelated config in the stage.
+		assert.strictEqual(steps[0], 'web/package.json');
+		assert.strictEqual(steps[1], 'web/package-lock.json');
+		// Nothing in the emitted stage may be out of order at all.
+		const violations = orderViolations(plan).filter((v) => !v.cyclic && plan.steps[v.step].stage === '@foundations');
+		assert.deepStrictEqual(violations, [], violations.map((v) => `${v.step} needs ${v.dep}`).join('\n'));
+	},
+
+	'a cycle inside Foundations does not deadlock the sort': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/a.config.ts', "import b from './b.config.ts';\nexport default b;\n"),
+			file('web/b.config.ts', "import a from './a.config.ts';\nexport default a;\n"),
+		], { name: 'web', reference: '/ref' });
+		assert.strictEqual(plan.stages[0].steps.length, 3, 'every file is still planned exactly once');
+		assert.strictEqual(new Set(plan.stages[0].steps).size, 3);
+	},
+
+	// §4. A milestone is derived from what a stage contains, and one that lies is
+	// worse than none — so it carries the same precondition the checks do.
+	'a stage earns the milestone its own files support': () => {
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		const db = plan.stages.find((s) => s.milestone?.label === 'Start the database');
+		assert.ok(db, 'a compose file declaring a database is a milestone');
+		assert.match(db.milestone.command, /docker compose -f infra\/docker-compose\.yml up -d/);
+		assert.deepStrictEqual([db.milestone.needs.dir, db.milestone.needs.match], ['infra', 'docker-compose.yml']);
+
+		// A main package is a DIRECTORY: `func main()` and `ListenAndServe` are
+		// routinely in different files of it, and asking the question per file
+		// found neither half.
+		const served = buildPlan([
+			file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+			file('backend/main.go', 'package main\n\nfunc main() {\n\trun()\n}\n'),
+			file('backend/app.go', 'package main\n\nimport "net/http"\n\nfunc run() {\n\t_ = http.ListenAndServe(":8080", nil)\n}\n'),
+		], { name: 'app', reference: '/ref' });
+		const server = served.stages.find((s) => s.milestone?.label === 'Run it');
+		assert.ok(server, `a main package that listens is a milestone:\n${JSON.stringify(served.stages.map((s) => [s.id, s.milestone?.label]))}`);
+		assert.strictEqual(server.milestone.command, 'go run .');
+		assert.strictEqual(server.milestone.cwd, 'backend');
+
+		// A stage with nothing runnable in it claims nothing.
+		const quiet = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/src/lib/format.ts', 'export const format = String;\n'),
+		], { name: 'web', reference: '/ref' });
+		assert.deepStrictEqual(quiet.stages.filter((s) => s.milestone).map((s) => s.id), []);
+	},
+
+	// §3. Authored prose about one project's own files, discovered rather than
+	// shipped — and never at the cost of what the planner worked out itself.
+	'an authored note joins the derived one rather than replacing it': () => {
+		const notes = new Map([['infra/docker-compose.yml', 'This one also runs a message broker.\n']]);
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref', notes });
+		const note = plan.steps['infra/docker-compose.yml'].note;
+		assert.match(note, /postgres:\/\/app:secret@localhost:5432\/app/, 'the derived half survives');
+		assert.match(note, /message broker/, 'and the authored half is there');
+		assert.ok(note.indexOf('postgres://') < note.indexOf('message broker'), 'the fact comes before the commentary');
+
+		const bare = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		assert.doesNotMatch(bare.steps['infra/docker-compose.yml'].note, /message broker/);
+	},
+
 	// The compose file's own database, and the file that contradicts it.
 	'a compose database is named, and a disagreeing URL beside it is too': () => {
 		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });

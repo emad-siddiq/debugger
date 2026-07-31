@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-scratch",
 		"watch": "gulp watch-extension:burrow-scratch",
-		"test": "node test/planModel.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js"
+		"test": "node test/planModel.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js && node test/concepts.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -86,6 +86,11 @@
 				"category": "Scratch"
 			},
 			{
+				"command": "burrow.scratch.milestone",
+				"title": "Run This Stage's Milestone",
+				"category": "Scratch"
+			},
+			{
 				"command": "burrow.scratch.replan",
 				"title": "Re-plan Against the Reference",
 				"category": "Scratch",
@@ -128,6 +133,10 @@
 				},
 				{
 					"command": "burrow.scratch.setup",
+					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.milestone",
 					"when": "burrow.scratch.active"
 				},
 				{
@@ -178,6 +187,12 @@
 					"default": "",
 					"scope": "window",
 					"markdownDescription": "Path to a flowscan `flows.json`, used only to annotate steps with the routes they serve. Empty looks for `.burrow/flows.json` beside the reference project. Annotations are omitted entirely when the file is missing or reports a degraded scan."
+				},
+				"burrow.scratch.notesDir": {
+					"type": "string",
+					"default": "",
+					"scope": "window",
+					"markdownDescription": "Directory of authored notes about the reference project's own files, one `<step path>.md` per step. Empty looks for `.burrow/scratch-notes/` inside the reference. Concept paragraphs — what a lockfile is, what a compose service is — ship with Burrow and are not affected; these are for what is specific to one application."
 				},
 				"burrow.scratch.location": {
 					"type": "string",

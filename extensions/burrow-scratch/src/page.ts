@@ -5,6 +5,7 @@
 
 import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
 import { CheckRun } from './checks';
+import { conceptFor } from './concepts';
 import { ScratchPlan, ScratchStage, ScratchStep, dependents, forwardDeps } from './planModel';
 import { Progress, StepState, overallTally, percent, stageTally, stateOf } from './progressModel';
 
@@ -22,7 +23,7 @@ import { Progress, StepState, overallTally, percent, stageTally, stateOf } from 
 // quiet inset stage, theme tokens only.
 
 export type PageMessage =
-	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'exitFocus' }
+	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'exitFocus' }
 	| { readonly type: 'goto'; readonly id: string }
 	| { readonly type: 'tool'; readonly command: string };
 
@@ -133,6 +134,14 @@ function escape(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** The two marks the authored prose uses, and nothing else: `code` and **bold**.
+ *  Escaped first, so a paragraph can never inject an element. */
+function markdown(text: string): string {
+	return escape(text)
+		.replace(/`([^`]+)`/g, '<code>$1</code>')
+		.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
 function nonceOf(): string {
 	let out = '';
 	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -207,6 +216,49 @@ export function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
 }
 
 /**
+ * What kind of thing this file is — the answer to the question a reader asks
+ * before any of the four the page is built around.
+ *
+ * INLINE, not behind a disclosure. WO-78 counted eleven terms the surface
+ * requires you to already know and one it explains, and a paragraph you have to
+ * ask for is a paragraph read by people who already knew. It sits above the
+ * file's own note because the two answer different questions — what a lockfile
+ * IS, and what this particular one is for — and the generic one comes first.
+ */
+/**
+ * *Now run it* — on the LAST step of a stage that has a milestone.
+ *
+ * On the last step and not the first, because a milestone is what the stage's
+ * work adds up to; offering it at the top would be offering to run something
+ * that is not written. On every step would be worse still — a call to action
+ * that is usually premature is a call to action nobody reads.
+ *
+ * The command is SHOWN as well as buttoned. This is a curriculum: a learner who
+ * only ever sees a button learns a button, and the command is the transferable
+ * half.
+ */
+function milestoneBlock(plan: ScratchPlan, stage: ScratchStage, step: ScratchStep): string {
+	const last = stage.steps[stage.steps.length - 1];
+	if (!stage.milestone || last !== step.id) {
+		return '';
+	}
+	const m = stage.milestone;
+	const settled = stage.steps.filter((id) => plan.steps[id]).length;
+	return `<section class="milestone">
+		<h2>Now run it</h2>
+		<p class="lede">${escape(m.label)}. <span class="quiet">${markdown(m.why)}</span></p>
+		<ul class="links"><li><code>${escape(m.command)}</code>${m.cwd ? `<span class="quiet"> — in ${escape(m.cwd)}</span>` : ''}</li></ul>
+		<div class="actions"><button class="primary" data-act="milestone">${escape(m.label)}</button></div>
+		<p class="quiet">The ${settled} files of ${escape(stage.title)} are what this needs.</p>
+	</section>`;
+}
+
+function conceptBlock(step: ScratchStep): string {
+	const concept = conceptFor(step.id);
+	return concept ? `<section class="concept"><h2>${escape(concept.term)}</h2><p>${markdown(concept.text)}</p></section>` : '';
+}
+
+/**
  * Why this file is here rather than later, for a step with no dependencies.
  *
  * The sentence this replaces was rendered on **all seventeen** Foundations steps
@@ -263,10 +315,19 @@ export function whyNow(plan: ScratchPlan, step: ScratchStep): string {
 			: `Nothing, and nothing in the project reads it. It and the other ${peers.length} files beside it here are independent — write them in any order.`;
 	}
 
-	// 4 — the honest placeholder. A person has to write this one, and a false
+	// 4 — a person wrote the argument, because the graph has none to make. Two
+	//     files in Foundations are in this position and both now carry one
+	//     (`concepts.ts`); WO-79 shipped the placeholder below and this replaces it
+	//     wherever the judgement has actually been written down.
+	const authored = conceptFor(step.id)?.order;
+	if (authored) {
+		return markdown(authored);
+	}
+
+	// 5 — the honest placeholder, for a file nobody has thought about yet. A false
 	//     claim is worse than admitting the graph has nothing to say.
 	return 'Nothing, and nothing in the project reads it either. Where it sits in the order is a judgement'
-		+ ' rather than a dependency — the graph has nothing to argue here.';
+		+ ' rather than a dependency — and nobody has written that judgement down yet.';
 }
 
 /**
@@ -408,6 +469,8 @@ function html(state: PageState): string {
 	.tool p { margin: 2px 0 0; }
 	.decl { font-family: var(--vscode-editor-font-family); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
 	.decl span { background: var(--vscode-textCodeBlock-background); padding: 1px 7px; border-radius: 3px; }
+	section.concept p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--vscode-descriptionForeground); max-width: 74ch; }
+	section.concept h2 { color: var(--vscode-foreground); }
 </style>
 <div class="bar">
 	<span>Stage ${plan.stages.indexOf(stage) + 1}/${plan.stages.length} · file ${index}/${stage.steps.length}</span>
@@ -424,8 +487,9 @@ function html(state: PageState): string {
 		<span class="quiet">${KIND_LABEL[step.kind] ?? step.kind} · ${step.lines} lines in the reference · ${inStage.settled}/${inStage.total} done in ${escape(stage.title)}</span>
 	</div>
 	<p class="lede">${instruction(step, stage)}</p>
+	${conceptBlock(step)}
 	${step.summary ? `<p class="quiet">The reference's own note: ${escape(step.summary.slice(0, 400))}</p>` : ''}
-	${step.note ? `<p class="lede">${escape(step.note).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n\n/g, '</p><p class="quiet">')}</p>` : ''}
+	${step.note ? `<p class="lede">${markdown(step.note).replace(/\n\n/g, '</p><p class="quiet">')}</p>` : ''}
 	${routeNote(step)}
 
 	<section>
@@ -448,6 +512,8 @@ function html(state: PageState): string {
 
 	${stage.tools.length ? `<section><h2>Tools this stage lights up</h2>${stage.tools.map((t) => `
 		<div class="tool"><button data-tool="${escape(t.command)}">${escape(t.label)}</button><p class="quiet">${escape(t.why)}</p></div>`).join('')}</section>` : ''}
+
+	${milestoneBlock(plan, stage, step)}
 
 	${stage.setup.length ? `<section><h2>Run once</h2><p class="quiet">Before this stage's checks can pass:</p>
 		<ul class="links">${stage.setup.map((s) => `<li><code>${escape(s)}</code></li>`).join('')}</ul>

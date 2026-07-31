@@ -149,12 +149,23 @@ const cases = {
 		assert.match(say('backend/go.mod'), /root of its own Go module/);
 		// Named by a later step → say which.
 		assert.match(say('web/tsconfig.app.json'), /web\/tsconfig\.json/);
-		// Named by an EARLIER step → say that, and call it what it is.
-		assert.match(say('web/vite.config.ts'), /put that one first|ordering defect/);
+		assert.match(say('web/vite.config.ts'), /web\/\.vite\.mockport\.config\.ts/);
 		// Interchangeable neighbours → say so rather than inventing an order.
 		assert.match(say('web/eslint.config.js'), /independent/);
-		// Nothing derivable at all → admit it rather than claim it.
-		assert.match(say('Makefile'), /judgement rather than a dependency/);
+		// WO-80 §2: the position a person had to argue for, now argued.
+		assert.match(say('Makefile'), /a \*\*choice, not a constraint\*\*|choice, not a constraint/);
+		assert.doesNotMatch(say('Makefile'), /nobody has written that judgement down/);
+	},
+
+	// Named by an EARLIER step. WO-80 §0a fixed both of merkle's real instances,
+	// so this needs a deliberately mis-ordered plan — which is the honest shape
+	// of the case anyway: the branch exists for a plan that got it wrong.
+	'a step named by something the plan put FIRST says so, and says it is not a cycle': () => {
+		const broken = misordered();
+		const say = whyNow(broken, broken.steps['web/src/lib/format.ts']).replace(/<[^>]+>/g, '');
+		assert.match(say, /put that one FIRST/);
+		assert.match(say, /ordering defect, not a cycle/);
+		assert.match(say, /web\/src\/ui\/Badge\.tsx/);
 	},
 };
 

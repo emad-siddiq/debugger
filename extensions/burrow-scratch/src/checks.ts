@@ -102,7 +102,7 @@ export async function runCheck(root: string, stepId: string | undefined, check: 
 
 /** Is there anything in `dir` for the command to have worked on? `match` is an
  *  exact filename or a suffix; both are one `endsWith` away. */
-function preconditionMet(root: string, needs: Precondition): boolean {
+export function preconditionMet(root: string, needs: Precondition): boolean {
 	let entries: string[];
 	try {
 		entries = fs.readdirSync(path.join(root, needs.dir));
