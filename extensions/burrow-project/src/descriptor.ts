@@ -693,9 +693,10 @@ function flowState(go: Stack | undefined, flow: FlowRun | undefined): [Liveness,
 			`flowscan can analyse ${where}, but whether it finds routes depends on there being a router to seed from — run "API Flows: Refresh Flows" to find out`];
 	}
 	const when = flow.ranAt ? ` (last run ${flow.ranAt})` : '';
-	// A degraded run is not a clean one. flowscan exits zero when packages fail to
-	// type-check, and the counts it prints are then wrong rather than missing —
-	// merkle traces 209 of 235 with a matching toolchain and 6 of 235 without.
+	// A run working with incomplete type information is not a clean one, and
+	// flowscan exits zero either way. It does not always change the counts — a
+	// go1.24 build reports 45 load errors on merkle and still traces 209 of 235 —
+	// but when the counts ARE wrong this is the only warning anything has.
 	const degraded = flow.loadErrors
 		? ` — but ${flow.loadErrors} package(s) failed to type-check, so these counts are incomplete`
 		: '';

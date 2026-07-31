@@ -163,12 +163,21 @@ export interface FlowState {
 	/**
 	 * Packages the Go loader could not type-check.
 	 *
-	 * Not decoration. A flowscan built against an older toolchain than the target
-	 * reports `235 routes (6 traced, 229 partial)` and exits ZERO — the same shape
-	 * as a real answer, off by two hundred. Measured: merkle traces 209 with a
-	 * matching toolchain and 6 without. A count that is wrong and confident is worse
-	 * than one that is missing, so the number of failures rides along with the
-	 * result and the surface says so.
+	 * Not decoration, and not a proven cause either. flowscan exits ZERO whatever it
+	 * found: WO-75 measured two binaries against the same merkle tree and got
+	 * `235 routes (209 traced)` from one and `235 routes (6 traced, 229 partial)`
+	 * from the other — the same shape as a real answer, off by two hundred.
+	 *
+	 * WO-75 blamed the Go release the tracer was built with. WO-76 could not
+	 * reproduce that: a go1.24 build reports 45 packages it could not type-check and
+	 * still traces 209 of 235. So missing type information is a REAL signal that the
+	 * analysis is working with less than the whole program, and it is not on its own
+	 * enough to collapse the answer. The cause of the 6 is still unknown.
+	 *
+	 * It rides along anyway, because a count that is wrong and confident is worse
+	 * than one that is missing, and this is the only evidence the surface has that
+	 * the run was working blind. `P2-15` is the gate that does not depend on knowing
+	 * the cause.
 	 */
 	readonly loadErrors?: number;
 }
@@ -219,10 +228,13 @@ function parseJson(text: string | undefined): unknown {
  * How many packages the Go loader could not type-check, from flowscan's stderr.
  *
  * flowscan prints `flowscan: N load error(s), first: …` and exits ZERO, so a run
- * whose type information is largely missing is indistinguishable from a clean one
- * at the call site. It is not indistinguishable in the ANSWER: merkle traces 209 of
- * 235 routes with a matching toolchain and 6 of 235 without, and the degraded run
- * announces itself only in an output channel nobody has open.
+ * working with incomplete type information is indistinguishable from a clean one at
+ * the call site — and announces itself only in an output channel nobody has open.
+ *
+ * Whether it changes the ANSWER is a separate question and the honest answer is
+ * "sometimes". A go1.24 build of the current tracer reports 45 load errors on merkle
+ * and still traces 209 of 235; a binary WO-75 measured reported the same 235 routes
+ * with 6 traced. Both are worth surfacing; neither is proof of the other.
  */
 export function loadErrorCount(stderr: string): number {
 	const match = /flowscan:\s+(\d+)\s+load error/.exec(stderr);

@@ -19,8 +19,11 @@ import (
 )
 
 type terminal struct {
-	method      string
-	path        string
+	method string
+	path   string
+	// Host prefix from a Go 1.22 pattern (`example.com/x`), when there was one.
+	// Kept off the path: a path silently carrying a hostname groups wrongly.
+	host        string
 	handlerExpr ast.Expr
 	pkg         *packages.Package
 	mw          []MW
@@ -38,6 +41,10 @@ type walkScope struct {
 	prefix  string
 	mw      []MW
 	consts  map[types.Object]string
+	// Which router library this scope's registrations belong to. It decides
+	// whether the HTTP method comes from the call or from inside the pattern —
+	// see routers.go.
+	dialect dialect
 }
 
 var verbMethods = map[string]string{
@@ -49,38 +56,54 @@ var verbMethods = map[string]string{
 func discoverTerminals(a *analyzer) []*terminal {
 	w := &routerWalker{a: a, visiting: map[*types.Func]bool{}}
 	for _, site := range a.decls {
-		if site.decl.Body == nil || !callsNewRouter(site.decl.Body) {
+		if site.decl.Body == nil {
+			continue
+		}
+		d, ok := seedDialect(site.decl.Body, site.pkg.TypesInfo)
+		if !ok {
 			continue
 		}
 		sc := &walkScope{
 			pkg:     site.pkg,
 			routers: map[types.Object]bool{},
 			consts:  map[types.Object]string{},
+			dialect: d,
 		}
 		w.walkStmts(site.decl.Body.List, sc)
 	}
 	return w.terminals
 }
 
-func callsNewRouter(body *ast.BlockStmt) bool {
-	found := false
+// seedDialect reports whether this function body is where a router gets wired,
+// and in which dialect.
+//
+// TWO WAYS IN, and the second one is the whole point of this work order. The
+// first is a constructor call — `chi.NewRouter()`, `http.NewServeMux()`. The
+// second is a package-level registration on `http.DefaultServeMux`:
+//
+//	func main() {
+//	    http.HandleFunc("/api/hello", hello)
+//	    http.ListenAndServe(":8080", nil)
+//	}
+//
+// which is a complete service with no router VALUE anywhere in it. A walk that
+// starts only at constructor call sites cannot see it at all.
+func seedDialect(body *ast.BlockStmt, info *types.Info) (dialect, bool) {
+	var found dialect
+	ok := false
 	ast.Inspect(body, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok && isNewRouterCall(call) {
-			found = true
+		call, isCall := n.(*ast.CallExpr)
+		if !isCall {
+			return !ok
 		}
-		return !found
+		if d, is := routerCtorOf(call, info); is {
+			found, ok = d, true
+		} else if isDefaultMuxCall(call, info) {
+			found, ok = dialectStdlib, true
+		}
+		return !ok
 	})
-	return found
-}
-
-func isNewRouterCall(call *ast.CallExpr) bool {
-	switch f := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		return f.Sel.Name == "NewRouter" || f.Sel.Name == "NewMux"
-	case *ast.Ident:
-		return f.Name == "NewRouter" || f.Name == "NewMux"
-	}
-	return false
+	return found, ok
 }
 
 // walkStmts processes statements in order — chi requires Use before
@@ -90,7 +113,7 @@ func (w *routerWalker) walkStmts(stmts []ast.Stmt, sc *walkScope) {
 		switch s := stmt.(type) {
 		case *ast.AssignStmt:
 			for i, rhs := range s.Rhs {
-				if call, ok := rhs.(*ast.CallExpr); ok && isNewRouterCall(call) && i < len(s.Lhs) {
+				if call, ok := rhs.(*ast.CallExpr); ok && i < len(s.Lhs) && isRouterCtor(call, sc) {
 					if id, ok := s.Lhs[i].(*ast.Ident); ok {
 						if obj := sc.pkg.TypesInfo.Defs[id]; obj != nil {
 							sc.routers[obj] = true
@@ -129,6 +152,12 @@ func (w *routerWalker) walkStmts(stmts []ast.Stmt, sc *walkScope) {
 }
 
 func (w *routerWalker) handleCall(call *ast.CallExpr, sc *walkScope) {
+	// `http.HandleFunc(pattern, h)` — the default mux. There is no receiver to
+	// recognise, so this is checked before the router-value path.
+	if isDefaultMuxCall(call, sc.pkg.TypesInfo) && len(call.Args) >= 2 {
+		w.record("*", call.Args[0], call.Args[1], sc.withDialect(dialectStdlib))
+		return
+	}
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		// r.With(mw…).Get(path, h) — unwrap the With chain.
 		if inner, ok := sel.X.(*ast.CallExpr); ok {
@@ -184,14 +213,49 @@ func (w *routerWalker) handleRouterMethod(name string, call *ast.CallExpr, sc *w
 	}
 }
 
+// isRouterCtor: a constructor call whose dialect matches the scope we are in.
+// The dialect is fixed when the walk is seeded, so a scope never mixes the two.
+func isRouterCtor(call *ast.CallExpr, sc *walkScope) bool {
+	d, ok := routerCtorOf(call, sc.pkg.TypesInfo)
+	return ok && d == sc.dialect
+}
+
+// withDialect returns a shallow copy in another dialect, for the default-mux
+// case where there is no router value whose construction fixed one.
+func (sc *walkScope) withDialect(d dialect) *walkScope {
+	if sc.dialect == d {
+		return sc
+	}
+	child := *sc
+	child.dialect = d
+	return &child
+}
+
 func (w *routerWalker) record(method string, pathExpr, handler ast.Expr, sc *walkScope) {
-	p, ok := foldString(pathExpr, sc.pkg.TypesInfo, sc.consts)
-	if !ok {
+	p, folded := foldString(pathExpr, sc.pkg.TypesInfo, sc.consts)
+	host := ""
+	if !folded {
 		p = "⟨dyn⟩"
+	} else if sc.dialect == dialectStdlib && method == "*" {
+		// The method lives INSIDE a Go 1.22 pattern, so it has to come out before
+		// the rest can be treated as a path. Only when the caller could not supply
+		// one: chi's own `Handle` also arrives as "*" but its pattern is a path.
+		//
+		// Guarded on `folded` because an unresolved pattern is the sentinel, not a
+		// string anyone should be parsing.
+		method, host, p = splitStdlibPattern(p)
+	}
+	full := joinPath(sc.prefix, p)
+	if sc.dialect == dialectStdlib && folded && strings.HasSuffix(p, "/") && len(p) > 1 {
+		// A trailing slash is SEMANTIC in a ServeMux pattern — `/api/v2/` matches
+		// the subtree and `/api/v2` matches exactly that one path. joinPath trims
+		// it, which is right for chi and would merge two different routes here.
+		full = strings.TrimSuffix(full, "/") + "/"
 	}
 	w.terminals = append(w.terminals, &terminal{
 		method:      method,
-		path:        joinPath(sc.prefix, p),
+		path:        full,
+		host:        host,
 		handlerExpr: handler,
 		pkg:         sc.pkg,
 		mw:          append([]MW{}, sc.mw...),
@@ -207,6 +271,7 @@ func (w *routerWalker) walkClosure(lit *ast.FuncLit, prefix string, sc *walkScop
 		prefix:  prefix,
 		mw:      append([]MW{}, sc.mw...),
 		consts:  sc.consts,
+		dialect: sc.dialect,
 	}
 	if lit.Type.Params != nil && len(lit.Type.Params.List) > 0 {
 		for _, nm := range lit.Type.Params.List[0].Names {
@@ -250,6 +315,11 @@ func (w *routerWalker) maybeRecurse(call *ast.CallExpr, sc *walkScope) {
 		prefix:  sc.prefix,
 		mw:      append([]MW{}, sc.mw...),
 		consts:  map[types.Object]string{},
+		// The dialect travels with the ROUTER, not with the function. A register
+		// func that takes a *http.ServeMux is registering stdlib patterns even
+		// though nothing in its own body constructs anything — and without this
+		// its routes came out with the method still glued to the path.
+		dialect: sc.dialect,
 	}
 	for i, param := range params {
 		obj := site.pkg.TypesInfo.Defs[param]

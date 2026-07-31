@@ -1,0 +1,399 @@
+{
+ "schema": 1,
+ "backend": "",
+ "rev": "",
+ "generatedAt": "",
+ "coverage": {
+  "routes": 13,
+  "traced": 11,
+  "partial": 0,
+  "unknown": 2
+ },
+ "flows": [
+  {
+   "method": "*",
+   "path": "/debug/",
+   "file": "app.go",
+   "line": 43,
+   "nodes": [
+    {
+     "kind": "unknown",
+     "label": "http.StripPrefix",
+     "reason": "handler declared outside the analyzed module"
+    }
+   ],
+   "edges": null,
+   "status": "unknown"
+  },
+  {
+   "method": "*",
+   "path": "/legacy",
+   "file": "app.go",
+   "line": 39,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.legacy",
+     "file": "app.go",
+     "line": 79,
+     "col": 15
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "*",
+   "path": "/static/",
+   "file": "default.go",
+   "line": 20,
+   "nodes": [
+    {
+     "kind": "unknown",
+     "label": "http.StripPrefix",
+     "reason": "handler declared outside the analyzed module"
+    }
+   ],
+   "edges": null,
+   "status": "unknown"
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/widgets/{id}",
+   "file": "app.go",
+   "line": 32,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.deleteWidget",
+     "file": "app.go",
+     "line": 73,
+     "col": 15
+    },
+    {
+     "kind": "query",
+     "label": "DELETE",
+     "file": "app.go",
+     "line": 74,
+     "col": 6,
+     "sql": "DELETE FROM widgets WHERE id = $1",
+     "sqlKind": "write",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/widgets",
+   "file": "app.go",
+   "line": 29,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.listWidgets",
+     "file": "app.go",
+     "line": 61,
+     "col": 15
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "app.go",
+     "line": 62,
+     "col": 9,
+     "sql": "SELECT id, name FROM widgets ORDER BY name",
+     "sqlKind": "read",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/api/widgets/{id}",
+   "file": "app.go",
+   "line": 31,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.getWidget",
+     "file": "app.go",
+     "line": 69,
+     "col": 15
+    },
+    {
+     "kind": "query",
+     "label": "SELECT",
+     "file": "app.go",
+     "line": 70,
+     "col": 6,
+     "sql": "SELECT id, name FROM widgets WHERE id = $1",
+     "sqlKind": "read",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/assets/{path...}",
+   "file": "app.go",
+   "line": 35,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.serveAsset",
+     "file": "app.go",
+     "line": 77,
+     "col": 15
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/exact/{$}",
+   "file": "app.go",
+   "line": 36,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.exactOnly",
+     "file": "app.go",
+     "line": 78,
+     "col": 15
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/healthz",
+   "file": "app.go",
+   "line": 28,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.healthz",
+     "file": "app.go",
+     "line": 59,
+     "col": 15
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "GET",
+   "path": "/ping",
+   "file": "default.go",
+   "line": 16,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "inline handler",
+     "file": "default.go",
+     "line": 16,
+     "col": 31
+    }
+   ],
+   "edges": null,
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/admin/reload",
+   "file": "app.go",
+   "line": 54,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "inline handler",
+     "file": "app.go",
+     "line": 54,
+     "col": 39
+    },
+    {
+     "kind": "query",
+     "label": "UPDATE",
+     "file": "app.go",
+     "line": 55,
+     "col": 7,
+     "sql": "UPDATE settings SET reloaded_at = now()",
+     "sqlKind": "write",
+     "tables": [
+      "settings"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "settings"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "settings"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/api/events",
+   "file": "default.go",
+   "line": 17,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "inline handler",
+     "file": "default.go",
+     "line": 17,
+     "col": 38
+    },
+    {
+     "kind": "query",
+     "label": "INSERT",
+     "file": "default.go",
+     "line": 18,
+     "col": 7,
+     "sql": "INSERT INTO events (kind) VALUES ($1)",
+     "sqlKind": "write",
+     "tables": [
+      "events"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "events"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "events"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/api/widgets",
+   "file": "app.go",
+   "line": 30,
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "App.createWidget",
+     "file": "app.go",
+     "line": 65,
+     "col": 15
+    },
+    {
+     "kind": "query",
+     "label": "INSERT",
+     "file": "app.go",
+     "line": 66,
+     "col": 6,
+     "sql": "INSERT INTO widgets (name) VALUES ($1)",
+     "sqlKind": "write",
+     "tables": [
+      "widgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "widgets"
+    }
+   ],
+   "edges": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "tables": [
+    "widgets"
+   ],
+   "status": "traced"
+  }
+ ]
+}

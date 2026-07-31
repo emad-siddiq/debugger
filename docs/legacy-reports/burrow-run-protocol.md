@@ -96,6 +96,23 @@ the deferred chat excision.
      diff), say so in the report naming their SHA, and carry on. WO-60 §Changed
      is the worked example.
 
+   - **Other sessions' PROCESSES are theirs too.** Added 2026-07-30 (WO-76),
+     after WO-75 found background pollers belonging to unrelated sessions — a
+     watcher on another run's Pass 2 report, a `vastai` poll in a different
+     project — while cleaning up its own. It left them alone, which was right,
+     and the rule is the same one the tree gets: **kill only what you started.**
+
+     A `pkill -f` with a pattern broad enough to be convenient is broad enough to
+     take down someone's build at minute nine of eleven, and it leaves no trace
+     that explains what happened — the other session just sees a step fail. So:
+     stop background work by its **task id**, or by a **pid you have confirmed is
+     yours** (check the command line names a file or directory your WO owns).
+     Never by a bare pattern like `sleep`, `node`, `go`, or `gulp`.
+
+     The same applies to anything else shared and process-shaped: a listening
+     port you did not open, a user-data-dir you did not create, a container you
+     did not start. If it is not yours, it is evidence, not litter.
+
 7. **Knowledge lands in files, not just chat:** durable gotchas →
    `.claude/memory/burrow-go-ide-fork.md`; design decisions → the owning
    `burrow/docs/architecture/*.md` (FD gets `15-frontend-debugger.md` in house

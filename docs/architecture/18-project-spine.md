@@ -140,13 +140,22 @@ learn for a distinction the reason sentence carries better: "traced `.` and foun
 routes" and "no go.mod found" are both `inert` and never say the same thing, which
 is asserted.
 
-**A wrong count is worse than a missing one.** flowscan exits **zero** when packages
-fail to type-check, printing `N load error(s)` to a stream that lands in an output
-channel nobody has open. Measured: merkle traces **209 of 235** routes with a
-matching Go toolchain and **6 of 235** with an older one — the same shape of answer,
-off by two hundred, with no signal at the call site. So the load-error count rides
-along in the state file and both the notification and the capability say the counts
-are incomplete.
+**A wrong count is worse than a missing one.** flowscan exits **zero** whatever it
+found. WO-75 measured two binaries against the same merkle tree and got
+**235 routes / 209 traced** from one and **235 / 6 / 229 partial** from the other —
+the same shape of answer, off by two hundred, with no signal at the call site.
+
+**The cause is not established, and the first guess was wrong.** WO-75 attributed it
+to the Go release the tracer was built with. WO-76 could not reproduce that: a
+go1.24 build of the current tracer reports 45 packages it cannot type-check and
+still traces 209 of 235. So missing type information is a real signal that the walk
+is working with less than the whole program, and it is not on its own enough to
+collapse the answer.
+
+That is the argument for `P2-15` rather than a better diagnosis. The load-error
+count rides along in the state file and both the notification and the capability say
+the counts may be incomplete — but a **floor on the numbers** catches the collapse
+whatever produced it, which a defence aimed at one suspected cause cannot.
 
 ### Duplicate, but bind the copies
 
@@ -280,14 +289,17 @@ time`. If they ever diverge, one of them is second-class and the test says so.
   `burrow-flow` in this work order. What remains hard-coded to merkle is the
   frontend debugger's `MERKLE_*` env contract and `<root>/nodewatch/frontend`,
   which belong to the browser-surface work.
-- **flowscan only recognises `NewRouter()` / `NewMux()` call sites**, so two of the
-  four fleet repositories trace **zero routes** — including the project *we*
-  scaffold, which emits `http.NewServeMux`. Measured, not inferred; see the WO
-  report. Detection is no longer the limit on the API rail, seeding is.
-- **flowscan's answer is bounded by the Go release it was built with, and it exits
-  zero when it cannot type-check.** `tools/flowscan/go.mod` pins
-  `toolchain go1.25.0`, so `make dist` is correct today; a target needing go1.26
-  silently degrades again. The defence is that the load-error count now reaches the
-  surface, not that the pin is right.
+- ~~**flowscan only recognises `NewRouter()` / `NewMux()` call sites**~~ — fixed in
+  WO-76. The seed is now a table in `tools/flowscan/routers.go` carrying a
+  **dialect** as well as a name, because chi puts the method in the CALL
+  (`r.Get("/x", h)`) and Go 1.22's `ServeMux` puts it in the PATTERN
+  (`mux.HandleFunc("GET /x", h)`) — a list of bare names cannot express that.
+  `http.DefaultServeMux` is seeded separately, since `http.HandleFunc("/x", h)` in a
+  `main` is a complete service with no router value to find.
+- **flowscan's coverage can collapse without its exit code changing, and the cause
+  is unknown.** Measured once (235/209 vs 235/6 on the same tree); the obvious
+  suspect — the Go release the tracer was built with — does not reproduce. `P2-15`
+  gates the numbers rather than the suspected cause. Standing lines: 235 routes,
+  209 traced.
 - **Go only**, deliberately. The engine is stack-agnostic; the templates are the
   work.

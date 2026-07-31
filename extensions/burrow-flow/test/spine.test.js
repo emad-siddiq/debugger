@@ -180,8 +180,9 @@ const cases = {
 	// ── flowscan's silent degradation ─────────────────────────────────────────
 	'a degraded run is counted, not ignored': () => {
 		// flowscan exits ZERO when packages fail to type-check and prints the count
-		// to stderr. merkle traces 209 of 235 with a matching toolchain and 6 of 235
-		// without, so a run nobody flagged is a wrong answer wearing a right one.
+		// to stderr, so a run working with incomplete type information looks exactly
+		// like a clean one. (It does not always change the answer — see spine.ts —
+		// but it is the only warning the surface gets when it does.)
 		assert.strictEqual(spine.loadErrorCount('flowscan: 45 load error(s), first: x.go:15:1: needs go1.25\n'), 45);
 		assert.strictEqual(spine.loadErrorCount('flowscan: 235 flows (209 traced, 26 partial, 0 unknown)\n'), 0);
 		assert.strictEqual(spine.loadErrorCount(''), 0);
