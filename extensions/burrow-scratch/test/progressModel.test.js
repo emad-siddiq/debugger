@@ -111,6 +111,41 @@ const cases = {
 		assert.strictEqual(percent({ total: 1000, settled: 1000 }), 100);
 		assert.strictEqual(percent({ total: 0, settled: 0 }), 0);
 	},
+	// WO-79 §5. A stage cannot read green when its executable checks did not
+	// execute. Every file written, one command that never answered.
+	'a stage with an unproven step does not read finished': () => {
+		const withShell = {
+			...plan(),
+			steps: {
+				'a/one.go': { ...step('a/one.go', 10), checks: [{ kind: 'shell', label: 'builds', cmd: 'go build .' }] },
+				'a/two.go': step('a/two.go', 10),
+				'b/three.go': step('b/three.go', 10),
+			},
+		};
+		let p = emptyProgress(T0);
+		p = setState(p, 'a/one.go', 'done', T1);
+		p = setState(p, 'a/two.go', 'done', T1);
+
+		// Never run at all.
+		assert.strictEqual(stageState(stageTally(withShell, p, 'a')), 'unproven');
+		assert.strictEqual(stageTally(withShell, p, 'a').unproven, 1);
+
+		// Ran and could not answer — the state that used to be written as `pass`.
+		const unavailable = recordCheck(p, 'a/one.go', 'unavailable', T1);
+		assert.strictEqual(stageState(stageTally(withShell, unavailable, 'a')), 'unproven');
+		assert.strictEqual(unavailable.steps['a/one.go'].checks, 'unavailable');
+
+		// Ran and passed.
+		const passed = recordCheck(p, 'a/one.go', 'pass', T1);
+		assert.strictEqual(stageState(stageTally(withShell, passed, 'a')), 'finished');
+		assert.strictEqual(stageTally(withShell, passed, 'a').unproven, 0);
+
+		// A step whose only claim is that the file exists is never unproven:
+		// existing is the whole of what it says.
+		let b = setState(emptyProgress(T0), 'b/three.go', 'done', T1);
+		assert.strictEqual(stageState(stageTally(withShell, b, 'b')), 'finished');
+	},
+
 	'progress is a value, never mutated in place': () => {
 		const before = emptyProgress(T0);
 		const after = setState(before, 'a/one.go', 'done', T1);

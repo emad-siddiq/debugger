@@ -239,7 +239,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		//
 		// A PREVIEW tab replaces itself, so walking the plan does not leave one
 		// tab per file behind — the same rule the API view follows.
-		const uri = vscode.Uri.file(ensureFile(root, id));
+		const uri = vscode.Uri.file(ensureFile(root, id, plan.steps[id]?.mode));
 		const doc = await vscode.workspace.openTextDocument(uri);
 		await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: focusPage, viewColumn: vscode.ViewColumn.One });
 		page.show({ plan, progress, stepId: id, checks, running }, focusPage);
@@ -258,7 +258,9 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			const run = await runChecks(root, id, plan.steps[id].checks);
 			checks = run;
 			log.appendLine(`check ${id}: ${run.verdict} — ${summarize(run)}`);
-			save(recordCheck(progress, id, run.verdict === 'fail' ? 'fail' : 'pass', new Date().toISOString()), false);
+			// The real verdict, all three of them. Folding `unavailable` into `pass`
+			// here is what let a stage go green on checks that never executed.
+			save(recordCheck(progress, id, run.verdict, new Date().toISOString()), false);
 			return run;
 		} finally {
 			running = false;
@@ -269,12 +271,15 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 
 	const markDone = async (id: string): Promise<void> => {
 		const run = await runStepChecks(id);
-		if (run.verdict === 'fail') {
+		// `unavailable` asks too. It is not a failure and it is not a pass: the
+		// step goes down as written and unproven, and saying so at the moment of
+		// marking is the only place a reader will notice.
+		if (run.verdict !== 'pass') {
 			const anyway = await vscode.window.showWarningMessage(
 				`${plan.steps[id].title}: ${summarize(run)}`,
-				'Mark written anyway', 'Keep working',
+				run.verdict === 'fail' ? 'Mark written anyway' : 'Mark written, unproven', 'Keep working',
 			);
-			if (anyway !== 'Mark written anyway') {
+			if (anyway === 'Keep working' || anyway === undefined) {
 				return;
 			}
 		}
@@ -338,7 +343,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		if (!id) {
 			return;
 		}
-		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(ensureFile(root, id)));
+		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(ensureFile(root, id, plan.steps[id]?.mode)));
 		await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
 		if (stateOf(progress, id) === 'todo') {
 			save(setState(progress, id, 'writing', new Date().toISOString()));
@@ -355,7 +360,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		// A DIFF, not the file: side by side with what you have written, so the
 		// reference answers "what is still missing" instead of being a thing to
 		// copy out of.
-		ensureFile(root, id);
+		ensureFile(root, id, plan.steps[id]?.mode);
 		await vscode.commands.executeCommand(
 			'vscode.diff',
 			vscode.Uri.file(path.join(plan.reference, id)),

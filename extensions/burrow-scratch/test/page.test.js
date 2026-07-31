@@ -23,7 +23,7 @@ Module._load = function (request, ...rest) {
 };
 
 const { buildPlan } = require('../out/planModel');
-const { CYCLE_NOTE, DEFECT_NOTE, linkList } = require('../out/page');
+const { CYCLE_NOTE, DEFECT_NOTE, linkList, unlocksAll, whyNow } = require('../out/page');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
 
@@ -63,6 +63,24 @@ const barrel = () => {
 	return files;
 };
 
+/** One Foundations stage carrying every class WO-79 distinguishes: two module
+ *  roots, a lockfile, a referenced config, a config referenced by an EARLIER
+ *  one, two interchangeable configs, and a Makefile nothing reads. */
+const manifests = () => [
+	file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+	file('backend/main.go', 'package main\n\nfunc main() {}\n'),
+	file('web/package.json', '{"name":"web"}'),
+	file('web/package-lock.json', '{"name":"web","lockfileVersion":3}'),
+	file('web/tsconfig.json', '{\n\t"references": [{ "path": "./tsconfig.app.json" }]\n}\n'),
+	file('web/tsconfig.app.json', '{ "compilerOptions": { "strict": true } }\n'),
+	file('web/.vite.mockport.config.ts', "import base from './vite.config.ts';\nexport default base;\n"),
+	file('web/eslint.config.js', 'export default [];\n'),
+	file('web/playwright.config.ts', 'export default {};\n'),
+	file('web/vite.config.ts', 'export default {};\n'),
+	file('web/src/app.ts', 'export const app = 1;\n'),
+	file('Makefile', 'run:\n\techo hi\n'),
+];
+
 const cases = {
 	'a real forward dependency and a cyclic one read differently': () => {
 		const broken = misordered();
@@ -99,6 +117,44 @@ const cases = {
 		assert.strictEqual((html.match(/data-goto=/g) ?? []).length, 12);
 		assert.ok(html.includes('…and 2 more'));
 		assert.ok(!html.includes(CYCLE_NOTE) && !html.includes(DEFECT_NOTE));
+	},
+
+	// WO-79 §2. A sentence that does not change when the file changes says
+	// nothing about the file — ten of merkle's seventeen Foundations steps
+	// rendered one identical string with one identical number, and two of them
+	// rendered a false one.
+	'no stage renders the same unlocks sentence twice': () => {
+		const plan = buildPlan(manifests(), { name: 'app', reference: '/ref' });
+		for (const stage of plan.stages) {
+			const said = stage.steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
+			assert.strictEqual(new Set(said).size, said.length, `${stage.id} repeats a sentence:\n${said.join('\n')}`);
+		}
+		// It is only worth asserting because more than one step renders one.
+		const foundations = plan.stages[0];
+		const said = foundations.steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
+		assert.ok(said.length >= 3, `the fixture must exercise several: ${said.length}`);
+	},
+
+	// WO-79 §1. The three derivable classes, and the honest placeholder.
+	'a step with no dependencies says something true about itself': () => {
+		const plan = buildPlan(manifests(), { name: 'app', reference: '/ref' });
+		const say = (id) => whyNow(plan, plan.steps[id]).replace(/<[^>]+>/g, '');
+
+		// Nothing anywhere still claims to be a leaf that can be written first.
+		for (const id of Object.keys(plan.steps)) {
+			if (!plan.steps[id].deps.length && !plan.steps[id].depStages.length) {
+				assert.ok(!/This is a leaf/.test(say(id)), `${id} still calls itself a leaf`);
+			}
+		}
+		assert.match(say('backend/go.mod'), /root of its own Go module/);
+		// Named by a later step → say which.
+		assert.match(say('web/tsconfig.app.json'), /web\/tsconfig\.json/);
+		// Named by an EARLIER step → say that, and call it what it is.
+		assert.match(say('web/vite.config.ts'), /put that one first|ordering defect/);
+		// Interchangeable neighbours → say so rather than inventing an order.
+		assert.match(say('web/eslint.config.js'), /independent/);
+		// Nothing derivable at all → admit it rather than claim it.
+		assert.match(say('Makefile'), /judgement rather than a dependency/);
 	},
 };
 

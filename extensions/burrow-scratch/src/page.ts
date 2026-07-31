@@ -166,20 +166,107 @@ export function instruction(step: ScratchStep, stage: ScratchStage): string {
 }
 
 /**
- * A manifest has no import edges and so no dependents in the graph, but calling
- * that "nothing depends on this" about a `go.mod` is exactly backwards — its
- * whole tree does. Count the tree instead.
+ * What a manifest unlocks, when that is a fact and not a prefix count.
+ *
+ * The old version counted every step whose path started with this file's
+ * directory and called the number a graph fact. On merkle that rendered **one
+ * identical sentence with one identical number on ten of Foundations' seventeen
+ * steps** — a sentence that does not change when the file changes says nothing
+ * about the file — and on the root `package-lock.json` it asserted that 2,093
+ * files resolved through an empty seven-line lockfile.
+ *
+ * Delegated in WO-79: make it a graph fact or re-phrase it. **Re-phrased**, and
+ * narrowed to the two kinds where the claim is actually true. A `go.mod` really
+ * is on the import path of every Go file in its module — `goModuleOf` resolves
+ * through it, so the plan already relies on the fact. A `package.json` really is
+ * how every bare specifier under it resolves. A Makefile is on nobody's import
+ * path and a tsconfig has real dependents the graph can now name, so both get
+ * nothing from here and fall back to those.
  */
-function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
-	if (step.kind !== 'manifest' && step.kind !== 'lock') {
-		return '';
-	}
+export function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
+	const base = step.title;
 	const slash = step.id.lastIndexOf('/');
 	const dir = slash < 0 ? '' : step.id.slice(0, slash + 1);
-	const under = Object.keys(plan.steps).filter((id) => id !== step.id && id.startsWith(dir)).length;
-	return under
-		? `Everything under <code>${escape(dir || './')}</code> — ${under} files resolve through it. It has no imports of its own, so the graph shows no single dependent.`
-		: '';
+	const where = `<code>${escape(dir || './')}</code>`;
+	const under = (suffix: string): number =>
+		Object.keys(plan.steps).filter((id) => id !== step.id && id.startsWith(dir) && id.endsWith(suffix)).length;
+	if (base === 'go.mod') {
+		const n = under('.go');
+		return n ? `Every Go file under ${where} — ${n} of them — resolves its imports through the module path this file declares.` : '';
+	}
+	if (base === 'package.json') {
+		const n = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].reduce((sum, ext) => sum + under(ext), 0);
+		return n ? `Every bare import under ${where} — ${n} modules' worth — resolves through the dependencies this file names.` : '';
+	}
+	if (step.kind === 'lock') {
+		const manifest = Object.keys(plan.steps).find((id) => id.startsWith(dir) && /(package|go)\.(json|mod)$/.test(id));
+		return `Nothing imports a lockfile. It pins the versions ${manifest ? `<code>${escape(manifest)}</code>` : where} asked for,`
+			+ ' so two machines install the same tree.';
+	}
+	return '';
+}
+
+/**
+ * Why this file is here rather than later, for a step with no dependencies.
+ *
+ * The sentence this replaces was rendered on **all seventeen** Foundations steps
+ * — *"Nothing in this project. This is a leaf: it can be written first and on
+ * its own"* — and it is not an absent explanation but seventeen identical
+ * claims, false for four of them. Every branch below is computed from the plan;
+ * none of it is authored prose about any particular project.
+ */
+export function whyNow(plan: ScratchPlan, step: ScratchStep): string {
+	const readers = dependents(plan, step.id);
+	const order = plan.stages.flatMap((s) => s.steps);
+	const here = order.indexOf(step.id);
+
+	// 1 — the root of its own module or package. The tree below it is the reason.
+	if (step.title === 'go.mod') {
+		return 'Nothing — this is the root of its own Go module, so there is nothing above it to write first.';
+	}
+	if (step.title === 'package.json') {
+		return 'Nothing — this is the root of its own npm package, so there is nothing above it to write first.';
+	}
+
+	// 2 — something already in the plan names this file. Say which, and say
+	//     honestly when the plan put that reader FIRST: an ordering defect the
+	//     reader has to act on is worth more than a tidy sentence.
+	const after = readers.filter((id) => order.indexOf(id) > here);
+	const before = readers.filter((id) => order.indexOf(id) < here);
+	if (after.length) {
+		const more = after.length > 1 ? ` and ${after.length - 1} other file${after.length > 2 ? 's' : ''}` : '';
+		// A reader the plan put EARLIER does not stop being one. Saying only the
+		// happy half here would read as "everything downstream is fine".
+		const caveat = before.length
+			? ` <code>${escape(before[0])}</code> also names it and the plan put that one first — see its own page.`
+			: '';
+		return `Nothing. <code>${escape(after[0])}</code>${more} name${after.length > 1 ? '' : 's'} this file`
+			+ ` and cannot be written until it exists, so it comes first.${caveat}`;
+	}
+	if (before.length) {
+		return `Nothing — but <code>${escape(before[0])}</code> names this file and the plan put that one FIRST.`
+			+ ' That is an ordering defect, not a cycle: write this one now and go back to it.';
+	}
+
+	// 3 — nothing reads it and nothing it needs is a file. If its neighbours are
+	//     in the same position, that is the truth worth saying: the order among
+	//     them is arbitrary, and pretending otherwise is what the old sentence did.
+	const peers = plan.stages.find((s) => s.id === step.stage)?.steps.filter((id) => {
+		const other = plan.steps[id];
+		return id !== step.id && other && other.kind === step.kind
+			&& other.id.slice(0, other.id.lastIndexOf('/') + 1) === step.id.slice(0, step.id.lastIndexOf('/') + 1)
+			&& !other.deps.length && !other.depStages.length && !dependents(plan, id).length;
+	}) ?? [];
+	if (peers.length) {
+		return peers.length === 1
+			? `Nothing, and nothing in the project reads it. It and <code>${escape(peers[0])}</code> are independent of each other — write them in either order.`
+			: `Nothing, and nothing in the project reads it. It and the other ${peers.length} files beside it here are independent — write them in any order.`;
+	}
+
+	// 4 — the honest placeholder. A person has to write this one, and a false
+	//     claim is worse than admitting the graph has nothing to say.
+	return 'Nothing, and nothing in the project reads it either. Where it sits in the order is a judgement'
+		+ ' rather than a dependency — the graph has nothing to argue here.';
 }
 
 /**
@@ -338,13 +425,14 @@ function html(state: PageState): string {
 	</div>
 	<p class="lede">${instruction(step, stage)}</p>
 	${step.summary ? `<p class="quiet">The reference's own note: ${escape(step.summary.slice(0, 400))}</p>` : ''}
+	${step.note ? `<p class="lede">${escape(step.note).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n\n/g, '</p><p class="quiet">')}</p>` : ''}
 	${routeNote(step)}
 
 	<section>
 		<h2>What it needs</h2>
 		${linkList(plan, step.deps, step.depStages.length
 		? `Nothing file-by-file. It imports ${step.depStages.slice(0, 4).map((d) => `<code>${escape(d)}</code>`).join(', ')} — packages you have already written.`
-		: 'Nothing in this project. This is a leaf: it can be written first and on its own.',
+		: whyNow(plan, step),
 		stepId)}
 	</section>
 
@@ -355,7 +443,7 @@ function html(state: PageState): string {
 	<section>
 		<h2>What it unlocks</h2>
 		${linkList(plan, unlocks, unlocksAll(plan, step)
-		|| 'Nothing yet depends on this — it is a leaf of the graph, or the last thing written.')}
+		|| 'Nothing else in the project names this file. Finishing it unblocks nothing — which is a fact about the graph, not about whether it matters.')}
 	</section>
 
 	${stage.tools.length ? `<section><h2>Tools this stage lights up</h2>${stage.tools.map((t) => `

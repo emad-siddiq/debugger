@@ -36,6 +36,28 @@ export type StepKind = 'go' | 'gotest' | 'ts' | 'tsx' | 'style' | 'sql' | 'manif
  */
 export type StepMode = 'write' | 'copy' | 'generate';
 
+/**
+ * What a command needs in front of it before exiting 0 means anything.
+ *
+ * `go mod init … && go mod tidy` on an empty directory exits 0, prints
+ * `warning: "all" matched no packages`, and writes a three-line `go.mod` where
+ * the reference has thirty-six. Both checks went green and the step was done
+ * with none of its twenty-six requires. `08b §1` guarantees a *missing
+ * toolchain* never reports a pass; this is the adjacent hole — **a present
+ * toolchain reporting success for work that has not happened.**
+ *
+ * The command still runs (`go mod init` does its half now). Its VERDICT is what
+ * this qualifies.
+ */
+export interface Precondition {
+	/** Scratch-relative directory to look in. */
+	readonly dir: string;
+	/** A filename, or a suffix like `.go` — whichever the command consumes. */
+	readonly match: string;
+	/** Said instead of a green tick. */
+	readonly why: string;
+}
+
 export interface Check {
 	readonly kind: 'exists' | 'shell';
 	readonly label: string;
@@ -46,6 +68,8 @@ export interface Check {
 	/** `shell` only: output on stdout means FAIL even when the exit code is 0
 	 *  (`gofmt -l` is the case — it prints the files it objects to). */
 	readonly emptyOutput?: boolean;
+	/** `shell` only: exiting 0 with this unmet is not a pass. */
+	readonly needs?: Precondition;
 }
 
 export interface ToolHint {
@@ -76,6 +100,10 @@ export interface ScratchStep {
 	/** Stage ids this file depends on (Go imports are package-level). */
 	readonly depStages: readonly string[];
 	readonly checks: readonly Check[];
+	/** A derived sentence the graph cannot express — today, how to reach the
+	 *  database this file starts, and what else in the project disagrees about
+	 *  it. Enrichment only: absent unless something computed it. */
+	readonly note?: string;
 	/** Up to three routes this file serves, for the page to name. Enrichment
 	 *  only: absent everywhere when flowscan has not run, and never structural. */
 	readonly routes?: readonly string[];
@@ -150,6 +178,29 @@ export function isIgnored(relPath: string): boolean {
 
 const MANIFESTS = new Set(['go.mod', 'package.json', 'Makefile', 'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', '.env.example']);
 const LOCKS = new Set(['go.sum', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']);
+
+/** The manifest a lockfile is generated FROM, when the project has one. */
+const LOCK_MANIFEST = new Map([
+	['go.sum', 'go.mod'], ['package-lock.json', 'package.json'],
+	['pnpm-lock.yaml', 'package.json'], ['yarn.lock', 'package.json'],
+]);
+
+/**
+ * A file that is JavaScript or TypeScript, whatever its step KIND says.
+ *
+ * `vite.config.ts` is taught as a manifest and is still a module: it imports,
+ * and `.vite.mockport.config.ts` imports IT. Kind decides how a file is
+ * explained; it must not decide whether the graph can see it — which it did,
+ * and the ordering invariant was blind to every build-config file in every
+ * project as a result.
+ */
+function isJsModule(relPath: string): boolean {
+	return /\.(ts|tsx|js|mjs|cjs|mts)$/.test(baseName(relPath));
+}
+
+function isTsconfig(relPath: string): boolean {
+	return /^tsconfig.*\.json$/.test(baseName(relPath));
+}
 
 function baseName(p: string): string {
 	return p.slice(p.lastIndexOf('/') + 1);
@@ -299,6 +350,40 @@ export function tsDeclares(text: string): string[] {
 	return names;
 }
 
+/**
+ * The files a tsconfig names: `extends`, and every `references[].path`.
+ *
+ * These are real edges — a solution-style `tsconfig.json` is meaningless before
+ * the configs it references — and they were invisible, so four Foundations steps
+ * were sorted alphabetically and called leaves. Regex rather than `JSON.parse`
+ * for the same reason `tsImports` is: tsconfig permits comments and trailing
+ * commas, and merkle's own `e2e/tsconfig.json` carries a `"//"` key.
+ */
+export function configRefs(text: string): string[] {
+	const specs: string[] = [];
+	const push = (s: string | undefined): void => {
+		if (s && !specs.includes(s)) {
+			specs.push(s);
+		}
+	};
+	const extend = /"extends"\s*:\s*(?:"([^"]+)"|\[([\s\S]*?)\])/.exec(text);
+	if (extend?.[1]) {
+		push(extend[1]);
+	} else if (extend?.[2]) {
+		// TypeScript 5 allows an array of bases, applied left to right.
+		for (const m of extend[2].matchAll(/"([^"]+)"/g)) {
+			push(m[1]);
+		}
+	}
+	const refs = /"references"\s*:\s*\[([\s\S]*?)\]/.exec(text);
+	if (refs) {
+		for (const m of refs[1].matchAll(/"path"\s*:\s*"([^"]+)"/g)) {
+			push(m[1]);
+		}
+	}
+	return specs;
+}
+
 /** Module specifiers from `import`/`export … from` and bare `import './x.css'`. */
 export function tsImports(text: string): string[] {
 	const specs: string[] = [];
@@ -309,6 +394,93 @@ export function tsImports(text: string): string[] {
 		}
 	}
 	return specs;
+}
+
+// ---------------------------------------------------------------------------
+// The database a compose file starts
+//
+// Foundations ends with a compose file and 134 migrations follow it, and a
+// learner who cannot connect to the database they just started is stopped three
+// steps from the end of the stage. Worse on merkle: `Makefile` (step 11) sets
+// `DATABASE_URL` to `postgres://postgres:postgres@…` and the compose file
+// (step 17) declares user, password and database `nodewatch`. Both are the
+// project's own files, faithfully reproduced, and nothing reconciles them.
+//
+// So the surface NAMES the discrepancy. Pointing at one of the two would be a
+// guess about which is right; saying "these two files disagree, and the one you
+// started is this one" is a fact, and it is the fact that unblocks.
+// ---------------------------------------------------------------------------
+
+export interface DbService {
+	readonly service: string;
+	readonly user: string;
+	readonly password: string;
+	readonly database: string;
+	readonly port?: number;
+}
+
+/** The Postgres service a compose file declares, if it declares one. Indent-
+ *  scoped rather than YAML-parsed: the keys are unambiguous and a parser is a
+ *  dependency this extension does not have. */
+export function composeDatabase(text: string): DbService | undefined {
+	const lines = text.split('\n');
+	let service = '', user = '', password = '', database = '', port: number | undefined;
+	let indent = -1;
+	for (const raw of lines) {
+		const line = raw.replace(/\t/g, '  ');
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith('#')) {
+			continue;
+		}
+		const at = line.search(/\S/);
+		const name = /^([A-Za-z0-9._-]+):\s*$/.exec(trimmed)?.[1];
+		// A new service header at or above the level of the one we are reading
+		// ends it. `environment:` is a mapping key at a deeper level, not a peer.
+		if (name && (indent < 0 || at <= indent) && !/^(services|volumes|networks|environment|ports|build|healthcheck|deploy|logging)$/.test(name)) {
+			if (user && password && database) {
+				break;
+			}
+			service = name;
+			indent = at;
+			user = password = database = '';
+			port = undefined;
+			continue;
+		}
+		const kv = /^-?\s*"?POSTGRES_(USER|PASSWORD|DB)"?\s*[:=]\s*"?([^"'\s]+)"?/.exec(trimmed);
+		if (kv) {
+			if (kv[1] === 'USER') { user = kv[2]; } else if (kv[1] === 'PASSWORD') { password = kv[2]; } else { database = kv[2]; }
+		}
+		const published = /^-\s*"?(\d+):(\d+)"?\s*$/.exec(trimmed);
+		if (published && published[2] === '5432') {
+			port = Number(published[1]);
+		}
+	}
+	return user && password && database ? { service, user, password, database, port } : undefined;
+}
+
+/** The first Postgres URL a file states, if it states one. */
+export function postgresUrl(text: string): string | undefined {
+	return /postgres(?:ql)?:\/\/[^\s"'`)]+/.exec(text)?.[0];
+}
+
+/** How to reach the database this compose file starts, and what disagrees.
+ *  `others` is every other file in the same stage, so the comparison is with
+ *  what the reader has already written and nothing else. */
+export function databaseNote(text: string, others: ReadonlyMap<string, string>): string | undefined {
+	const db = composeDatabase(text);
+	if (!db) {
+		return undefined;
+	}
+	const url = `postgres://${db.user}:${db.password}@localhost:${db.port ?? 5432}/${db.database}`;
+	const head = `Starts \`${db.service}\`. Once it is up, connect with \`${url}\` — that is what this file declares.`;
+	for (const [id, other] of others) {
+		const stated = postgresUrl(other);
+		if (stated && stated.split('?')[0] !== url) {
+			return `${head}\n\n⚠︎ \`${id}\` says \`${stated}\` instead. Two of your own files disagree about this database:`
+				+ ' the one above is the one you started, so it is the one that will connect.';
+		}
+	}
+	return head;
 }
 
 /** The file's own explanation: its leading comment block, cleaned up. */
@@ -476,7 +648,10 @@ function resolveTs(from: string, spec: string, known: ReadonlySet<string>, jsRoo
 	if (base === undefined) {
 		return undefined;  // a package from node_modules — not ours to write
 	}
-	for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.css`, `${base}/index.ts`, `${base}/index.tsx`]) {
+	// `<dir>/tsconfig.json` is here for `configRefs`: a project reference may name
+	// a directory. No TS import resolves that way, so it costs the import path
+	// nothing and saves a second resolver.
+	for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.css`, `${base}/index.ts`, `${base}/index.tsx`, `${base}/tsconfig.json`]) {
 		if (known.has(candidate)) {
 			return candidate;
 		}
@@ -519,13 +694,39 @@ function analyse(files: readonly SourceFile[]): Map<string, Analysed> {
 					}
 				}
 			}
-		} else if (kind === 'ts' || kind === 'tsx') {
-			declares = tsDeclares(file.text);
+		} else if (kind === 'ts' || kind === 'tsx' || isJsModule(file.path)) {
+			// `declares` stays with code: a config file's `export default {…}` is
+			// not a surface anyone imports by name, and listing it as a declaration
+			// would put a "What it declares: default" section on seventeen pages.
+			// The IMPORTS are read either way — that is the whole point.
+			declares = kind === 'ts' || kind === 'tsx' ? tsDeclares(file.text) : [];
 			for (const spec of tsImports(file.text)) {
 				const target = resolveTs(file.path, spec, known, jsRoots);
 				if (target && target !== file.path) {
 					deps.push(target);
 					depDirs.push(dirName(target));
+				}
+			}
+		} else if (kind === 'lock') {
+			// A lockfile is generated FROM the manifest beside it, so that is an
+			// edge and not a coincidence of the sort order. Saying "this is a leaf,
+			// it can be written first and on its own" about a `package-lock.json`
+			// was false on the page and invisible to the invariant.
+			const manifest = LOCK_MANIFEST.get(baseName(file.path));
+			if (manifest && known.has(join(dir, manifest))) {
+				deps.push(join(dir, manifest));
+			}
+		} else if (isTsconfig(file.path)) {
+			// FILE edges only, deliberately no `depDirs`. A stage edge expands to
+			// every step of that stage, which is right for an import (the package
+			// has to exist) and catastrophic here: `e2e/tsconfig.json` extends
+			// `../tsconfig.app.json`, and naming the `frontend` directory made it
+			// depend on 698 unrelated files including README.md and index.html.
+			// A tsconfig references configs, not directories of source.
+			for (const spec of configRefs(file.text)) {
+				const target = resolveTs(file.path, spec, known, jsRoots);
+				if (target && target !== file.path) {
+					deps.push(target);
 				}
 			}
 		}
@@ -540,12 +741,38 @@ function analyse(files: readonly SourceFile[]): Map<string, Analysed> {
 	return out;
 }
 
+/**
+ * What a `generate` step's command reads, so that succeeding on nothing is not
+ * mistaken for succeeding. Both entries are about the tool, not about any
+ * particular project: `go mod tidy` resolves the imports of the Go files in its
+ * module, `npm install` resolves the dependencies its `package.json` names.
+ */
+function generateInputs(step: { id: string; commandCwd?: string }): Precondition | undefined {
+	const dir = step.commandCwd ?? dirName(step.id);
+	const base = baseName(step.id);
+	if (base === 'go.mod') {
+		return {
+			dir, match: '.go',
+			why: '`go mod init` has done its half. `go mod tidy` has no Go files to read yet, so it resolved nothing —'
+				+ ' this file will stay near-empty until the module has code in it. Run the check again then.',
+		};
+	}
+	if (LOCK_MANIFEST.has(base)) {
+		return { dir, match: LOCK_MANIFEST.get(base)!, why: `there is no ${LOCK_MANIFEST.get(base)} here for it to install from.` };
+	}
+	return undefined;
+}
+
 function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string }, goModuleDir: string | undefined): Check[] {
 	if (step.mode === 'generate') {
 		// Run it, then prove it produced something. Both, in that order: a command
 		// that exits 0 without writing the file is the failure worth catching.
+		//
+		// …and exiting 0 with nothing to work on is the OTHER one. A generated file
+		// is derived from inputs; with no inputs the command succeeds at doing
+		// nothing, so the verdict is "could not run yet", never a pass.
 		return [
-			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: step.command, cwd: step.commandCwd },
+			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: step.command, cwd: step.commandCwd, needs: generateInputs(step) },
 			{ kind: 'exists', label: 'the file exists and is not empty' },
 		];
 	}
@@ -672,7 +899,21 @@ export function buildPlan(
 	// go.sum is project content but never a step: `go mod tidy`, which the go.mod
 	// step runs, writes it. Dropped from the step universe rather than from
 	// isIgnored — it is not noise, it just has no step to call its own.
-	const source = files.filter((f) => !isIgnored(f.path) && f.bytes <= MAX_BYTES && baseName(f.path) !== 'go.sum');
+	//
+	// The same reasoning, generalised, drops an ORPHANED lockfile. A lockfile is
+	// generated from the manifest beside it, so with no manifest there is no
+	// command that writes it and no step that can pass: merkle carries a root
+	// `package-lock.json` and no root `package.json`, and `npm install` there
+	// exits 254 while still writing the file — check one failing forever, check
+	// two passing. The rule is about lockfiles and their manifests, not about
+	// that path.
+	const present = new Set(files.map((f) => f.path));
+	const orphanLock = (p: string): boolean => {
+		const manifest = LOCK_MANIFEST.get(baseName(p));
+		return !!manifest && !present.has(join(dirName(p), manifest));
+	};
+	const source = files.filter((f) => !isIgnored(f.path) && f.bytes <= MAX_BYTES
+		&& baseName(f.path) !== 'go.sum' && !orphanLock(f.path));
 	const analysed = analyse(source);
 	const modules = new Map<string, string>();
 	for (const f of source) {
@@ -699,6 +940,17 @@ export function buildPlan(
 		if (!paths.length) {
 			return;
 		}
+		// A compose file's own database, and what else in this stage contradicts
+		// it. Computed per stage so the comparison is against files the reader has
+		// already written, not against the whole project.
+		const noteFor = (p: string): { note?: string } => {
+			if (!/docker-compose\.ya?ml$|(^|\/)compose\.ya?ml$/.test(p)) {
+				return {};
+			}
+			const others = new Map(paths.filter((q) => q !== p).map((q) => [q, textOf(q)]));
+			const note = databaseNote(textOf(p), others);
+			return note ? { note } : {};
+		};
 		for (const p of paths) {
 			const a = analysed.get(p)!;
 			const owner = goModuleOf(p, modules);
@@ -719,6 +971,7 @@ export function buildPlan(
 				deps: a.deps,
 				depStages: a.depDirs,
 				checks: checksFor(shape, owner?.[0]),
+				...noteFor(p),
 				...routesFor(p),
 			};
 			claimed.add(p);

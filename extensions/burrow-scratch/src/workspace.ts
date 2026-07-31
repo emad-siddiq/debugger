@@ -18,7 +18,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ScratchPlan } from './planModel';
+import { ScratchPlan, StepMode } from './planModel';
 import { Progress, emptyProgress, overallTally, percent } from './progressModel';
 
 export const SCRATCH_DIR = '.burrow-scratch';
@@ -130,11 +130,19 @@ export function writeIndex(root: string, plan: ScratchPlan, progress: Progress):
 	fs.writeFileSync(path.join(root, 'SCRATCH.md'), lines.join('\n'));
 }
 
-/** Create the file for a step if it is not there yet. Returns its absolute path. */
-export function ensureFile(root: string, stepId: string): string {
+/**
+ * Create the file for a step if it is not there yet. Returns its absolute path.
+ *
+ * `generate` steps are the exception, and it is not a nicety: `go mod init`
+ * REFUSES to run when a `go.mod` is already there, so opening the step created
+ * an empty file and the step's own command could then never succeed —
+ * `go: …/backend/go.mod already exists`, forever, on step 1 of 16. Measured in
+ * the bundle 2026-07-31. A file the toolchain writes is not ours to touch.
+ */
+export function ensureFile(root: string, stepId: string, mode?: StepMode): string {
 	const abs = path.join(root, stepId);
 	fs.mkdirSync(path.dirname(abs), { recursive: true });
-	if (!fs.existsSync(abs)) {
+	if (!fs.existsSync(abs) && mode !== 'generate') {
 		fs.writeFileSync(abs, '');
 	}
 	return abs;

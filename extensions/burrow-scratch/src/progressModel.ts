@@ -24,8 +24,14 @@ export interface StepRecord {
 	readonly state: StepState;
 	/** ISO timestamp of the last state change. */
 	readonly at: string;
-	/** The verdict of the last check run, if it has been run. */
-	readonly checks?: 'pass' | 'fail';
+	/**
+	 * The verdict of the last check run, if it has been run.
+	 *
+	 * `unavailable` used to be written down as `pass` — the call site folded three
+	 * verdicts into two — so "could not run" and "ran and passed" were the same
+	 * fact on disk, and a stage went green on checks that never executed.
+	 */
+	readonly checks?: 'pass' | 'fail' | 'unavailable';
 	readonly note?: string;
 }
 
@@ -63,7 +69,7 @@ export function setCurrent(progress: Progress, stepId: string, now: string): Pro
 	return { ...progress, current: stepId, updatedAt: now };
 }
 
-export function recordCheck(progress: Progress, stepId: string, verdict: 'pass' | 'fail', now: string): Progress {
+export function recordCheck(progress: Progress, stepId: string, verdict: 'pass' | 'fail' | 'unavailable', now: string): Progress {
 	const record = progress.steps[stepId] ?? { state: 'writing' as StepState, at: now };
 	return { ...progress, steps: { ...progress.steps, [stepId]: { ...record, checks: verdict, at: now } }, updatedAt: now };
 }
@@ -98,10 +104,24 @@ export interface Tally {
 	readonly settled: number;
 	readonly lines: number;
 	readonly linesWritten: number;
+	/**
+	 * Settled steps whose executable check has not passed — it was never run, or
+	 * it came back `unavailable`. A step with nothing but an `exists` check can
+	 * never be unproven: existing is the whole of what it claims.
+	 *
+	 * 13 of Foundations' 17 steps are exactly that, so a stage could read
+	 * green with three of its four real checks unexecuted. This is the number
+	 * that stops it.
+	 */
+	readonly unproven: number;
+}
+
+function hasExecutableCheck(plan: ScratchPlan, id: string): boolean {
+	return (plan.steps[id]?.checks ?? []).some((c) => c.kind === 'shell');
 }
 
 function tallyOf(plan: ScratchPlan, progress: Progress, stepIds: readonly string[]): Tally {
-	let done = 0, copied = 0, lines = 0, linesWritten = 0;
+	let done = 0, copied = 0, lines = 0, linesWritten = 0, unproven = 0;
 	for (const id of stepIds) {
 		const step = plan.steps[id];
 		lines += step?.lines ?? 0;
@@ -112,8 +132,11 @@ function tallyOf(plan: ScratchPlan, progress: Progress, stepIds: readonly string
 		} else if (state === 'copied') {
 			copied++;
 		}
+		if (isSettled(state) && hasExecutableCheck(plan, id) && progress.steps[id]?.checks !== 'pass') {
+			unproven++;
+		}
 	}
-	return { total: stepIds.length, done, copied, settled: done + copied, lines, linesWritten };
+	return { total: stepIds.length, done, copied, settled: done + copied, lines, linesWritten, unproven };
 }
 
 export function stageTally(plan: ScratchPlan, progress: Progress, stageId: string): Tally {
@@ -125,10 +148,23 @@ export function overallTally(plan: ScratchPlan, progress: Progress): Tally {
 	return tallyOf(plan, progress, order(plan));
 }
 
-/** A stage is open once anything in it is settled, and closed when all of it
- *  is. Used for the tree's collapse state — you open where you are working. */
-export function stageState(tally: Tally): 'untouched' | 'open' | 'finished' {
-	return tally.settled === 0 ? 'untouched' : tally.settled === tally.total ? 'finished' : 'open';
+/**
+ * A stage is open once anything in it is settled, and closed when all of it is.
+ * Used for the tree's collapse state — you open where you are working.
+ *
+ * `unproven` is the fourth: every file is written and at least one command that
+ * was supposed to prove it did not run. It is not `finished`, because a tick
+ * that appears when nothing ran is the exact failure this feature was built to
+ * refuse, and it is not `open`, because there is nothing left to write.
+ */
+export function stageState(tally: Tally): 'untouched' | 'open' | 'unproven' | 'finished' {
+	if (tally.settled === 0) {
+		return 'untouched';
+	}
+	if (tally.settled < tally.total) {
+		return 'open';
+	}
+	return tally.unproven ? 'unproven' : 'finished';
 }
 
 /** Progress rounded the way a person reads it: never 100% until it is. */

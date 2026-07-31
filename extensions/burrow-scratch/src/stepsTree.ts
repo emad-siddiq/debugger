@@ -79,12 +79,22 @@ export class StepsProvider implements TreeDataProvider<Node> {
 					: TreeItemCollapsibleState.Collapsed,
 		);
 		item.id = `stage:${stage.id}`;
-		item.description = state === 'finished' ? `✓ ${tally.total}` : `${tally.settled}/${tally.total}`;
+		// `unproven` gets a warning mark and says how many, never the tick. Every
+		// file is written and something that was meant to prove it did not run —
+		// which is a different fact from finished, and the one the old two-state
+		// tally could not hold.
+		item.description = state === 'finished' ? `✓ ${tally.total}`
+			: state === 'unproven' ? `${tally.total} written · ${tally.unproven} unproven`
+				: `${tally.settled}/${tally.total}`;
 		item.iconPath = new ThemeIcon(
-			state === 'finished' ? 'pass-filled' : state === 'open' ? 'circle-large-outline' : 'circle-outline',
-			new ThemeColor(state === 'finished' ? 'testing.iconPassed' : 'descriptionForeground'),
+			state === 'finished' ? 'pass-filled' : state === 'unproven' ? 'warning'
+				: state === 'open' ? 'circle-large-outline' : 'circle-outline',
+			new ThemeColor(state === 'finished' ? 'testing.iconPassed'
+				: state === 'unproven' ? 'testing.iconUnset' : 'descriptionForeground'),
 		);
-		item.tooltip = stage.blurb;
+		item.tooltip = state === 'unproven'
+			? `${stage.blurb}\n\n⚠︎ ${tally.unproven} file(s) here are written but unproven — a check that was supposed to run did not.`
+			: stage.blurb;
 		item.contextValue = 'burrowScratchStage';
 		return item;
 	}

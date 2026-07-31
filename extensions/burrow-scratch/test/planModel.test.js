@@ -54,6 +54,34 @@ const flows = (traced) => ({
 	],
 });
 
+/**
+ * Build config files that name each other, a lockfile, and two files that
+ * disagree about a database — WO-79's four defects, in one fixture, so a
+ * regression on any of them fails here rather than on merkle.
+ */
+const configs = () => [
+	file('web/package.json', '{"name":"web"}'),
+	file('web/package-lock.json', '{"name":"web","lockfileVersion":3}'),
+	file('web/tsconfig.json', '{\n\t"files": [],\n\t"references": [{ "path": "./tsconfig.app.json" }]\n}\n'),
+	file('web/tsconfig.app.json', '{\n\t"compilerOptions": { "strict": true }\n}\n'),
+	file('web/vite.config.ts', "import { defineConfig } from 'vite';\nexport default defineConfig({});\n"),
+	// The one the invariant could not see: a manifest-kind file importing another.
+	file('web/.vite.mockport.config.ts', "import base from './vite.config.ts';\nexport default { ...base };\n"),
+	file('web/eslint.config.js', 'export default [];\n'),
+	file('web/src/main.ts', "import '../vite.config.ts';\nexport const main = 1;\n"),
+	file('Makefile', 'DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/app\nrun:\n\techo hi\n'),
+	file('infra/docker-compose.yml', 'services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n    environment:\n      POSTGRES_USER: app\n      POSTGRES_PASSWORD: secret\n      POSTGRES_DB: app\n'),
+];
+
+/** Independent of `resolveTs`, deliberately: see the assertion that uses it. */
+const resolveRel = (from, spec) => {
+	const stack = [];
+	for (const part of `${from.slice(0, from.lastIndexOf('/') + 1)}${spec}`.split('/')) {
+		if (part === '..') { stack.pop(); } else if (part && part !== '.') { stack.push(part); }
+	}
+	return stack.join('/');
+};
+
 const stageOf = (plan, id) => plan.steps[id].stage;
 const stageIndex = (plan, id) => plan.stages.findIndex((s) => s.id === stageOf(plan, id));
 
@@ -374,6 +402,67 @@ const cases = {
 	'an empty project plans nothing rather than crashing': () => {
 		const plan = buildPlan([], { name: 'nothing', reference: '/ref' });
 		assert.deepStrictEqual([plan.stages.length, plan.counts.steps], [0, 0]);
+	},
+
+	// --- WO-79's three, all pure functions over the emitted plan ---------------
+	// Each of these was a defect the 413/23 invariant could not see, because that
+	// one asks "is the ORDER valid" and these ask "is the SURFACE honest".
+
+	// 1 — no step claims to be a leaf while naming a dependency. `whyNow`'s
+	//     "nothing in this project" branches are only reachable with no deps and
+	//     no depStages, so the honest form of the assertion is about EXTRACTION:
+	//     a step with no edges must not name another step in its own text.
+	//     Re-derived here on purpose — a test that reuses the extractor it is
+	//     checking cannot catch an extractor that never looks.
+	'no step with no dependencies names another step in its own text': () => {
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		const ids = new Set(Object.keys(plan.steps));
+		const claiming = [];
+		for (const step of Object.values(plan.steps)) {
+			if (step.deps.length || step.depStages.length) {
+				continue;
+			}
+			const text = configs().find((f) => f.path === step.id)?.text ?? '';
+			for (const m of text.matchAll(/['"](\.[^'"]+)['"]/g)) {
+				const target = resolveRel(step.id, m[1]);
+				if (ids.has(target)) {
+					claiming.push(`${step.id} names ${target} and says it is a leaf`);
+				}
+			}
+		}
+		assert.deepStrictEqual(claiming, [], claiming.join('\n'));
+		// And the edges that make it non-trivial are the ones that were invisible.
+		assert.deepStrictEqual(plan.steps['web/.vite.mockport.config.ts'].deps, ['web/vite.config.ts']);
+		assert.deepStrictEqual(plan.steps['web/tsconfig.json'].deps, ['web/tsconfig.app.json']);
+		assert.deepStrictEqual(plan.steps['web/package-lock.json'].deps, ['web/package.json']);
+	},
+
+	// 2 — a generate step's command succeeding on nothing is not a pass. The
+	//     model's half of it: the precondition must be attached and must name an
+	//     input the command actually reads.
+	'a generate step carries the precondition its command reads': () => {
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		const lock = plan.steps['web/package-lock.json'].checks.find((c) => c.kind === 'shell');
+		assert.deepStrictEqual([lock.needs.dir, lock.needs.match], ['web', 'package.json']);
+		const mod = buildPlan(project(), { name: 'app', reference: '/ref' }).steps['backend/go.mod'].checks.find((c) => c.kind === 'shell');
+		assert.deepStrictEqual([mod.needs.dir, mod.needs.match], ['backend', '.go']);
+		for (const step of Object.values(plan.steps)) {
+			if (step.mode === 'generate') {
+				assert.ok(step.checks.some((c) => c.kind === 'shell' && c.needs), `${step.id} can pass on an empty directory`);
+			}
+		}
+	},
+
+	// The compose file's own database, and the file that contradicts it.
+	'a compose database is named, and a disagreeing URL beside it is too': () => {
+		const plan = buildPlan(configs(), { name: 'web', reference: '/ref' });
+		const note = plan.steps['infra/docker-compose.yml'].note;
+		assert.match(note, /postgres:\/\/app:secret@localhost:5432\/app/);
+		assert.match(note, /Makefile/);
+		assert.match(note, /postgres:\/\/postgres:postgres@localhost:5432\/app/);
+		// …and no warning at all when the project does not contradict itself.
+		const quiet = buildPlan(configs().filter((f) => f.path !== 'Makefile'), { name: 'web', reference: '/ref' });
+		assert.doesNotMatch(quiet.steps['infra/docker-compose.yml'].note, /⚠︎|disagree/);
 	},
 };
 
