@@ -23,7 +23,7 @@ import { Progress, StepState, overallTally, percent, stageTally, stateOf } from 
 // quiet inset stage, theme tokens only.
 
 export type PageMessage =
-	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'exitFocus' }
+	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'terminal' | 'exitFocus' }
 	| { readonly type: 'goto'; readonly id: string }
 	| { readonly type: 'tool'; readonly command: string };
 
@@ -248,7 +248,7 @@ function milestoneBlock(plan: ScratchPlan, stage: ScratchStage, step: ScratchSte
 		<h2>Now run it</h2>
 		<p class="lede">${escape(m.label)}. <span class="quiet">${markdown(m.why)}</span></p>
 		<ul class="links"><li><code>${escape(m.command)}</code>${m.cwd ? `<span class="quiet"> — in ${escape(m.cwd)}</span>` : ''}</li></ul>
-		<div class="actions"><button class="primary" data-act="milestone">${escape(m.label)}</button></div>
+		<div class="actions"><button class="primary" data-act="milestone">Open a terminal — you type it</button></div>
 		<p class="quiet">The ${settled} files of ${escape(stage.title)} are what this needs.</p>
 	</section>`;
 }
@@ -517,10 +517,12 @@ function html(state: PageState): string {
 
 	${stage.setup.length ? `<section><h2>Run once</h2><p class="quiet">Before this stage's checks can pass:</p>
 		<ul class="links">${stage.setup.map((s) => `<li><code>${escape(s)}</code></li>`).join('')}</ul>
-		<div class="actions"><button data-act="setup">Run these in a terminal</button></div></section>` : ''}
+		<div class="actions"><button data-act="setup">Open a terminal — you type these</button></div></section>` : ''}
 
 	<div class="actions">
-		<button class="primary" data-act="open">Open the file</button>
+		${step.mode === 'generate'
+		? `<button class="primary" data-act="terminal">Open a terminal in ${escape(step.commandCwd || '.')}</button>`
+		: `<button class="primary" data-act="open">Open the file</button>`}
 		<button data-act="check"${state.running ? ' disabled' : ''}>${state.running ? 'Checking…' : 'Run the checks'}</button>
 		<button data-act="reference">Show the reference</button>
 		${step.mode === 'copy' || !settled ? `<button data-act="copy">Copy the reference in</button>` : ''}
@@ -533,13 +535,18 @@ function html(state: PageState): string {
 	// WO-60: which step this tab is on, and how far down it you had read. The
 	// plan and your progress are on disk in the scratch folder — the page holds
 	// a pointer into them, never a copy.
-	vscode.setState({ stepId: ${JSON.stringify(state.stepId)}, scroll: (vscode.getState() || {}).scroll || 0 });
-	const restoreScroll = (vscode.getState() || {}).scroll || 0;
+	// The scroll slot is per STEP. A single global slot restored the PREVIOUS
+	// step's offset on every switch — a wart the tab-follow listener would have
+	// turned from occasional into constant.
+	const stepId = ${JSON.stringify(state.stepId)};
+	const saved = vscode.getState() || {};
+	const restoreScroll = saved.stepId === stepId ? (saved.scroll || 0) : 0;
+	vscode.setState({ stepId, scroll: restoreScroll });
 	if (restoreScroll) { window.scrollTo(0, restoreScroll); }
 	let scrollTimer;
 	window.addEventListener('scroll', () => {
 		clearTimeout(scrollTimer);
-		scrollTimer = setTimeout(() => vscode.setState({ stepId: ${JSON.stringify(state.stepId)}, scroll: window.scrollY }), 200);
+		scrollTimer = setTimeout(() => vscode.setState({ stepId, scroll: window.scrollY }), 200);
 	});
 	document.addEventListener('click', (e) => {
 		const act = e.target.closest('[data-act]');

@@ -25,13 +25,23 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-scratch",
 		"watch": "gulp watch-extension:burrow-scratch",
-		"test": "node test/planModel.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js && node test/concepts.test.js"
+		"test": "node test/planModel.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js && node test/concepts.test.js && node test/ghost.test.js && node test/workspace.test.js"
 	},
 	"contributes": {
 		"commands": [
 			{
 				"command": "burrow.scratch.start",
 				"title": "New Scratch Build\u2026",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.openBuild",
+				"title": "Open Scratch Build…",
+				"category": "Scratch"
+			},
+			{
+				"command": "burrow.scratch.terminal",
+				"title": "Open This Step's Terminal",
 				"category": "Scratch"
 			},
 			{
@@ -140,6 +150,10 @@
 					"when": "burrow.scratch.active"
 				},
 				{
+					"command": "burrow.scratch.terminal",
+					"when": "burrow.scratch.active"
+				},
+				{
 					"command": "burrow.scratch.replan",
 					"when": "burrow.scratch.active"
 				}
@@ -187,6 +201,12 @@
 					"default": "",
 					"scope": "window",
 					"markdownDescription": "Path to a flowscan `flows.json`, used only to annotate steps with the routes they serve. Empty looks for `.burrow/flows.json` beside the reference project. Annotations are omitted entirely when the file is missing or reports a degraded scan."
+				},
+				"burrow.scratch.ghostText": {
+					"type": "boolean",
+					"default": true,
+					"scope": "window",
+					"markdownDescription": "Show the next characters of the reference as faded ghost text while typing a step. The guide goes quiet when your file diverges from the reference — on purpose."
 				},
 				"burrow.scratch.notesDir": {
 					"type": "string",

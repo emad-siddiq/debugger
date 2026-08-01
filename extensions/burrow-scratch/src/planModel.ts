@@ -835,8 +835,20 @@ function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?:
 		// …and exiting 0 with nothing to work on is the OTHER one. A generated file
 		// is derived from inputs; with no inputs the command succeeds at doing
 		// nothing, so the verdict is "could not run yet", never a pass.
+		//
+		// The CHECK's command is guarded against a rerun; the step's own `command`
+		// — the one the page teaches and the learner types — stays clean. `go mod
+		// init` refuses to run when a go.mod already exists, so a learner who
+		// typed the command in a terminal (the intended path) would then watch the
+		// check fail on "already exists". POSIX `||`/`&&` are equal-precedence and
+		// left-associative, so this parses as `(test || init) && tidy` — tidy
+		// always runs, init only when the file is missing. `npm install` is
+		// already idempotent and needs no guard.
+		const rerunSafe = baseName(step.id) === 'go.mod' && step.command
+			? `[ -f go.mod ] || ${step.command}`
+			: step.command;
 		return [
-			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: step.command, cwd: step.commandCwd, needs: generateInputs(step) },
+			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: rerunSafe, cwd: step.commandCwd, needs: generateInputs(step) },
 			{ kind: 'exists', label: 'the file exists and is not empty' },
 		];
 	}

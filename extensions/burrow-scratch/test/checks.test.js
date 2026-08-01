@@ -68,6 +68,18 @@ const cases = {
 		assert.match(summarize({ results: [missing], verdict: 'unavailable' }), /not on PATH/);
 	},
 
+	'a check whose directory does not exist yet is too-early, not a blank fail': async () => {
+		// Empty-start scratches have no directories until a step is reached, and
+		// exec with a nonexistent cwd used to produce `fail` with EMPTY output —
+		// a red verdict with no words, about the learner's code, wrong twice.
+		const result = await runCheck(root, undefined, {
+			kind: 'shell', label: 'builds', cmd: 'true', cwd: 'not/there/yet',
+		});
+		assert.strictEqual(result.verdict, 'unavailable');
+		assert.strictEqual(result.reason, 'too-early');
+		assert.match(result.output, /not\/there\/yet/);
+	},
+
 	'a run is only a pass when every check answered': async () => {
 		fs.writeFileSync(path.join(root, 'file.txt'), 'x');
 		const run = await runChecks(root, 'file.txt', [

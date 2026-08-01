@@ -27,6 +27,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CheckRun, preconditionMet, runChecks, summarize } from './checks';
 import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, routeIndex } from './planModel';
+import { ghostLines, ghostSuggestion } from './ghost';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
@@ -41,13 +42,92 @@ export function activate(context: vscode.ExtensionContext): void {
 	const log = vscode.window.createOutputChannel('Burrow Scratch');
 	context.subscriptions.push(log);
 
-	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.start', () => startScratch(log)));
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.start', () => startScratch(context, log)));
+	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.openBuild', () => openScratchBuild(context)));
 
 	if (root && isScratch(root)) {
+		recordScratch(context, root);
 		activateScratch(context, root, log);
 	} else {
 		void vscode.commands.executeCommand('setContext', 'burrow.scratch.active', false);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Finding your way back — a scratch is a folder, and folders get lost
+// ---------------------------------------------------------------------------
+
+const MRU_KEY = 'burrow.scratch.mru';
+
+/** Cross-window MRU of scratch roots, newest first. `globalState` because a
+ *  scratch is opened FROM other windows — the reference window, an empty one. */
+function recordScratch(context: vscode.ExtensionContext, root: string): void {
+	const mru = (context.globalState.get<string[]>(MRU_KEY) ?? []).filter((p) => p !== root);
+	void context.globalState.update(MRU_KEY, [root, ...mru].slice(0, 20));
+}
+
+/** Where new scratches go by default — also where old ones are looked for. */
+function scratchHome(): string {
+	const configured = vscode.workspace.getConfiguration('burrow.scratch').get<string>('location', '');
+	return configured ? configured.replace(/^~/, os.homedir()) : path.join(os.homedir(), 'Burrow Scratch');
+}
+
+/**
+ * "Scratch: Open Scratch Build…" — resume a rebuild without re-planning it.
+ *
+ * Candidates are the MRU plus a one-level scan of the default location, so a
+ * scratch made before the MRU existed is still found. Progress shown on each
+ * row comes from SCRATCH.md's own headline — parsing the 1.5 MB plan.json per
+ * row would make a QuickPick cost more than the thing it opens.
+ */
+async function openScratchBuild(context: vscode.ExtensionContext): Promise<void> {
+	const seen = new Set<string>();
+	const candidates: string[] = [];
+	for (const p of context.globalState.get<string[]>(MRU_KEY) ?? []) {
+		if (!seen.has(p) && isScratch(p)) {
+			seen.add(p);
+			candidates.push(p);
+		}
+	}
+	try {
+		for (const entry of fs.readdirSync(scratchHome(), { withFileTypes: true })) {
+			const p = path.join(scratchHome(), entry.name);
+			if (entry.isDirectory() && !seen.has(p) && isScratch(p)) {
+				seen.add(p);
+				candidates.push(p);
+			}
+		}
+	} catch { /* no default location yet — the MRU is the whole list */ }
+	// Prune the MRU of anything that stopped being a scratch (deleted, moved).
+	void context.globalState.update(MRU_KEY, (context.globalState.get<string[]>(MRU_KEY) ?? []).filter((p) => seen.has(p)));
+
+	if (!candidates.length) {
+		void vscode.window.showInformationMessage('No scratch builds found — start one with "Scratch: New Scratch Build…" from the project you want to rebuild.');
+		return;
+	}
+	const here = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	const items = candidates.map((p) => {
+		let description = '';
+		try {
+			// writeIndex's exact headline: `**NN%** — X of Y files (…)`.
+			const m = /\*\*(\d+)%\*\*\s+—\s+(\d+) of (\d+) files/.exec(fs.readFileSync(path.join(p, 'SCRATCH.md'), 'utf8'));
+			if (m) {
+				description = `${m[1]}% · ${m[2]} of ${m[3]} files`;
+			}
+		} catch { /* no index — the path still identifies it */ }
+		return {
+			label: path.basename(p),
+			description: p === here ? 'this window' : description,
+			detail: p,
+			path: p,
+		};
+	});
+	const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Resume a scratch build', matchOnDetail: true });
+	if (!picked || picked.path === here) {
+		return;
+	}
+	await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(picked.path),
+		{ forceNewWindow: !!vscode.workspace.workspaceFolders?.length });
 }
 
 export function deactivate(): void {
@@ -155,7 +235,7 @@ function guessBackend(reference: string): string {
 	return reference;
 }
 
-async function startScratch(log: vscode.OutputChannel): Promise<void> {
+async function startScratch(context: vscode.ExtensionContext, log: vscode.OutputChannel): Promise<void> {
 	const folder = vscode.workspace.workspaceFolders?.[0];
 	if (!folder) {
 		void vscode.window.showWarningMessage('Open the project you want to rebuild first — Scratch plans it from the folder you have open.');
@@ -181,6 +261,25 @@ async function startScratch(log: vscode.OutputChannel): Promise<void> {
 		return;
 	}
 	const dest = answer.replace(/^~/, os.homedir());
+
+	// A destination that is ALREADY a scratch has a decision attached, and
+	// re-planning silently is not it: opening picks up exactly where the learner
+	// stopped, re-planning rewrites plan.json against a reference that may have
+	// moved. Ask.
+	if (isScratch(dest)) {
+		const choice = await vscode.window.showInformationMessage(
+			`${path.basename(dest)} is already a scratch build. Open it where you left off, or re-plan it against ${folder.name} first?`,
+			'Open it', 'Re-plan and open',
+		);
+		if (choice === undefined) {
+			return;
+		}
+		if (choice === 'Open it') {
+			recordScratch(context, dest);
+			await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest), { forceNewWindow: true });
+			return;
+		}
+	}
 
 	const plan = await vscode.window.withProgress(
 		{ location: vscode.ProgressLocation.Notification, title: `Scratch: reading ${folder.name}…`, cancellable: false },
@@ -209,6 +308,7 @@ async function startScratch(log: vscode.OutputChannel): Promise<void> {
 		return;
 	}
 
+	recordScratch(context, dest);
 	await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest), { forceNewWindow: true });
 }
 
@@ -297,6 +397,89 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	};
 
 	/**
+	 * The type-along guide (WO-82): the next characters of the reference render
+	 * as ghost text ahead of the cursor while the learner types a `write` step.
+	 *
+	 * The rule lives in ghost.ts, pure and unit-tested; this wrapper only maps a
+	 * document to its step and its reference. It stays SYNCHRONOUS on purpose —
+	 * reference lines come from an in-memory cache, so nothing can change between
+	 * reading the position and returning, and no version guard is needed. Make it
+	 * async and it grows one.
+	 *
+	 * Deliberately keyed off the DOCUMENT, never `currentId()`: the learner may
+	 * type in a tab before the follow-listener has made it current, and the guide
+	 * must already be there.
+	 */
+	const referenceLines = new Map<string, readonly string[]>();
+	const referenceFor = (id: string): readonly string[] => {
+		let lines = referenceLines.get(id);
+		if (!lines) {
+			try {
+				lines = ghostLines(fs.readFileSync(path.join(plan.reference, id), 'utf8'));
+			} catch {
+				lines = [];  // reference unreadable → the guide stays quiet, forever
+			}
+			referenceLines.set(id, lines);
+		}
+		return lines;
+	};
+	context.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider(
+		{ scheme: 'file', pattern: new vscode.RelativePattern(root, '**') },
+		{
+			provideInlineCompletionItems: (document, position) => {
+				if (!vscode.workspace.getConfiguration('burrow.scratch').get<boolean>('ghostText', true)) {
+					return undefined;
+				}
+				const rel = path.relative(root, document.uri.fsPath).split(path.sep).join('/');
+				if (rel.startsWith('..') || plan.steps[rel]?.mode !== 'write') {
+					return undefined;
+				}
+				const doc = ghostLines(document.getText());
+				const suggestion = ghostSuggestion(referenceFor(rel), doc, position.line, position.character);
+				return suggestion ? [new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))] : undefined;
+			},
+		},
+	));
+
+	/**
+	 * The page follows the TABS, not only the rail.
+	 *
+	 * Navigation used to be one-directional — rail/page → editor — so clicking an
+	 * editor tab left the step page stuck on whatever `goto` last set: the one
+	 * concrete "switching files doesn't work well" complaint. This is the other
+	 * direction. Guards, each load-bearing:
+	 *
+	 *   - `viewColumn === undefined` excludes diff-editor sides — the "Compare
+	 *     With the Reference" contract says a diff does NOT make its row current —
+	 *     plus output and peek editors;
+	 *   - `rel === progress.current` is what stops it fighting `goto`, which sets
+	 *     current BEFORE opening the file, so the event arrives as a no-op;
+	 *   - `checks = undefined` exactly as `goto` does: `checksBlock` matches
+	 *     results to checks by label, and labels repeat across steps, so a stale
+	 *     run would paint the previous step's verdicts onto this one;
+	 *   - `page.refresh`, never `page.show` — following must not OPEN the page as
+	 *     a side effect.
+	 */
+	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+		if (!editor || editor.viewColumn === undefined || editor.document.uri.scheme !== 'file') {
+			return;
+		}
+		const rel = path.relative(root, editor.document.uri.fsPath).split(path.sep).join('/');
+		if (rel.startsWith('..') || path.isAbsolute(rel) || !plan.steps[rel] || rel === progress.current) {
+			return;
+		}
+		checks = undefined;
+		save(setCurrent(progress, rel, new Date().toISOString()), false);
+		tree.update(plan, progress);
+		badge();
+		page.refresh({ plan, progress, stepId: rel, checks, running });
+		const node = tree.find(rel);
+		if (node && view.visible) {
+			view.reveal(node, { select: true, focus: false }).then(undefined, () => { /* branch not rendered yet */ });
+		}
+	}));
+
+	/**
 	 * Open a step's file when there is one to open.
 	 *
 	 * A `generate` step has no file until its command has run, and creating an
@@ -321,12 +504,28 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		return true;
 	};
 
+	/** A `generate` step's command runs INSIDE the directory it populates, and in
+	 *  an empty-start scratch that directory does not exist until the step is
+	 *  reached. Reaching it is what creates it. */
+	const ensureGenerateCwd = (id: string): string => {
+		const step = plan.steps[id];
+		const rel = step.mode === 'generate' ? (step.commandCwd ?? path.dirname(id)) : '';
+		const abs = path.join(root, rel === '.' ? '' : rel);
+		fs.mkdirSync(abs, { recursive: true });
+		return abs;
+	};
+
 	const runStepChecks = async (id: string): Promise<CheckRun> => {
 		running = true;
 		page.refresh({ plan, progress, stepId: id, checks, running });
 		try {
+			if (plan.steps[id].mode === 'generate') {
+				ensureGenerateCwd(id);
+			}
 			const run = await runChecks(root, id, plan.steps[id].checks);
-			checks = run;
+			// Keep the run for the page only while this step is still the one on
+			// it — the shared slot must not outlive a tab switch (see the finally).
+			checks = currentId() === id ? run : undefined;
 			log.appendLine(`check ${id}: ${run.verdict} — ${summarize(run)}`);
 			// The real verdict, all three of them. Folding `unavailable` into `pass`
 			// here is what let a stage go green on checks that never executed.
@@ -334,7 +533,13 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			return run;
 		} finally {
 			running = false;
-			page.refresh({ plan, progress, stepId: id, checks, running });
+			// The CURRENT step, not the captured one. The tab-follow listener can
+			// move the page while a check runs, and a final refresh pinned to the
+			// step that ran would yank the page back — worse, `checksBlock` matches
+			// results to checks by LABEL, and "the file exists and is not empty" is
+			// every step's label, so another step's page would wear these verdicts.
+			const showing = currentId() ?? id;
+			page.refresh({ plan, progress, stepId: showing, checks, running });
 			tree.update(plan, progress);
 		}
 	};
@@ -382,6 +587,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
 			case 'setup': return void vscode.commands.executeCommand('burrow.scratch.setup');
 			case 'milestone': return void vscode.commands.executeCommand('burrow.scratch.milestone');
+			case 'terminal': return void vscode.commands.executeCommand('burrow.scratch.terminal');
 			case 'goto': return void goto(message.id);
 			case 'tool': {
 				try {
@@ -419,7 +625,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			// Not an error, and worth saying rather than opening an empty tab: the
 			// toolchain writes this file, and the step's own check is what runs it.
 			void vscode.window.showInformationMessage(
-				`${step.title} is not written by hand — run \`${step.command}\`${step.commandCwd ? ` in ${step.commandCwd}` : ''}, or press "Run the checks", which runs it for you.`);
+				`${step.title} is not written by hand — press "Open a terminal in ${step.commandCwd || '.'}" and type \`${step.command}\`, then "Run the checks" to verify.`);
 			return;
 		}
 		if (stateOf(progress, id) === 'todo') {
@@ -537,16 +743,34 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		return goto(next);
 	}) as never);
 
+	// EMPTY, deliberately — this and the two terminals below. The commands are
+	// printed on the step page, and the learner types them. A terminal that runs
+	// things for you is a button wearing a prompt; the whole premise of scratch
+	// mode is that the fingers do the work, and a command you typed once is a
+	// command you own. (Requested in as many words: the terminal pops up, the
+	// command stays on the page, you type it.)
 	register('burrow.scratch.setup', (() => {
 		const stage = plan.stages.find((s) => s.id === plan.steps[currentId() ?? '']?.stage);
 		if (!stage?.setup.length) {
 			return;
 		}
-		const terminal = vscode.window.createTerminal({ name: 'Scratch setup', cwd: root });
-		terminal.show();
-		for (const line of stage.setup) {
-			terminal.sendText(line);
+		vscode.window.createTerminal({ name: 'Scratch setup', cwd: root }).show();
+	}) as never);
+
+	/**
+	 * A terminal in the directory a `generate` step's command runs in — created
+	 * on demand, because in an empty-start scratch the directory does not exist
+	 * until the learner reaches the step. Opening the terminal is reaching it.
+	 */
+	register('burrow.scratch.terminal', (() => {
+		const id = currentId();
+		const step = id ? plan.steps[id] : undefined;
+		if (!id || !step || step.mode !== 'generate') {
+			return;
 		}
+		const cwd = ensureGenerateCwd(id);
+		vscode.window.createTerminal({ name: `Scratch — ${step.commandCwd || '.'}`, cwd }).show();
+		log.appendLine(`terminal for ${id} (cwd ${step.commandCwd || '.'})`);
 	}) as never);
 
 	/**
@@ -558,9 +782,10 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	 * again, and edit. A milestone whose result vanishes into a notification is a
 	 * magic trick.
 	 *
-	 * The precondition is checked first and refuses rather than running: a
-	 * `docker compose up` against a compose file nobody has written yet fails with
-	 * the tool's own words, which are about YAML rather than about the plan.
+	 * The precondition WARNS now rather than refusing: since WO-82 the terminal
+	 * executes nothing — the learner types the command off the page — so opening
+	 * one early is harmless, and blocking a terminal is hostile. The warning
+	 * still says why the command will not work yet.
 	 */
 	register('burrow.scratch.milestone', (async () => {
 		const stage = plan.stages.find((s) => s.id === plan.steps[currentId() ?? '']?.stage);
@@ -570,12 +795,14 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 		if (milestone.needs && !preconditionMet(root, milestone.needs)) {
 			void vscode.window.showWarningMessage(`${milestone.label} — not yet: ${milestone.needs.why}`);
-			return;
 		}
-		const terminal = vscode.window.createTerminal({ name: `Scratch — ${stage.title}`, cwd: path.join(root, milestone.cwd) });
-		terminal.show();
-		terminal.sendText(milestone.command);
-		log.appendLine(`milestone ${stage.id}: ${milestone.command} (cwd ${milestone.cwd || '.'})`);
+		// mkdir first: a terminal handed a nonexistent cwd falls back to $HOME
+		// silently, and the learner's typed command then runs in the wrong place —
+		// the worst failure mode a typing tutorial can have.
+		const cwd = path.join(root, milestone.cwd);
+		fs.mkdirSync(cwd, { recursive: true });
+		vscode.window.createTerminal({ name: `Scratch — ${stage.title}`, cwd }).show();
+		log.appendLine(`milestone terminal ${stage.id}: learner types \`${milestone.command}\` (cwd ${milestone.cwd || '.'})`);
 	}) as never);
 
 	register('burrow.scratch.replan', (async () => {

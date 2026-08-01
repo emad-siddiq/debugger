@@ -84,6 +84,17 @@ export async function runCheck(root: string, stepId: string | undefined, check: 
 		};
 	}
 	const cwd = path.join(root, check.cwd ?? '');
+	// A scratch starts with NO directories, so a check can arrive before the
+	// place it runs in exists. `exec` with a nonexistent cwd fails with a blank
+	// ENOENT — a red verdict with no words, about the learner's code, which is
+	// wrong twice. It is the same fact as an unmet precondition: too early.
+	if (!fs.existsSync(cwd)) {
+		return {
+			check, verdict: 'unavailable', reason: 'too-early',
+			output: `${check.cwd || '.'}/ does not exist yet — nothing there to check.`,
+			durationMs: Date.now() - started,
+		};
+	}
 	const { code, output } = await runShell(check.cmd ?? '', cwd, timeoutMs);
 	const durationMs = Date.now() - started;
 	if (isMissingTool(output, code)) {

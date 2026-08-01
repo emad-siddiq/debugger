@@ -76,14 +76,13 @@ export function materialize(root: string, plan: ScratchPlan, now: string): Progr
 	fs.mkdirSync(path.join(root, SCRATCH_DIR), { recursive: true });
 	fs.writeFileSync(planPath(root), `${JSON.stringify(plan, undefined, '\t')}\n`);
 
-	// Directories only. An empty file would make `go build` and the checks pass
-	// for work that has not been done.
-	for (const id of Object.keys(plan.steps)) {
-		const dir = path.dirname(path.join(root, id));
-		if (dir !== root) {
-			fs.mkdirSync(dir, { recursive: true });
-		}
-	}
+	// NO source directories, and no files. A fresh scratch is the plan, the
+	// progress, and an index — nothing else. This used to pre-create the
+	// directory of every step, and 478 empty directories are not "from scratch":
+	// the shape of the project was already answered before the first keystroke.
+	// Directories now appear exactly when the learner reaches a step inside them
+	// (`ensureFile`, the generate-step terminal, the check runner), so the tree
+	// on disk grows along the path actually walked.
 
 	const progress = readProgress(root, now);
 	writeProgress(root, progress);
