@@ -286,9 +286,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		//
 		// A PREVIEW tab replaces itself, so walking the plan does not leave one
 		// tab per file behind — the same rule the API view follows.
-		const uri = vscode.Uri.file(ensureFile(root, id, plan.steps[id]?.mode));
-		const doc = await vscode.workspace.openTextDocument(uri);
-		await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: focusPage, viewColumn: vscode.ViewColumn.One });
+		await openIfPresent(id, { preview: true, preserveFocus: focusPage, viewColumn: vscode.ViewColumn.One });
 		page.show({ plan, progress, stepId: id, checks, running }, focusPage);
 		const node = tree.find(id);
 		if (node && view.visible) {
@@ -296,6 +294,31 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 				await view.reveal(node, { select: true, focus: false });
 			} catch { /* the tree may not have rendered that branch yet */ }
 		}
+	};
+
+	/**
+	 * Open a step's file when there is one to open.
+	 *
+	 * A `generate` step has no file until its command has run, and creating an
+	 * empty one is exactly what WO-79 removed: `go mod init` REFUSES to run when
+	 * a `go.mod` is already there, so pre-creating it made step 1 of the plan
+	 * permanently unpassable. What WO-79 did not follow through is this half —
+	 * three call sites still assumed `ensureFile` had created something, so
+	 * clicking the first row of a fresh scratch threw
+	 * `Unable to resolve nonexistent file …/test/go.mod` and took the rest of the
+	 * navigation (the page, the tree selection, the reveal) down with it.
+	 *
+	 * The page opens either way. There is nothing to type on a generate step, so
+	 * there is nothing to be in the editor for.
+	 */
+	const openIfPresent = async (id: string, options: vscode.TextDocumentShowOptions): Promise<boolean> => {
+		const abs = ensureFile(root, id, plan.steps[id]?.mode);
+		if (!fs.existsSync(abs)) {
+			return false;
+		}
+		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+		await vscode.window.showTextDocument(doc, options);
+		return true;
 	};
 
 	const runStepChecks = async (id: string): Promise<CheckRun> => {
@@ -391,8 +414,14 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		if (!id) {
 			return;
 		}
-		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(ensureFile(root, id, plan.steps[id]?.mode)));
-		await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
+		const step = plan.steps[id];
+		if (!await openIfPresent(id, { preview: false, viewColumn: vscode.ViewColumn.One })) {
+			// Not an error, and worth saying rather than opening an empty tab: the
+			// toolchain writes this file, and the step's own check is what runs it.
+			void vscode.window.showInformationMessage(
+				`${step.title} is not written by hand — run \`${step.command}\`${step.commandCwd ? ` in ${step.commandCwd}` : ''}, or press "Run the checks", which runs it for you.`);
+			return;
+		}
 		if (stateOf(progress, id) === 'todo') {
 			save(setState(progress, id, 'writing', new Date().toISOString()));
 		}
@@ -408,7 +437,14 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		// A DIFF, not the file: side by side with what you have written, so the
 		// reference answers "what is still missing" instead of being a thing to
 		// copy out of.
-		ensureFile(root, id, plan.steps[id]?.mode);
+		// …and a diff needs two sides. A `generate` step has no file until its
+		// command has run, so show the reference on its own rather than diffing
+		// against something that is not there.
+		if (!fs.existsSync(ensureFile(root, id, plan.steps[id]?.mode))) {
+			const reference = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(plan.reference, id)));
+			await vscode.window.showTextDocument(reference, { preview: true });
+			return;
+		}
 		await vscode.commands.executeCommand(
 			'vscode.diff',
 			vscode.Uri.file(path.join(plan.reference, id)),
