@@ -11,10 +11,12 @@
  *  whether we ask at all.
  *--------------------------------------------------------------------------------------------*/
 
+import * as crypto from 'crypto';
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { missingCliMessage, resolveClaudeCli } from './claudeCli';
 import { ClaudeSession, ParkedPermission, PermissionPolicy, TurnDelegate, TurnOutcome } from './session';
+import { collectWorkbenchContext } from './workbenchContext';
 
 const PERMISSION_DATA_KIND = 'burrow.claude.permission';
 const SESSION_MAP_STORAGE_KEY = 'burrow.chat.claudeSessionIds';
@@ -36,6 +38,9 @@ const COMMAND_PROMPTS: Record<string, string> = {
 
 export class BurrowChatParticipant {
 	private readonly sessions = new Map<string, ClaudeSession>();
+	/** Digest of the workbench block last sent per chat session — with --resume
+	 *  the model keeps history, so an unchanged block never rides twice. */
+	private readonly sentContext = new Map<string, string>();
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
@@ -76,7 +81,7 @@ export class BurrowChatParticipant {
 			return this.settle(outcome, stream, sessionKey, token);
 		}
 
-		const prompt = this.composePrompt(request);
+		const prompt = this.composePrompt(request) + this.workbenchBlock(sessionKey);
 		const outcome = await session.startTurn(prompt, {
 			cliPath: cli.path,
 			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
@@ -169,9 +174,13 @@ export class BurrowChatParticipant {
 		const attachments: string[] = [];
 		const diagnosticTargets: { uri: vscode.Uri; range?: vscode.Range }[] = [];
 		for (const ref of request.references ?? []) {
+			// CLAUDE.md and .claude/** are loaded by the CLI itself from cwd —
+			// re-attaching them (the implicit-context chip does, whenever one is
+			// the active editor) sends the model a file it already has.
+			const target = uriOfReference(ref);
+			if (target && isCliOwnedContext(target.uri)) { continue; }
 			const line = renderReference(ref);
 			if (line) { attachments.push(line); }
-			const target = uriOfReference(ref);
 			if (target) { diagnosticTargets.push(target); }
 		}
 		if (attachments.length) {
@@ -220,6 +229,22 @@ export class BurrowChatParticipant {
 				return { policy: allowAll ? 'allowAll' : 'ask' };
 			}
 		}
+	}
+
+	/**
+	 * The workbench-state block for this turn, or '' when nothing is live or
+	 * nothing changed since the block last rode this session.
+	 */
+	private workbenchBlock(sessionKey: string): string {
+		if (!vscode.workspace.getConfiguration('burrow.chat').get<boolean>('workbenchContext', true)) {
+			return '';
+		}
+		const block = collectWorkbenchContext();
+		if (!block) { return ''; }
+		const digest = crypto.createHash('sha256').update(block).digest('hex');
+		if (this.sentContext.get(sessionKey) === digest) { return ''; }
+		this.sentContext.set(sessionKey, digest);
+		return '\n\n' + block;
 	}
 
 	// --- session registry ---------------------------------------------------------------------
@@ -331,6 +356,11 @@ function renderReference(ref: vscode.ChatPromptReference): string | undefined {
 		return vscode.workspace.asRelativePath(v.uri);
 	}
 	return undefined;
+}
+
+function isCliOwnedContext(uri: vscode.Uri): boolean {
+	const p = uri.path;
+	return /\/CLAUDE\.(md|local\.md)$/.test(p) || p.includes('/.claude/');
 }
 
 function uriOfReference(ref: vscode.ChatPromptReference): { uri: vscode.Uri; range?: vscode.Range } | undefined {

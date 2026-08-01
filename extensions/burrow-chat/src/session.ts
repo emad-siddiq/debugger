@@ -99,6 +99,11 @@ export class ClaudeSession {
 
 		const env = { ...process.env };
 		delete env['ELECTRON_RUN_AS_NODE'];
+		// An ANTHROPIC_* var inherited from whatever shell launched the IDE would
+		// silently switch the CLI from the user's login to API-key billing.
+		for (const key of Object.keys(env)) {
+			if (key.startsWith('ANTHROPIC_')) { delete env[key]; }
+		}
 
 		const child = spawn(opts.cliPath, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env });
 		this.child = child;

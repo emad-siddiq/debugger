@@ -87,6 +87,11 @@
 					"default": "",
 					"markdownDescription": "Path to the `claude` CLI. Leave empty to resolve from PATH and the usual install locations."
 				},
+				"burrow.chat.workbenchContext": {
+					"type": "boolean",
+					"default": true,
+					"description": "Tell the model what the Burrow workbench is showing (isolated component and its stylesheet, live database connection, routes through the active file). Paths only, re-sent within a session only when it changes."
+				},
 				"burrow.chat.permissionMode": {
 					"type": "string",
 					"enum": [

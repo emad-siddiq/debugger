@@ -26,7 +26,14 @@ function folderName(): string | undefined {
 	return root ? path.basename(root) : undefined;
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+/** What this extension lets OTHER extensions read (burrow-chat's workbench
+ *  context, mirroring FrontendDebuggerApi). Read-only: the traced FlowsDoc as
+ *  it currently stands, or undefined before the first trace. */
+export interface BurrowFlowApi {
+	readonly doc: () => import('./model').FlowsDoc | undefined;
+}
+
+export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 	const log = vscode.window.createOutputChannel('Burrow Flow');
 	const tree = new FlowsTree();
 	const panel = new DiagramPanel();
@@ -240,6 +247,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		fs.writeFileSync(outPath, content);
 		await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(outPath)), { preview: false });
 	}));
+
+	return { doc: () => tree.document };
 }
 
 export function deactivate(): void {

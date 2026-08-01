@@ -56,6 +56,9 @@ export class ClaudeModelProvider implements vscode.LanguageModelChatProvider<Cla
 
 		const env = { ...process.env };
 		delete env['ELECTRON_RUN_AS_NODE'];
+		for (const key of Object.keys(env)) {
+			if (key.startsWith('ANTHROPIC_')) { delete env[key]; }
+		}
 		const child = spawn(cli.path, [...args, transcriptOf(messages)], {
 			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
 			stdio: ['ignore', 'pipe', 'pipe'],
