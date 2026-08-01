@@ -15,7 +15,9 @@ import * as crypto from 'crypto';
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { missingCliMessage, resolveClaudeCli } from './claudeCli';
-import { admitAttachment } from './contextFilter';
+import { admitAttachment, isCliOwnedContext } from './contextFilter';
+import { resolveViewContext, ViewContext } from './contextResolver';
+import { FocusTracker } from './focusTracker';
 import { ClaudeSession, ParkedPermission, PermissionPolicy, TRACE_PROMPT, TurnDelegate, TurnOutcome, tracePrompt } from './session';
 import { collectWorkbenchContext } from './workbenchContext';
 
@@ -42,28 +44,22 @@ export class BurrowChatParticipant {
 	/** Digest of the workbench block last sent per chat session — with --resume
 	 *  the model keeps history, so an unchanged block never rides twice. */
 	private readonly sentContext = new Map<string, string>();
-	/** Last DEFINED active text editor. At submit time the chat input holds
-	 *  focus and this fork reports activeTextEditor as undefined, so "the user
-	 *  is editing X" is: X was the last active text editor and is still visible. */
-	private lastActiveTextEditorPath: string | undefined;
+	/** Focus + editing-path tracking (plan chat/02) — owns the phase-1 variant:
+	 *  at submit time the chat input holds focus and this fork reports
+	 *  activeTextEditor as undefined, so "editing X" = last active + still visible. */
+	private readonly tracker = new FocusTracker();
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
 	register(): vscode.Disposable {
-		this.context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(e => {
-			if (e) { this.lastActiveTextEditorPath = e.document.uri.path; }
-		}));
+		this.context.subscriptions.push(this.tracker);
 		const participant = vscode.chat.createChatParticipant('burrow.chat', this.handle.bind(this));
 		participant.iconPath = new vscode.ThemeIcon('sparkle');
 		return participant;
 	}
 
-	/** The path the user is editing right now, surviving focus moving into the chat input. */
 	private editingPath(): string | undefined {
-		const active = vscode.window.activeTextEditor?.document.uri.path;
-		if (active) { return active; }
-		const last = this.lastActiveTextEditorPath;
-		return last && vscode.window.visibleTextEditors.some(e => e.document.uri.path === last) ? last : undefined;
+		return this.tracker.editingPath();
 	}
 
 	private async handle(
@@ -109,11 +105,16 @@ export class BurrowChatParticipant {
 			});
 			tracePrompt('request.references', [
 				`command=${request.command ?? ''} activeEditor=${vscode.window.activeTextEditor?.document.uri.toString() ?? 'undefined'}`,
-				`editingPath=${this.editingPath() ?? 'undefined'} lastActive=${this.lastActiveTextEditorPath ?? 'undefined'} visible=[${vscode.window.visibleTextEditors.map(e => e.document.uri.path.split('/').pop()).join(',')}]`,
+				`editingPath=${this.editingPath() ?? 'undefined'} surface=${this.tracker.current() ?? 'none'} visible=[${vscode.window.visibleTextEditors.map(e => e.document.uri.path.split('/').pop()).join(',')}]`,
 				...refs,
 			].join('\n'));
 		}
-		const prompt = this.composePrompt(request) + this.workbenchBlock(sessionKey);
+		// A context feature must never delay or break sending (invariant 8).
+		const viewCtx = await Promise.race([
+			resolveViewContext(this.tracker),
+			new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 500)),
+		]).then(v => v, () => undefined);
+		const prompt = this.composePrompt(request, viewCtx) + this.workbenchBlock(sessionKey);
 		const outcome = await session.startTurn(prompt, {
 			cliPath: cli.path,
 			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
@@ -190,7 +191,7 @@ export class BurrowChatParticipant {
 		return undefined;
 	}
 
-	private composePrompt(request: vscode.ChatRequest): string {
+	private composePrompt(request: vscode.ChatRequest, viewCtx?: ViewContext): string {
 		const parts: string[] = [];
 		if (request.command === 'init') {
 			// The empty state's "Generate Agent Instructions" submits /init; Claude
@@ -216,6 +217,18 @@ export class BurrowChatParticipant {
 			if (line) { attachments.push(line); }
 			if (target) { diagnosticTargets.push(target); }
 		}
+
+		// View-resolved implicit context (plan chat/02 step 5): primaries render
+		// through the same renderer shapes; Rule A's denylist still applies (with
+		// the editing exemption); explicit attachments win the dedupe.
+		for (const p of viewCtx?.primaries ?? []) {
+			if (isCliOwnedContext(p.uri.path) && p.uri.path !== this.editingPath()) { continue; }
+			const rel = vscode.workspace.asRelativePath(p.uri).replace(/\\/g, '/');
+			const line = p.range ? `${rel} lines ${p.range.start.line + 1}-${p.range.end.line + 1}` : rel;
+			if (attachments.some(a => a === line || a === rel || a.startsWith(`${rel} lines`))) { continue; }
+			attachments.push(line);
+		}
+
 		if (attachments.length) {
 			parts.push('Attachments:\n' + attachments.map(a => `- ${a}`).join('\n'));
 		}

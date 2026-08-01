@@ -31,6 +31,9 @@ export interface FrontendDebuggerApi {
 	/** Whether the dev sidecar is up, and on which port — the Run view's
 	 *  Frontend tier reads this instead of probing a port it does not own. */
 	readonly sidecar: () => { phase: 'stopped' | 'starting' | 'running'; uiPort: number; targetUrl?: string };
+	/** Last component selected in the Components tree (chat plan P2, R5 amendment). */
+	readonly selectedComponent: () => { file: string; label: string } | undefined;
+	readonly onDidChangeComponentSelection: vscode.Event<{ file: string; label: string } | undefined>;
 }
 
 export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi {
@@ -46,6 +49,21 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		return cfg.targetDir ? path.join(cfg.targetDir, 'src') : undefined;
 	});
 	const componentsView = vscode.window.createTreeView('burrowComponents', { treeDataProvider: components });
+
+	// Component-selection API (chat plan P2, R5 amendment): remember the last
+	// component leaf the user selected; re-announce on visibility. Selection
+	// only — the provider and its FS scan are untouched.
+	let selectedComponent: { file: string; label: string } | undefined;
+	const componentSelection = new vscode.EventEmitter<{ file: string; label: string } | undefined>();
+	context.subscriptions.push(componentSelection);
+	componentsView.onDidChangeSelection((e) => {
+		const leaf = e.selection.find((n: any) => n?.kind === 'component') as { abs: string; label: string } | undefined;
+		if (leaf) { selectedComponent = { file: leaf.abs, label: leaf.label }; }
+		componentSelection.fire(selectedComponent);
+	}, undefined, context.subscriptions);
+	componentsView.onDidChangeVisibility((e) => {
+		if (e.visible && selectedComponent) { componentSelection.fire(selectedComponent); }
+	}, undefined, context.subscriptions);
 	context.subscriptions.push(
 		componentsView,
 		// Tool-surface isolation (docs/plans/02 §6): the Components tool owns the
@@ -310,6 +328,8 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 
 	return {
 		isolation: () => currentIsolation(),
+		selectedComponent: () => selectedComponent,
+		onDidChangeComponentSelection: componentSelection.event,
 		sidecar: () => {
 			const phase = sidecarPhase();
 			// The URL the target app is actually served at — the Full Stack

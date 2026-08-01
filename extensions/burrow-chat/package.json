@@ -27,7 +27,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-chat",
 		"watch": "gulp watch-extension:burrow-chat",
-		"test": "node test/contextFilter.test.js"
+		"test": "node test/contextFilter.test.js && node test/styleImports.test.js"
 	},
 	"contributes": {
 		"chatParticipants": [

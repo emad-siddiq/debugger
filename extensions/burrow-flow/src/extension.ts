@@ -31,6 +31,11 @@ function folderName(): string | undefined {
  *  it currently stands, or undefined before the first trace. */
 export interface BurrowFlowApi {
 	readonly doc: () => import('./model').FlowsDoc | undefined;
+	/** Last route selected in the Routes view (chat plan P2, deferred-lane amendment). */
+	readonly selectedRoute: () => import('./model').Flow | undefined;
+	readonly onDidChangeRouteSelection: vscode.Event<import('./model').Flow | undefined>;
+	/** Flow.file/node.file are backend-relative; this is the dir they resolve against. */
+	readonly backendDir: () => string | undefined;
 }
 
 export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
@@ -46,6 +51,21 @@ export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 	// sentence above the tree, present only when there is something to say.
 	const view = vscode.window.createTreeView('burrowFlowRoutes', { treeDataProvider: tree });
 	context.subscriptions.push(view);
+
+	// Route-selection API (chat plan P2): remember the last FlowItem the user
+	// selected; re-announce it when the view regains visibility. Selection only —
+	// the tree's data and commands are untouched.
+	let selectedRoute: import('./model').Flow | undefined;
+	const routeSelection = new vscode.EventEmitter<import('./model').Flow | undefined>();
+	context.subscriptions.push(routeSelection);
+	view.onDidChangeSelection((e) => {
+		const item = e.selection.find((n): n is FlowItem => n instanceof FlowItem);
+		if (item) { selectedRoute = item.flow; }
+		routeSelection.fire(selectedRoute);
+	}, undefined, context.subscriptions);
+	view.onDidChangeVisibility((e) => {
+		if (e.visible && selectedRoute) { routeSelection.fire(selectedRoute); }
+	}, undefined, context.subscriptions);
 
 	const cached = cachedFlowsFile(context);
 	if (cached) {
@@ -248,7 +268,12 @@ export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 		await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(outPath)), { preview: false });
 	}));
 
-	return { doc: () => tree.document };
+	return {
+		doc: () => tree.document,
+		selectedRoute: () => selectedRoute,
+		onDidChangeRouteSelection: routeSelection.event,
+		backendDir: () => detectProject()?.backendDir,
+	};
 }
 
 export function deactivate(): void {
