@@ -25,6 +25,10 @@ interface FlowApiLite {
 
 export class FocusTracker implements vscode.Disposable {
 	private last: { surface: Surface; at: number } | undefined;
+	/** Every surface's most recent touch — resolution tries them newest-first,
+	 *  so a stale mark (an editor whose tab has closed) falls through to the
+	 *  next most recent surface instead of a fixed order. */
+	private readonly stamps = new Map<Surface, number>();
 	/** Last DEFINED active text editor — at submit time the chat input holds
 	 *  focus and this fork reports activeTextEditor as undefined (phase-1 finding). */
 	private lastActiveTextEditorPath: string | undefined;
@@ -48,10 +52,16 @@ export class FocusTracker implements vscode.Disposable {
 
 	record(surface: Surface): void {
 		this.last = { surface, at: Date.now() };
+		this.stamps.set(surface, this.last.at);
 	}
 
 	current(): Surface | undefined {
 		return this.last?.surface;
+	}
+
+	/** Surfaces in descending recency of their last touch. */
+	ordered(): Surface[] {
+		return [...this.stamps.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s);
 	}
 
 	/** The path the user is editing right now, surviving focus moving into the chat input. */
@@ -68,8 +78,8 @@ export class FocusTracker implements vscode.Disposable {
 			const api = activeExports<ComponentsApiLite>('burrow.burrow-frontend-debugger');
 			if (api?.onDidChangeComponentSelection) {
 				this.disposables.push(api.onDidChangeComponentSelection(() => this.record('components')));
-				if (!this.last && (api.selectedComponent?.() ?? api.isolation?.())) {
-					this.last = { surface: 'components', at: 1 };
+				if ((api.selectedComponent?.() ?? api.isolation?.()) && this.seedable()) {
+					this.record('components');
 				}
 				this.componentsHooked = true;
 			}
@@ -78,12 +88,20 @@ export class FocusTracker implements vscode.Disposable {
 			const api = activeExports<FlowApiLite>('burrow.burrow-flow');
 			if (api?.onDidChangeRouteSelection) {
 				this.disposables.push(api.onDidChangeRouteSelection(() => this.record('routes')));
-				if (!this.last && api.selectedRoute?.()) {
-					this.last = { surface: 'routes', at: 1 };
+				if (api.selectedRoute?.() && this.seedable()) {
+					this.record('routes');
 				}
 				this.routesHooked = true;
 			}
 		}
+	}
+
+	/** A first-hook seed may claim the surface only when nothing was recorded, or
+	 *  when the recorded surface no longer resolves to anything (an 'editor' mark
+	 *  left by a since-closed tab — the isolate flow opens and closes one). */
+	private seedable(): boolean {
+		if (!this.last) { return true; }
+		return this.last.surface === 'editor' && !this.editingPath();
 	}
 
 	dispose(): void {

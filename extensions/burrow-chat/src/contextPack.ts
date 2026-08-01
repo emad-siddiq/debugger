@@ -12,6 +12,7 @@ import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isCliOwnedContext } from './contextFilter';
 import { lastComponentRead, ViewContext } from './contextResolver';
 import { activeExports } from './focusTracker';
 import { ContextPack, finalizePack, Neighbor } from './packModel';
@@ -53,7 +54,11 @@ export async function buildContextPack(ctx: ViewContext, budgetChars = 2400, cov
 	// seed kinds 'file' and 'symbol' have no one-hop sources yet ('callers' was
 	// dropped: anchoring a reference query off flowscan line info is imprecise
 	// enough to break the pack's high-precision contract — see the phase report).
-	return finalizePack(ctx.surface, primary, neighbors, budgetChars, coveredPaths);
+	//
+	// Hygiene (plan chat/04 step 4): the CLI's own context files never appear in
+	// a pack, whatever relation found them.
+	neighbors = neighbors.filter(n => !isCliOwnedContext('/' + n.path));
+	return finalizePack(ctx.surface, primary.filter(p => !isCliOwnedContext('/' + p)), neighbors, budgetChars, coveredPaths);
 }
 
 export class FlowsAndScanIndex implements StructuralIndex {
@@ -178,7 +183,10 @@ function reverseRoutesOf(doc: FlowsDocLite): Map<string, FlowLiteFull[]> {
 function ripgrepImporters(base: string, selfFile: string): Promise<string[]> {
 	const root = workspaceRoot();
 	if (!root) { return Promise.resolve([]); }
+	// The packaged app ships the universal package with a platform-suffixed bin
+	// dir; a source checkout ships the plain one. PATH is the last resort.
 	const rgBin = [
+		path.join(vscode.env.appRoot, 'node_modules', '@vscode/ripgrep-universal', 'bin', `${process.platform}-${process.arch}`, 'rg'),
 		path.join(vscode.env.appRoot, 'node_modules', '@vscode/ripgrep', 'bin', 'rg'),
 		'rg',
 	].find(p => p === 'rg' || fs.existsSync(p));

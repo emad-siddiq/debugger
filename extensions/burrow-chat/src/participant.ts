@@ -16,8 +16,10 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import { missingCliMessage, resolveClaudeCli } from './claudeCli';
 import { admitAttachment, isCliOwnedContext } from './contextFilter';
+import { buildContextPack } from './contextPack';
 import { resolveViewContext, ViewContext } from './contextResolver';
 import { FocusTracker } from './focusTracker';
+import { renderContextPack, shouldEmitPack } from './packModel';
 import { ClaudeSession, ParkedPermission, PermissionPolicy, TRACE_PROMPT, TurnDelegate, TurnOutcome, tracePrompt } from './session';
 import { collectWorkbenchContext } from './workbenchContext';
 
@@ -109,18 +111,21 @@ export class BurrowChatParticipant {
 				...refs,
 			].join('\n'));
 		}
-		// A context feature must never delay or break sending (invariant 8).
-		const viewCtx = await Promise.race([
+		// Off ⇒ no view-resolved context at all: packs AND resolver both skip
+		// (acceptance row #6 — explicit attachments only). A context feature must
+		// never delay or break sending (invariant 8), hence the races.
+		const packEnabled = vscode.workspace.getConfiguration('burrow.chat').get<boolean>('contextPack.enabled', true);
+		const viewCtx = packEnabled ? await Promise.race([
 			resolveViewContext(this.tracker),
 			new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 500)),
-		]).then(v => v, () => undefined);
-		const prompt = this.composePrompt(request, viewCtx) + this.workbenchBlock(sessionKey);
+		]).then(v => v, () => undefined) : undefined;
+		const prompt = await this.composePrompt(request, viewCtx) + this.workbenchBlock(sessionKey);
 		const outcome = await session.startTurn(prompt, {
 			cliPath: cli.path,
 			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
 			model: this.cliModelOf(request),
 			...this.permissionsOf(request),
-			appendSystemPrompt: 'You are the assistant inside Burrow, a Go-focused IDE. Chat attachments arrive as workspace-relative paths (with 1-based line ranges for selections); read them with your tools before answering.',
+			appendSystemPrompt: 'You are the assistant inside Burrow, a Go-focused IDE. Chat attachments arrive as workspace-relative paths (with 1-based line ranges for selections); read them with your tools before answering. A context_pack block lists the artifact the user is focused on and its immediate repo relationships as workspace-relative paths; treat it as a map — answer from it directly when it suffices, and open the listed files with your tools when you need contents.',
 		}, this.delegateFor(stream, session));
 		return this.settle(outcome, stream, sessionKey, token);
 	}
@@ -191,7 +196,7 @@ export class BurrowChatParticipant {
 		return undefined;
 	}
 
-	private composePrompt(request: vscode.ChatRequest, viewCtx?: ViewContext): string {
+	private async composePrompt(request: vscode.ChatRequest, viewCtx?: ViewContext): Promise<string> {
 		const parts: string[] = [];
 		if (request.command === 'init') {
 			// The empty state's "Generate Agent Instructions" submits /init; Claude
@@ -218,19 +223,39 @@ export class BurrowChatParticipant {
 			if (target) { diagnosticTargets.push(target); }
 		}
 
-		// View-resolved implicit context (plan chat/02 step 5): primaries render
-		// through the same renderer shapes; Rule A's denylist still applies (with
-		// the editing exemption); explicit attachments win the dedupe.
+		// Range-carrying primaries (a live selection, a stopped frame) render as
+		// attachment lines — the pack's primary attribute cannot carry a range.
+		// Rule A's denylist still applies (with the editing exemption); explicit
+		// attachments win the dedupe. Rangeless primaries ride in the pack only.
 		for (const p of viewCtx?.primaries ?? []) {
+			if (!p.range) { continue; }
 			if (isCliOwnedContext(p.uri.path) && p.uri.path !== this.editingPath()) { continue; }
 			const rel = vscode.workspace.asRelativePath(p.uri).replace(/\\/g, '/');
-			const line = p.range ? `${rel} lines ${p.range.start.line + 1}-${p.range.end.line + 1}` : rel;
+			const line = `${rel} lines ${p.range.start.line + 1}-${p.range.end.line + 1}`;
 			if (attachments.some(a => a === line || a === rel || a.startsWith(`${rel} lines`))) { continue; }
 			attachments.push(line);
 		}
 
 		if (attachments.length) {
 			parts.push('Attachments:\n' + attachments.map(a => `- ${a}`).join('\n'));
+		}
+
+		// The context pack (plan chat/04 step 1): after the attachment lines,
+		// rendered by the same serializer the budget math ran against.
+		if (viewCtx) {
+			const started = Date.now();
+			const explicit = attachments.map(a => a.split(' lines ')[0]);
+			const pack = await Promise.race([
+				buildContextPack(viewCtx, 2400, explicit),
+				new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 800)),
+			]).then(p => p, () => undefined);
+			if (pack && shouldEmitPack(pack, explicit)) {
+				const block = renderContextPack(pack);
+				if (block) {
+					parts.push(block);
+					if (TRACE_PROMPT) { tracePrompt('pack', `built in ${Date.now() - started}ms, ${block.length} chars`); }
+				}
+			}
 		}
 
 		// /fix grounds itself in the live diagnostics of the attached files.

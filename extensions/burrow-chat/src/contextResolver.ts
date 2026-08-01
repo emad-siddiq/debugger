@@ -44,13 +44,23 @@ interface FlowApi {
 
 export async function resolveViewContext(tracker: FocusTracker): Promise<ViewContext | undefined> {
 	tracker.ensureSubscriptions();
-	const surface = tracker.current() ?? (tracker.editingPath() ? 'editor' : undefined);
+	// Surfaces resolve newest-touch-first; a surface that stopped resolving (an
+	// editor mark whose tab is gone) falls through to the next most recent one.
+	// The trailing entries cover surfaces never event-recorded this session.
+	const order: Surface[] = [...new Set<Surface>([...tracker.ordered(), 'editor', 'components', 'routes'])];
+	for (const surface of order) {
+		const ctx = await resolveSurface(surface, tracker);
+		if (ctx) { return ctx; }
+	}
+	return undefined;
+}
+
+function resolveSurface(surface: Surface, tracker: FocusTracker): Promise<ViewContext | undefined> | ViewContext | undefined {
 	switch (surface) {
-		case 'components': return (await componentsContext()) ?? editorContext(tracker);
-		case 'routes': return (await routesContext()) ?? editorContext(tracker);
-		case 'debug': return (await debugContext()) ?? editorContext(tracker);
+		case 'components': return componentsContext();
+		case 'routes': return routesContext();
+		case 'debug': return debugContext();
 		case 'editor': return editorContext(tracker);
-		default: return undefined;
 	}
 }
 
@@ -144,7 +154,15 @@ export async function stylesheetsOf(component: vscode.Uri): Promise<PrimaryArtif
 	}
 	if (!found.length) {
 		const base = path.basename(component.fsPath).replace(/\.[^.]+$/, '');
-		for (const name of [`${base}.module.css`, `${base}.css`, 'styles.css']) {
+		// Beyond the plan's three probes: kebab-case and folder-name variants —
+		// merkle's page-first css puts alerts-panel.css beside AlertsPanel.tsx and
+		// imports it from index.css, so no import scan can ever see it.
+		const kebab = base.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+		const names = [...new Set([
+			`${base}.module.css`, `${base}.css`, 'styles.css',
+			`${kebab}.css`, `${kebab}.module.css`, `${path.basename(dir)}.css`,
+		])];
+		for (const name of names) {
 			if (found.length >= 3 || Date.now() > deadline) { break; }
 			const probe = vscode.Uri.file(path.join(dir, name));
 			if (await exists(probe)) {

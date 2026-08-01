@@ -88,6 +88,12 @@
 					"default": "",
 					"markdownDescription": "Path to the `claude` CLI. Leave empty to resolve from PATH and the usual install locations."
 				},
+				"burrow.chat.contextPack.enabled": {
+					"type": "boolean",
+					"default": true,
+					"scope": "window",
+					"description": "Attach a context pack (focused artifact + repo relationships) to chat messages."
+				},
 				"burrow.chat.workbenchContext": {
 					"type": "boolean",
 					"default": true,
