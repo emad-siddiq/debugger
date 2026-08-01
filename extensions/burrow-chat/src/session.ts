@@ -25,6 +25,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import * as fs from 'fs';
+import * as vscode from 'vscode';
+
+/** Outgoing-prompt tracing (plan chat/01 step 1). Off in shipped builds; Phase 4's
+ *  E2E matrix flips it on to assert byte-identical packs and message contents. */
+export const TRACE_PROMPT = false;
+let traceChannel: vscode.OutputChannel | undefined;
+export function tracePrompt(tag: string, text: string): void {
+	if (!TRACE_PROMPT) { return; }
+	traceChannel ??= vscode.window.createOutputChannel('Burrow Chat Trace');
+	const entry = `--- ${tag} ${new Date().toISOString()} ---\n${text}\n--- end ${tag} ---`;
+	traceChannel.appendLine(entry);
+	try { fs.appendFileSync('/tmp/burrow-chat-trace.log', entry + '\n'); } catch { /* capture is best-effort */ }
+}
 
 export interface ParkedPermission {
 	readonly controlRequestId: string;
@@ -122,6 +136,7 @@ export class ClaudeSession {
 			if (this.child === child) { this.child = undefined; }
 		});
 
+		tracePrompt('outgoing user message', userText);
 		child.stdin.write(JSON.stringify({
 			type: 'user',
 			message: { role: 'user', content: [{ type: 'text', text: userText }] },

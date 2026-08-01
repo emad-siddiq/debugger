@@ -15,7 +15,8 @@ import * as crypto from 'crypto';
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { missingCliMessage, resolveClaudeCli } from './claudeCli';
-import { ClaudeSession, ParkedPermission, PermissionPolicy, TurnDelegate, TurnOutcome } from './session';
+import { admitAttachment } from './contextFilter';
+import { ClaudeSession, ParkedPermission, PermissionPolicy, TRACE_PROMPT, TurnDelegate, TurnOutcome, tracePrompt } from './session';
 import { collectWorkbenchContext } from './workbenchContext';
 
 const PERMISSION_DATA_KIND = 'burrow.claude.permission';
@@ -41,13 +42,28 @@ export class BurrowChatParticipant {
 	/** Digest of the workbench block last sent per chat session — with --resume
 	 *  the model keeps history, so an unchanged block never rides twice. */
 	private readonly sentContext = new Map<string, string>();
+	/** Last DEFINED active text editor. At submit time the chat input holds
+	 *  focus and this fork reports activeTextEditor as undefined, so "the user
+	 *  is editing X" is: X was the last active text editor and is still visible. */
+	private lastActiveTextEditorPath: string | undefined;
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
 	register(): vscode.Disposable {
+		this.context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(e => {
+			if (e) { this.lastActiveTextEditorPath = e.document.uri.path; }
+		}));
 		const participant = vscode.chat.createChatParticipant('burrow.chat', this.handle.bind(this));
 		participant.iconPath = new vscode.ThemeIcon('sparkle');
 		return participant;
+	}
+
+	/** The path the user is editing right now, surviving focus moving into the chat input. */
+	private editingPath(): string | undefined {
+		const active = vscode.window.activeTextEditor?.document.uri.path;
+		if (active) { return active; }
+		const last = this.lastActiveTextEditorPath;
+		return last && vscode.window.visibleTextEditors.some(e => e.document.uri.path === last) ? last : undefined;
 	}
 
 	private async handle(
@@ -81,6 +97,22 @@ export class BurrowChatParticipant {
 			return this.settle(outcome, stream, sessionKey, token);
 		}
 
+		if (TRACE_PROMPT) {
+			// Phase-1 diagnosis (plan chat/01 step 2): which channel carries each reference.
+			const refs = (request.references ?? []).map(r => {
+				const v: any = r.value;
+				const shape = v instanceof vscode.Uri ? `Uri ${v.toString()}`
+					: v instanceof vscode.Location ? `Location ${v.uri.toString()} ${v.range.start.line + 1}-${v.range.end.line + 1}`
+						: typeof v === 'string' ? `string(${v.length})`
+							: v && v.uri instanceof vscode.Uri ? `{uri} ${v.uri.toString()}` : typeof v;
+				return `id=${r.id} name=${(r as any).name} ${shape}`;
+			});
+			tracePrompt('request.references', [
+				`command=${request.command ?? ''} activeEditor=${vscode.window.activeTextEditor?.document.uri.toString() ?? 'undefined'}`,
+				`editingPath=${this.editingPath() ?? 'undefined'} lastActive=${this.lastActiveTextEditorPath ?? 'undefined'} visible=[${vscode.window.visibleTextEditors.map(e => e.document.uri.path.split('/').pop()).join(',')}]`,
+				...refs,
+			].join('\n'));
+		}
 		const prompt = this.composePrompt(request) + this.workbenchBlock(sessionKey);
 		const outcome = await session.startTurn(prompt, {
 			cliPath: cli.path,
@@ -174,11 +206,12 @@ export class BurrowChatParticipant {
 		const attachments: string[] = [];
 		const diagnosticTargets: { uri: vscode.Uri; range?: vscode.Range }[] = [];
 		for (const ref of request.references ?? []) {
-			// CLAUDE.md and .claude/** are loaded by the CLI itself from cwd —
-			// re-attaching them (the implicit-context chip does, whenever one is
-			// the active editor) sends the model a file it already has.
 			const target = uriOfReference(ref);
-			if (target && isCliOwnedContext(target.uri)) { continue; }
+			if (!admitAttachment({
+				id: ref.id,
+				path: target?.uri.path,
+				activeEditorPath: this.editingPath(),
+			})) { continue; }
 			const line = renderReference(ref);
 			if (line) { attachments.push(line); }
 			if (target) { diagnosticTargets.push(target); }
@@ -356,11 +389,6 @@ function renderReference(ref: vscode.ChatPromptReference): string | undefined {
 		return vscode.workspace.asRelativePath(v.uri);
 	}
 	return undefined;
-}
-
-function isCliOwnedContext(uri: vscode.Uri): boolean {
-	const p = uri.path;
-	return /\/CLAUDE\.(md|local\.md)$/.test(p) || p.includes('/.claude/');
 }
 
 function uriOfReference(ref: vscode.ChatPromptReference): { uri: vscode.Uri; range?: vscode.Range } | undefined {
