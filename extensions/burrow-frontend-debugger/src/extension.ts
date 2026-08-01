@@ -14,7 +14,7 @@ import { announceOnVisible, claimSurface } from './toolSurface';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
 import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
-import { pickComponent } from './search';
+import { indexComponents, pickComponent } from './search';
 
 // burrow-frontend-debugger (task 15): hosts the tools/frontend-debugger
 // sidecar in an editor WebviewPanel and bridges its reveals into the editor.
@@ -34,6 +34,8 @@ export interface FrontendDebuggerApi {
 	/** Last component selected in the Components tree (chat plan P2, R5 amendment). */
 	readonly selectedComponent: () => { file: string; label: string } | undefined;
 	readonly onDidChangeComponentSelection: vscode.Event<{ file: string; label: string } | undefined>;
+	/** The component index (search.ts) — names + files, no import edges (chat plan P3, R5). */
+	readonly componentIndex: () => { abs: string; name: string }[];
 }
 
 export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi {
@@ -330,6 +332,13 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		isolation: () => currentIsolation(),
 		selectedComponent: () => selectedComponent,
 		onDidChangeComponentSelection: componentSelection.event,
+		componentIndex: () => {
+			try {
+				return indexComponents(resolveConfig(context).targetDir).map(h => ({ abs: h.abs, name: h.name }));
+			} catch {
+				return [];
+			}
+		},
 		sidecar: () => {
 			const phase = sidecarPhase();
 			// The URL the target app is actually served at — the Full Stack

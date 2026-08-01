@@ -119,12 +119,17 @@ function editorContext(tracker: FocusTracker): ViewContext | undefined {
 
 // --- stylesheet discovery (plan chat/02 step 4, exact algorithm) -------------------------------
 
+/** One-slot cache of the last component source read — the pack builder reuses
+ *  it instead of re-reading (plan chat/03 step 1.3: "reuse, do not re-read"). */
+export let lastComponentRead: { path: string; text: string } | undefined;
+
 export async function stylesheetsOf(component: vscode.Uri): Promise<PrimaryArtifact[]> {
 	const deadline = Date.now() + 100;
 	const found: PrimaryArtifact[] = [];
 	let text: string;
 	try {
 		text = new TextDecoder().decode(await vscode.workspace.fs.readFile(component));
+		lastComponentRead = { path: component.fsPath, text };
 	} catch {
 		return found;
 	}
