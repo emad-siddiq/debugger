@@ -15,6 +15,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	// difference — the id never renders, the displayName does.
 	context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider('copilot', new ClaudeModelProvider()));
 
+	// The picker renders a "sign in" placeholder until some request resolves the
+	// vendor's models — which otherwise first happens on the first chat submit.
+	// Resolving eagerly makes the models live at boot; the list is static, so
+	// this spawns nothing and touches no network.
+	void vscode.lm.selectChatModels({ vendor: 'copilot' }).then(undefined, () => { /* picker stays lazy */ });
+
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.chat.explainSelection', () => openChatWithSelection('/explain this selection')));
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.chat.fixSelection', () => openChatWithSelection('/fix this selection')));
 }
