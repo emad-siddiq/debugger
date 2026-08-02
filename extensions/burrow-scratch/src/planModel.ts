@@ -65,11 +65,14 @@ export interface Check {
 	readonly cmd?: string;
 	/** `shell` only, relative to the scratch root. */
 	readonly cwd?: string;
-	/** `shell` only: output on stdout means FAIL even when the exit code is 0
-	 *  (`gofmt -l` is the case — it prints the files it objects to). */
-	readonly emptyOutput?: boolean;
 	/** `shell` only: exiting 0 with this unmet is not a pass. */
 	readonly needs?: Precondition;
+	/**
+	 * `exists` only: an empty file is a pass, because the reference's own copy of
+	 * this file is empty. Set at plan time from the file's byte count, never
+	 * guessed at check time — see `checksFor`.
+	 */
+	readonly mayBeEmpty?: boolean;
 }
 
 export interface ToolHint {
@@ -807,27 +810,53 @@ function analyse(files: readonly SourceFile[]): Map<string, Analysed> {
 
 /**
  * What a `generate` step's command reads, so that succeeding on nothing is not
- * mistaken for succeeding. Both entries are about the tool, not about any
- * particular project: `go mod tidy` resolves the imports of the Go files in its
- * module, `npm install` resolves the dependencies its `package.json` names.
+ * mistaken for succeeding. About the tool, not about any particular project:
+ * `npm install` resolves the dependencies its `package.json` names.
+ *
+ * `go.mod` USED TO BE HERE, gated on a `.go` file in the module root, and that
+ * was the wrong step to gate. A precondition says "this command has nothing to
+ * work on **yet**", which is only useful when the plan reaches the inputs soon.
+ * It does not: measured against merkle, `backend/go.mod` is step 1 of 2,094 and
+ * the first `.go` beside it is step 594 — and `test/go.mod` was worse, because
+ * that module keeps all its Go in subpackages, so a one-level readdir never
+ * matched and the check could not pass for the whole plan. A step-1 check that
+ * nothing you do can turn green is the same defect as a green tick that means
+ * nothing, viewed from the other side.
+ *
+ * `go mod tidy`'s verdict now belongs to the first Go package stage in each
+ * module, where the files it reads actually exist. See `checksFor`.
  */
 function generateInputs(step: { id: string; commandCwd?: string }): Precondition | undefined {
 	const dir = step.commandCwd ?? dirName(step.id);
 	const base = baseName(step.id);
-	if (base === 'go.mod') {
-		return {
-			dir, match: '.go',
-			why: '`go mod init` has done its half. `go mod tidy` has no Go files to read yet, so it resolved nothing —'
-				+ ' this file will stay near-empty until the module has code in it. Run the check again then.',
-		};
-	}
 	if (LOCK_MANIFEST.has(base)) {
 		return { dir, match: LOCK_MANIFEST.get(base)!, why: `there is no ${LOCK_MANIFEST.get(base)} here for it to install from.` };
 	}
 	return undefined;
 }
 
-function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string }, goModuleDir: string | undefined): Check[] {
+/**
+ * "The file is there" — and, unless the reference's own copy is empty, that it
+ * has something in it.
+ *
+ * A reference file of zero bytes is rare and real: merkle carries one, a
+ * placeholder note under `.claude/docs`. Demanding a non-empty file for it asks
+ * the reader to write something the project does not contain, and the step could
+ * never be completed — the same defect as a check that cannot fail, seen from
+ * the other end. The byte count is already in the plan, so the question is
+ * settled where the reference is in hand rather than by a check that stats a
+ * scratch and cannot know what "correct" is.
+ */
+function existsCheck(bytes: number | undefined): Check {
+	return bytes === 0
+		? { kind: 'exists', label: 'the file exists', mayBeEmpty: true }
+		: { kind: 'exists', label: 'the file exists and is not empty' };
+}
+
+function checksFor(
+	step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string; modulePath?: string; bytes?: number },
+	goModuleDir: string | undefined,
+): Check[] {
 	if (step.mode === 'generate') {
 		// Run it, then prove it produced something. Both, in that order: a command
 		// that exits 0 without writing the file is the failure worth catching.
@@ -844,23 +873,56 @@ function checksFor(step: { id: string; kind: StepKind; mode: StepMode; command?:
 		// left-associative, so this parses as `(test || init) && tidy` — tidy
 		// always runs, init only when the file is missing. `npm install` is
 		// already idempotent and needs no guard.
+		if (baseName(step.id) === 'go.mod' && step.modulePath) {
+			// A go.mod step asks for `go mod init`, and that is ALL a go.mod step can
+			// deliver: the `require` block is written by `go mod tidy` reading code
+			// that this step, by construction, comes before. So the checks assert the
+			// half that is achievable here and the third one makes that honest —
+			// `go mod init` with no argument infers a module path from the folder
+			// name, which succeeds and is wrong, and nothing else would catch it.
+			//
+			// The `go` directive is deliberately NOT asserted: `go mod init` writes
+			// the toolchain that ran it, so a reference declaring a newer one is a
+			// difference the learner cannot close and must not be failed for.
+			return [
+				{ kind: 'shell', label: `\`go mod init ${step.modulePath}\` succeeds`, cmd: `[ -f go.mod ] || go mod init ${step.modulePath}`, cwd: step.commandCwd },
+				existsCheck(step.bytes),
+				{
+					kind: 'shell', label: `it declares module ${step.modulePath}`, cwd: step.commandCwd,
+					// `-F` so a `.` in the module path is a dot and not "any character",
+					// `-x` so a longer path that merely starts with this one is not a
+					// pass. `-q` is silent, and a red verdict with no words is the thing
+					// checks.ts exists to prevent — so say what the file actually has.
+					cmd: `grep -Fqx "module ${step.modulePath}" go.mod`
+						+ ` || { echo "go.mod declares: $(head -1 go.mod)"; echo "expected:      module ${step.modulePath}"; exit 1; }`,
+				},
+			];
+		}
 		const rerunSafe = baseName(step.id) === 'go.mod' && step.command
 			? `[ -f go.mod ] || ${step.command}`
 			: step.command;
 		return [
 			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: rerunSafe, cwd: step.commandCwd, needs: generateInputs(step) },
-			{ kind: 'exists', label: 'the file exists and is not empty' },
+			existsCheck(step.bytes),
 		];
 	}
-	const checks: Check[] = [{ kind: 'exists', label: 'the file exists and is not empty' }];
+	const checks: Check[] = [existsCheck(step.bytes)];
 	if (step.mode === 'copy') {
 		return checks;
 	}
 	if (step.kind === 'go' || step.kind === 'gotest') {
-		// Per-FILE and dependency-free: gofmt parses the file and reports it when
-		// it does not round-trip. `go build` cannot be a step check because a
-		// half-written package legitimately does not build yet.
-		checks.push({ kind: 'shell', label: 'it parses and is gofmt-clean', cmd: `gofmt -e -l "${step.id}"`, emptyOutput: true });
+		// Per-FILE and dependency-free: gofmt parses the file and says where it
+		// stopped. `go build` cannot be a step check because a half-written package
+		// legitimately does not build yet.
+		//
+		// PARSING ONLY — `-l` used to ride along, failing the step when the file was
+		// not byte-identical to gofmt's own output, and four of merkle's own Go
+		// files are not: `test/oracle/env.go` is missing a blank line before a func.
+		// Reproduce the reference exactly, as the whole feature asks, and the check
+		// went red about work that was correct; the only way to pass was to write
+		// something the project does not contain. Formatting is what the editor
+		// does on save, and a parse error is what the reader needs told.
+		checks.push({ kind: 'shell', label: 'it parses', cmd: `gofmt -e "${step.id}" > /dev/null` });
 	}
 	if (step.kind === 'manifest' && baseName(step.id) === 'go.mod' && goModuleDir !== undefined) {
 		checks.push({ kind: 'shell', label: 'the module resolves', cmd: 'go mod verify', cwd: goModuleDir });
@@ -1134,9 +1196,12 @@ export function buildPlan(
 		for (const p of paths) {
 			const a = analysed.get(p)!;
 			const owner = goModuleOf(p, modules);
-			const gen = generatedBy(p, baseName(p) === 'go.mod' ? modules.get(dirName(p)) : owner?.[1]);
+			// The module path this file DECLARES, not the one it resolves through —
+			// only a go.mod has one, and its checks assert it (see `checksFor`).
+			const declares = baseName(p) === 'go.mod' ? modules.get(dirName(p)) : undefined;
+			const gen = generatedBy(p, baseName(p) === 'go.mod' ? declares : owner?.[1]);
 			const mode: StepMode = gen ? 'generate' : a.kind === 'doc' ? 'copy' : a.kind === 'lock' ? 'copy' : 'write';
-			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd };
+			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd, modulePath: declares, bytes: a.file.bytes };
 			steps[p] = {
 				id: p,
 				stage: stage.id,
@@ -1246,6 +1311,13 @@ export function buildPlan(
 			}
 		}
 	}
+	// `go mod tidy` is the go.mod step's other half, and it lands HERE — on the
+	// first package of each module, which is the earliest point in the plan where
+	// there is Go for it to read. Not on the module root's own stage: `test/`
+	// keeps every one of its packages in a subdirectory, so a root-anchored check
+	// would have no stage to live on and the test module would never get one —
+	// which is the bug this moved away from, rebuilt one level up.
+	const tidied = new Set<string>();
 	for (const dir of topoSort([...goDirs], goEdges)) {
 		const paths = pairTests(
 			(byDir.get(dir) ?? [])
@@ -1256,6 +1328,8 @@ export function buildPlan(
 		const doc = paths.map((p) => analysed.get(p)!.summary).find((s) => s.length > 40);
 		const moduleDir = goModuleOf(paths[0] ?? dir, modules)?.[0] ?? '';
 		const rel = dir === moduleDir ? '.' : `./${dir.slice(moduleDir ? moduleDir.length + 1 : 0)}`;
+		const firstOfModule = !tidied.has(moduleDir);
+		tidied.add(moduleDir);
 		addStage({
 			id: dir,
 			title: dir,
@@ -1263,6 +1337,15 @@ export function buildPlan(
 			cls: 'go',
 			setup: [],
 			checks: [
+				// Before `go build`, because it is what writes the requires the build
+				// then resolves. It stays qualified: a module whose first package is
+				// not written yet has nothing to tidy, and that is not a failure.
+				...(firstOfModule ? [{
+					kind: 'shell' as const,
+					label: `go mod tidy resolves ${moduleDir || '.'}`,
+					cmd: 'go mod tidy', cwd: moduleDir,
+					needs: { dir, match: '.go', why: 'the package has no Go files yet, so there is nothing for it to resolve.' },
+				}] : []),
 				{ kind: 'shell', label: `go build ${rel}`, cmd: `go build ${rel}`, cwd: moduleDir },
 				...(paths.some((p) => p.endsWith('_test.go')) ? [{ kind: 'shell' as const, label: `go test ${rel}`, cmd: `go test ${rel}`, cwd: moduleDir }] : []),
 			],

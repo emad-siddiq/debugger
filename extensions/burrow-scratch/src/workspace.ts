@@ -155,11 +155,27 @@ export function copyReference(root: string, reference: string, stepId: string): 
 	fs.copyFileSync(path.join(reference, stepId), abs);
 }
 
+/**
+ * What the disk says about a step's file.
+ *
+ * `missing` and `empty` are kept apart because conflating them produced the
+ * only check message a learner has ever gone to a shell to disprove: opening a
+ * hand-written step CREATES the file (`ensureFile`), so on the current step
+ * `missing` is nearly impossible and `empty` is the normal starting state —
+ * and the check said "missing or empty" to someone looking at an `ls` that
+ * plainly showed the file. Reported 2026-08-02 on `frontend/package.json`.
+ */
+export type FileState = 'missing' | 'empty' | 'written';
+
+export function fileState(root: string, stepId: string): FileState {
+	try {
+		return fs.statSync(path.join(root, stepId)).size > 0 ? 'written' : 'empty';
+	} catch {
+		return 'missing';
+	}
+}
+
 /** Non-empty on disk — the `exists` check, and what the tree's icons read. */
 export function hasContent(root: string, stepId: string): boolean {
-	try {
-		return fs.statSync(path.join(root, stepId)).size > 0;
-	} catch {
-		return false;
-	}
+	return fileState(root, stepId) === 'written';
 }

@@ -80,6 +80,64 @@ const cases = {
 		assert.match(result.output, /not\/there\/yet/);
 	},
 
+	'an empty file is reported as empty, never as missing': async () => {
+		// Opening a hand-written step CREATES the file, so `empty` is the normal
+		// starting state and `missing` is nearly unreachable. Saying "missing or
+		// empty" to someone whose `ls` shows the file reads as a broken checker,
+		// and it cost a real reader a trip to a terminal to disprove.
+		const step = 'frontend/package.json';
+		fs.mkdirSync(path.join(root, 'frontend'), { recursive: true });
+		fs.writeFileSync(path.join(root, step), '');
+		const empty = await runCheck(root, step, { kind: 'exists', label: 'the file exists and is not empty' });
+		assert.strictEqual(empty.verdict, 'fail');
+		assert.match(empty.output, /there but empty/);
+		assert.doesNotMatch(empty.output, /missing|does not exist/);
+		// And it names the gesture that fixes the commonest cause: unsaved buffer.
+		assert.match(empty.output, /save it/i);
+
+		const gone = await runCheck(root, 'frontend/nope.json', { kind: 'exists', label: 'exists' });
+		assert.strictEqual(gone.verdict, 'fail');
+		assert.match(gone.output, /does not exist yet/);
+	},
+
+	'an empty file passes when the reference leaves it empty': async () => {
+		// The other half of the message above: `empty` is normally an unfinished
+		// step, but merkle has a zero-byte file and for THAT step empty is the
+		// finished article. The plan says which, from the reference's byte count.
+		fs.writeFileSync(path.join(root, 'placeholder.md'), '');
+		const allowed = await runCheck(root, 'placeholder.md', { kind: 'exists', label: 'the file exists', mayBeEmpty: true });
+		assert.strictEqual(allowed.verdict, 'pass');
+		assert.strictEqual(allowed.output, '');
+
+		// The negative: without the flag, the same file still fails. A blanket
+		// "empty is fine" would delete the only check 1,467 written steps have.
+		const strict = await runCheck(root, 'placeholder.md', { kind: 'exists', label: 'the file exists and is not empty' });
+		assert.strictEqual(strict.verdict, 'fail');
+
+		// …and `mayBeEmpty` is about empty, not about absent.
+		const gone = await runCheck(root, 'nowhere.md', { kind: 'exists', label: 'the file exists', mayBeEmpty: true });
+		assert.strictEqual(gone.verdict, 'fail');
+		assert.match(gone.output, /does not exist yet/);
+	},
+
+	'the Go check parses the file and does not judge its whitespace': async () => {
+		// Valid Go that gofmt would reformat. Four of merkle's own files are like
+		// this, and the old `gofmt -e -l` check failed every one of them — i.e. it
+		// failed steps whose content was byte-identical to the reference.
+		const dirty = 'mod/dirty.go';
+		fs.writeFileSync(path.join(root, dirty), 'package mod\nfunc Dirty(){}\n');
+		const ok = await runCheck(root, dirty, { kind: 'shell', label: 'it parses', cmd: `gofmt -e "${dirty}" > /dev/null` });
+		assert.strictEqual(ok.verdict, 'pass');
+
+		// The negative, and the failure that actually matters: a syntax error is
+		// still red, and says where it stopped rather than just naming the file.
+		const broken = 'mod/broken.go';
+		fs.writeFileSync(path.join(root, broken), 'package mod\nfunc Broken( {\n');
+		const bad = await runCheck(root, broken, { kind: 'shell', label: 'it parses', cmd: `gofmt -e "${broken}" > /dev/null` });
+		assert.strictEqual(bad.verdict, 'fail');
+		assert.match(bad.output, /broken\.go:2:/);
+	},
+
 	'a run is only a pass when every check answered': async () => {
 		fs.writeFileSync(path.join(root, 'file.txt'), 'x');
 		const run = await runChecks(root, 'file.txt', [
@@ -88,6 +146,50 @@ const cases = {
 		]);
 		assert.strictEqual(run.verdict, 'unavailable');
 		assert.strictEqual(run.results[0].verdict, 'pass');
+	},
+
+	'the module-line check reads the module path and ignores the go directive': async () => {
+		// The go.mod a learner gets from `go mod init` on THIS machine: two lines,
+		// and a `go` version that is whatever toolchain ran it. The reference may
+		// well declare a newer one — merkle says `go 1.25.0` against a local
+		// go1.24.1 — and that is not a difference the learner can close.
+		const dir = path.join(root, 'mod');
+		const cmd = 'grep -Fqx "module example.com/app" go.mod'
+			+ ' || { echo "go.mod declares: $(head -1 go.mod)"; echo "expected:      module example.com/app"; exit 1; }';
+		fs.writeFileSync(path.join(dir, 'go.mod'), 'module example.com/app\n\ngo 1.24.1\n');
+		const ok = await runCheck(root, 'mod/go.mod', { kind: 'shell', label: 'declares', cmd, cwd: 'mod' });
+		assert.strictEqual(ok.verdict, 'pass');
+
+		// A bare `go mod init` infers a path from the folder name. It succeeds, it
+		// is wrong, and this is the only check that notices — with words, not a
+		// silent -q failure.
+		fs.writeFileSync(path.join(dir, 'go.mod'), 'module mod\n\ngo 1.24.1\n');
+		const wrong = await runCheck(root, 'mod/go.mod', { kind: 'shell', label: 'declares', cmd, cwd: 'mod' });
+		assert.strictEqual(wrong.verdict, 'fail');
+		assert.match(wrong.output, /go\.mod declares: module mod/);
+		assert.match(wrong.output, /expected: +module example\.com\/app/);
+
+		// -F, so a `.` in the module path is a dot; -x, so a longer path that
+		// merely starts with this one is not a pass.
+		fs.writeFileSync(path.join(dir, 'go.mod'), 'module exampleXcom/app\n');
+		assert.strictEqual((await runCheck(root, 'mod/go.mod', { kind: 'shell', label: 'declares', cmd, cwd: 'mod' })).verdict, 'fail');
+		fs.writeFileSync(path.join(dir, 'go.mod'), 'module example.com/app/v2\n');
+		assert.strictEqual((await runCheck(root, 'mod/go.mod', { kind: 'shell', label: 'declares', cmd, cwd: 'mod' })).verdict, 'fail');
+		fs.rmSync(path.join(dir, 'go.mod'));
+	},
+
+	'a run that stops at a failure leaves the rest with no result at all': async () => {
+		// The distinction the page has to draw: these checks did not fail, they
+		// were never reached. Reported here as "fewer results than checks", which
+		// is what `checksBlock` reads to render them as skipped rather than idle.
+		const run = await runChecks(root, 'file.txt', [
+			{ kind: 'shell', label: 'first', cmd: 'echo "syntax error" 1>&2; exit 2' },
+			{ kind: 'shell', label: 'second', cmd: 'true' },
+			{ kind: 'shell', label: 'third', cmd: 'true' },
+		]);
+		assert.strictEqual(run.verdict, 'fail');
+		assert.strictEqual(run.results.length, 1);
+		assert.strictEqual(run.results[0].check.label, 'first');
 	},
 };
 

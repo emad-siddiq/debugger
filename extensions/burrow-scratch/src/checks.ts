@@ -14,7 +14,7 @@ import { exec } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Check, Precondition } from './planModel';
-import { hasContent } from './workspace';
+import { fileState } from './workspace';
 
 /**
  * Why a check could not answer.
@@ -75,11 +75,20 @@ function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: 
 export async function runCheck(root: string, stepId: string | undefined, check: Check, timeoutMs = 120_000): Promise<CheckResult> {
 	const started = Date.now();
 	if (check.kind === 'exists') {
-		const ok = !!stepId && hasContent(root, stepId);
+		const state = stepId ? fileState(root, stepId) : 'missing';
+		const name = stepId ?? 'the file';
+		// `mayBeEmpty` is the reference saying this file is empty in the project
+		// too, so an empty one here is the finished article and not a start.
+		const ok = state === 'written' || (state === 'empty' && check.mayBeEmpty === true);
 		return {
 			check,
 			verdict: ok ? 'pass' : 'fail',
-			output: ok ? '' : `${stepId ?? 'the file'} is missing or empty`,
+			// Say which of the two it is. "Missing or empty" about a file the
+			// learner can see in `ls` reads as the checker being broken, and sends
+			// them to a terminal to argue with it — see `FileState`.
+			output: ok ? ''
+				: state === 'empty' ? `${name} is there but empty — nothing written to it yet. If you have typed into it, save it (⌘S) and run the checks again.`
+					: `${name} does not exist yet.`,
 			durationMs: Date.now() - started,
 		};
 	}
@@ -103,8 +112,7 @@ export async function runCheck(root: string, stepId: string | undefined, check: 
 	if (code !== 0 && isOffline(output)) {
 		return { check, verdict: 'unavailable', reason: 'offline', output, durationMs };
 	}
-	// `gofmt -l` exits 0 and NAMES the files it objects to; silence is the pass.
-	const failed = code !== 0 || (check.emptyOutput === true && output.length > 0);
+	const failed = code !== 0;
 	if (!failed && check.needs && !preconditionMet(root, check.needs)) {
 		return { check, verdict: 'unavailable', reason: 'too-early', output: check.needs.why, durationMs };
 	}
