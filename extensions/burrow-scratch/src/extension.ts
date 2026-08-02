@@ -515,10 +515,31 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		return abs;
 	};
 
+	/**
+	 * Write the learner's typing to disk before any check reads it.
+	 *
+	 * Every check asks the filesystem — `exists` stats the file, `go build` opens
+	 * it — and an editor is under no obligation to have written there yet. Burrow
+	 * ships no autosave and scratch mode sets none, so the obvious gesture — type
+	 * the file, press "Run the checks" — reads a buffer that never reached disk
+	 * and reports the learner's work missing. The one sentence the feature must
+	 * not get wrong, and the ⌘S that avoids it is nowhere on the page.
+	 *
+	 * Scoped to documents inside the scratch. Running a check is not a licence to
+	 * save whatever else happens to be open in the window.
+	 */
+	const flushScratchEdits = async (): Promise<void> => {
+		const inside = `${root}${path.sep}`;
+		await Promise.all(vscode.workspace.textDocuments
+			.filter((doc) => doc.isDirty && doc.uri.scheme === 'file' && doc.uri.fsPath.startsWith(inside))
+			.map((doc) => doc.save()));
+	};
+
 	const runStepChecks = async (id: string): Promise<CheckRun> => {
 		running = true;
 		page.refresh({ plan, progress, stepId: id, checks, running });
 		try {
+			await flushScratchEdits();
 			if (plan.steps[id].mode === 'generate') {
 				ensureGenerateCwd(id);
 			}
@@ -717,7 +738,10 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 		const run = await vscode.window.withProgress(
 			{ location: vscode.ProgressLocation.Notification, title: `Scratch: checking ${stage.title}…` },
-			() => runChecks(root, undefined, stage.checks),
+			async () => {
+				await flushScratchEdits();
+				return runChecks(root, undefined, stage.checks);
+			},
 		);
 		log.appendLine(`check stage ${stage.id}: ${run.verdict} — ${summarize(run)}`);
 		const message = `${stage.title}: ${summarize(run)}`;
