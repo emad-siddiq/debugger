@@ -86,10 +86,42 @@ for v in $(env | grep -oE '^(VSCODE|ELECTRON)[A-Z_]*' | sort -u); do unset "$v";
 On macOS also keep `--user-data-dir` short (e.g. `/tmp/bw`) — the instance IPC
 socket overflows the 103-char unix-socket limit under deep paths.
 
-### Package a standalone .app
+### Build & install the standalone app
 
 ```sh
-make dist    # gulp vscode-darwin-<arch> → .build/electron/Burrow — Go IDE.app
+cd ~/Projects/debugger/burrow
+export PATH="$HOME/.local/burrow-node/current/bin:$PATH"   # Node 24.17.0, as above
+
+make dist      # packaged app → ../VSCode-darwin-<arch>/Burrow — Go IDE.app
+make install   # copy to ~/Applications/Burrow.app + ad-hoc codesign
 ```
+
+Notes that have each cost a debugging session:
+
+- The packaged app is a **sibling of the repo** (`../VSCode-darwin-<arch>/`).
+  `.build/electron/` looks like the app but is the bare Electron shell — no
+  `Resources/app` payload.
+- `make dist` also runs `stage-tools`: gulp does not package `tools/`, and
+  without it the Components rail has no sidecar and API Flows has no tracer.
+  If you re-package by hand, run `make stage-tools` afterwards.
+- `make install` ad-hoc signs (`codesign -s -`) so the local, un-notarized build
+  launches; a fresh install may need one right-click → Open. If it fails with a
+  codesign "Operation not permitted", just re-run it and verify with
+  `codesign -v ~/Applications/Burrow.app`.
+- Quit any running Burrow first — installing replaces the bundle under it.
+- System-wide instead: `sudo make install INSTALL=/Applications/Burrow.app`.
+
+**Iterating on one extension?** Skip the ~10-minute rebuild: `make dist` ships
+plain tsc output, so compiling the extension and copying its `out/` into the
+bundle is byte-equivalent to a rebuild of that extension:
+
+```sh
+npx tsc -p extensions/burrow-chat
+cp extensions/burrow-chat/out/*.js \
+  "../VSCode-darwin-arm64/Burrow — Go IDE.app/Contents/Resources/app/extensions/burrow-chat/out/"
+```
+
+Relaunch to pick it up (a live app holds the old code in memory). Finish with
+one clean `make dist && make install` so the shipped app is a real build.
 
 See [`BUILDING.md`](BUILDING.md) for the full toolchain notes.
