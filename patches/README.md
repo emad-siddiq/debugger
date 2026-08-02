@@ -16,6 +16,13 @@ built-in extension or a config change.
   past the fork commit, `git diff` began answering `no merge base`, and the gate
   stopped checking anything for weeks. **If you re-base the fork, update that
   file in the same commit.**
+- **Bisect boundary** (recorded 2026-08-02, WO-2 side ruling): the tag
+  `baseline/pre-integration-run` (annotated, at `4d73058a`) caps an 11-commit
+  re-authored fork line that shares **no merge base** with `main` — the
+  baseline is accepted as *content-only*, not ancestry. `git bisect` is valid
+  **within the post-baseline line on `main`**, never across the tag's line.
+  The `strip:`/`build:`/`feat:`/`fix:` commit discipline holds inside that
+  window, which is where it matters.
 - `make ledger-check` reads HEAD *and* the working tree, so it catches an
   unledgered edit before you commit it. `make ledger-check-ci` reads HEAD only —
   what CI sees on a clean checkout.
