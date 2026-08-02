@@ -990,6 +990,19 @@ function goPkgCommand(verb: string, dir: string): string {
 	return `go ${verb} ${rest ? `./${rest}` : '.'}`;
 }
 
+/**
+ * Compile a package and keep the result. `go build` on a main package WRITES an
+ * executable into the working directory, named after the package — so the check
+ * for `test/cmd/oracle` tried to write `test/oracle`, which is a directory of
+ * the reader's own source, and failed with `build output "oracle" already exists
+ * and is a directory`. On every other main package it succeeded, and left a
+ * binary in the scratch that the reader never asked for and the reference does
+ * not contain. `-o /dev/null` is the compile-only form: same errors, no artefact.
+ */
+function goBuildCommand(dir: string): string {
+	return goPkgCommand('build', dir).replace('go build ', 'go build -o /dev/null ');
+}
+
 export function milestoneFor(paths: readonly string[], text: (p: string) => string): Milestone | undefined {
 	// A database, from a compose file that declares one. This is the only kind
 	// that needs nothing written first: the file IS the thing that runs.
@@ -1312,24 +1325,33 @@ export function buildPlan(
 		}
 	}
 	// `go mod tidy` is the go.mod step's other half, and it lands HERE — on the
-	// first package of each module, which is the earliest point in the plan where
-	// there is Go for it to read. Not on the module root's own stage: `test/`
-	// keeps every one of its packages in a subdirectory, so a root-anchored check
-	// would have no stage to live on and the test module would never get one —
-	// which is the bug this moved away from, rebuilt one level up.
-	const tidied = new Set<string>();
+	// package stages, which are where there is Go for it to read. Not on the
+	// module root's own stage: `test/` keeps every one of its packages in a
+	// subdirectory, so a root-anchored check would have no stage to live on and
+	// the test module would never get one.
 	for (const dir of topoSort([...goDirs], goEdges)) {
-		const paths = pairTests(
+		// `testdata/` belongs to the package, not to the leftovers at the end.
+		//
+		// Go's own convention: the toolchain ignores the directory when building,
+		// and `go test` reads it at run time — which makes it a dependency of the
+		// stage's own check that no import graph can see. Left in the "everything
+		// else" stage, `backend/fleet/install`'s golden file was planned 1,400
+		// steps after the test that reads it, so a reader who completed the stage
+		// exactly as written got `read testdata/install_sh.golden.sh: no such file
+		// or directory` and nothing in the plan to do about it.
+		const fixtures = [...byDir.keys()]
+			.filter((d) => d === `${dir}/testdata` || d.startsWith(`${dir}/testdata/`))
+			.flatMap((d) => (byDir.get(d) ?? []).filter((p) => !claimed.has(p)))
+			.sort();
+		const paths = [...pairTests(
 			(byDir.get(dir) ?? [])
 				.filter((p) => !claimed.has(p))
 				.sort((a, b) => shapeRank(a) - shapeRank(b) || (a < b ? -1 : 1)),
-		);
+		), ...fixtures];
 		const pkg = paths.map((p) => /^package\s+(\w+)/m.exec(textOf(p))?.[1]).find(Boolean) ?? baseName(dir);
 		const doc = paths.map((p) => analysed.get(p)!.summary).find((s) => s.length > 40);
 		const moduleDir = goModuleOf(paths[0] ?? dir, modules)?.[0] ?? '';
 		const rel = dir === moduleDir ? '.' : `./${dir.slice(moduleDir ? moduleDir.length + 1 : 0)}`;
-		const firstOfModule = !tidied.has(moduleDir);
-		tidied.add(moduleDir);
 		addStage({
 			id: dir,
 			title: dir,
@@ -1338,15 +1360,25 @@ export function buildPlan(
 			setup: [],
 			checks: [
 				// Before `go build`, because it is what writes the requires the build
-				// then resolves. It stays qualified: a module whose first package is
-				// not written yet has nothing to tidy, and that is not a failure.
-				...(firstOfModule ? [{
+				// then resolves. It stays qualified: a package that is not written yet
+				// has nothing to tidy, and that is not a failure.
+				//
+				// EVERY package stage, not just the first of the module. `go mod tidy`
+				// resolves the imports that exist when it runs, and each new package
+				// brings imports the ones before it did not have — so a single early
+				// run left the module short of everything introduced later. Measured
+				// on merkle: `backend/middleware` is the first package to import chi,
+				// and from that stage on, 25 of the remaining stages failed `go build`
+				// with `no required module provides package github.com/go-chi/chi/v5`
+				// and no step in the plan would ever have fixed it. Tidy is idempotent
+				// and cheap on a warm module cache.
+				{
 					kind: 'shell' as const,
 					label: `go mod tidy resolves ${moduleDir || '.'}`,
 					cmd: 'go mod tidy', cwd: moduleDir,
 					needs: { dir, match: '.go', why: 'the package has no Go files yet, so there is nothing for it to resolve.' },
-				}] : []),
-				{ kind: 'shell', label: `go build ${rel}`, cmd: `go build ${rel}`, cwd: moduleDir },
+				},
+				{ kind: 'shell', label: `go build ${rel}`, cmd: goBuildCommand(dir), cwd: moduleDir },
 				...(paths.some((p) => p.endsWith('_test.go')) ? [{ kind: 'shell' as const, label: `go test ${rel}`, cmd: `go test ${rel}`, cwd: moduleDir }] : []),
 			],
 			tools: [],
