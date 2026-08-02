@@ -58,11 +58,12 @@ export const CONCEPTS: Readonly<Record<ConceptId, Concept>> = {
 		term: 'A Go module, and its module path',
 		text: 'A `go.mod` declares a module path — the name every file in the tree below it is imported by. '
 			+ 'It looks like a repository address because that is what resolves when somebody else imports it, '
-			+ 'but the compiler treats it as an opaque prefix and never fetches it. '
-			+ '`go mod init <path>` writes that declaration and nothing else. '
-			+ 'The `require` lines underneath are not written by hand: `go mod tidy` reads the imports actually '
-			+ 'present in the code and reconciles the list against them, which is why this file stays near-empty '
-			+ 'until there is code for it to read.',
+			+ 'but the compiler treats it as an opaque prefix. '
+			+ '`go mod init <path>` writes that declaration and nothing else: the `require` lines underneath are '
+			+ '`go mod tidy`\'s, reconciled against the imports actually present in the code, which is why this '
+			+ 'file stays near-empty until there is code to read. The `go` line is a third thing again — a '
+			+ '**minimum**, not a target. `go mod init` writes the toolchain that ran it, so a reference '
+			+ 'declaring a newer one is not yours to match.',
 	},
 	'npm-manifest': {
 		term: 'An npm manifest',

@@ -154,8 +154,19 @@ function nonceOf(): string {
 /** What the developer is being asked to do, in one sentence built from facts. */
 export function instruction(step: ScratchStep, stage: ScratchStage): string {
 	if (step.mode === 'generate') {
+		// What the checks ACTUALLY assert, named one by one. The sentence this
+		// replaced — "the check runs the command and then looks for the file" —
+		// promised a verdict the step could not deliver: `go.mod`'s check also ran
+		// `go mod tidy`, whose inputs are hundreds of steps away, so step 1 of the
+		// plan reported "could not run" whatever the learner did. The command moved
+		// (see `checksFor`); this is the half that has to move with it, because a
+		// page that describes a check it no longer runs is the same defect again.
+		const asserts = step.title === 'go.mod'
+			? 'the checks confirm the command ran, that the file is there, and that it declares the right module path'
+			+ ' — the <code>require</code> list is filled in later, by the first package you write'
+			: 'the checks run the command and then look for the file';
 		return `Run <code>${escape(step.command ?? '')}</code>${step.commandCwd ? ` in <code>${escape(step.commandCwd)}</code>` : ''}. `
-			+ `A ${step.title} is written by the toolchain — the check runs the command and then looks for the file.`;
+			+ `A ${step.title} is written by the toolchain — ${asserts}.`;
 	}
 	if (step.mode === 'copy') {
 		return step.kind === 'doc'
@@ -370,12 +381,29 @@ function stateChip(state: StepState): string {
 	return `<span class="chip ${state}">${label}</span>`;
 }
 
-function checksBlock(state: PageState, step: ScratchStep): string {
+/**
+ * A check with no result is one of TWO things, and they must not look alike.
+ *
+ * `runChecks` stops at the first `fail` — `go build` after a parse error tells
+ * you nothing you did not already know — so after a failing run the checks below
+ * it have no result at all. This used to render them with the same hollow `○` as
+ * a step whose checks have never been run, which made one failure read as every
+ * check failing. That is, in as many words, how a run of this feature was
+ * reported: *"both checks didn't pass"*, when one had failed and the other had
+ * simply never been reached.
+ */
+export function checksBlock(state: PageState, step: ScratchStep): string {
+	const ran = !!state.checks;
+	const stopped = state.checks?.results.some((r) => r.verdict === 'fail') === true;
 	const rows = step.checks.map((check) => {
 		const result = state.checks?.results.find((r) => r.check.label === check.label);
-		const mark = !result ? '○' : result.verdict === 'pass' ? '✓' : result.verdict === 'fail' ? '✕' : '!';
-		const cls = !result ? 'idle' : result.verdict;
-		const detail = result?.output ? `<pre class="out">${escape(result.output.slice(0, 4000))}</pre>` : '';
+		// Skipped only AFTER the one that failed, never before it: the results array
+		// is in check order, so anything already reported is not a skip.
+		const skipped = !result && ran && stopped;
+		const mark = !result ? (skipped ? '–' : '○') : result.verdict === 'pass' ? '✓' : result.verdict === 'fail' ? '✕' : '!';
+		const cls = !result ? (skipped ? 'skipped' : 'idle') : result.verdict;
+		const detail = result?.output ? `<pre class="out">${escape(result.output.slice(0, 4000))}</pre>`
+			: skipped ? `<pre class="out">not run — an earlier check failed, so this one was never reached.</pre>` : '';
 		return `<li class="${cls}"><span class="mark">${mark}</span><span class="ck">${escape(check.label)}`
 			+ `${check.cmd ? `<code>${escape(check.cmd)}</code>` : ''}</span>${detail}</li>`;
 	}).join('');
@@ -460,6 +488,8 @@ function html(state: PageState): string {
 	ul.checks li.pass .mark { color: var(--vscode-testing-iconPassed, #3fb950); }
 	ul.checks li.fail .mark { color: var(--vscode-testing-iconFailed, #f85149); }
 	ul.checks li.unavailable .mark { color: var(--vscode-editorWarning-foreground, #d29922); }
+	ul.checks li.skipped { opacity: .6; }
+	ul.checks li.skipped .mark { color: var(--vscode-descriptionForeground); }
 	ul.checks .ck code { margin-left: 8px; }
 	.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
 	button { font: inherit; font-size: 12px; padding: 5px 13px; border: none; border-radius: 4px; cursor: pointer; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
@@ -515,7 +545,10 @@ function html(state: PageState): string {
 
 	${milestoneBlock(plan, stage, step)}
 
-	${stage.setup.length ? `<section><h2>Run once</h2><p class="quiet">Before this stage's checks can pass:</p>
+	${stage.setup.length ? `<section><h2>Run once</h2><p class="quiet">${stage.checks.length
+			? `Before this stage's checks can pass:`
+			: `Once the manifests in this stage exist, these install what they name. Nothing in ${escape(stage.title)}
+			   is checked against them — the first <code>go build</code> and the first <code>npm run</code> further down are:`}</p>
 		<ul class="links">${stage.setup.map((s) => `<li><code>${escape(s)}</code></li>`).join('')}</ul>
 		<div class="actions"><button data-act="setup">Open a terminal — you type these</button></div></section>` : ''}
 

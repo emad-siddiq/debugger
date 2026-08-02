@@ -23,7 +23,7 @@ Module._load = function (request, ...rest) {
 };
 
 const { buildPlan } = require('../out/planModel');
-const { CYCLE_NOTE, DEFECT_NOTE, linkList, unlocksAll, whyNow } = require('../out/page');
+const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, unlocksAll, whyNow } = require('../out/page');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
 
@@ -166,6 +166,53 @@ const cases = {
 		assert.match(say, /put that one FIRST/);
 		assert.match(say, /ordering defect, not a cycle/);
 		assert.match(say, /web\/src\/ui\/Badge\.tsx/);
+	},
+
+	'the go.mod instruction describes the checks that actually run': () => {
+		const plan = buildPlan([
+			file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
+			file('backend/models/node.go', 'package models\n\ntype Node struct{}\n'),
+		], { name: 'app', reference: '/ref' });
+		const step = plan.steps['backend/go.mod'];
+		const say = instruction(step, plan.stages.find((s) => s.id === step.stage));
+		// The command it teaches is still the whole one — you would really type both.
+		assert.match(say, /go mod init example\.com\/app &amp;&amp; go mod tidy/);
+		// …but the sentence about the VERDICT no longer promises one the step
+		// cannot deliver. "looks for the file" was true; "runs the command" was
+		// not, once `go mod tidy` moved to the stage that can earn it.
+		assert.match(say, /declares the right module path/);
+		assert.match(say, /filled in later/);
+		assert.doesNotMatch(say, /the checks run the command and then look for the file/);
+	},
+
+	'a check that was never reached does not render as a check that failed': () => {
+		const step = {
+			id: 'backend/go.mod', checks: [
+				{ kind: 'shell', label: 'first', cmd: 'false' },
+				{ kind: 'exists', label: 'the file exists and is not empty' },
+				{ kind: 'shell', label: 'third', cmd: 'true' },
+			],
+		};
+		// Nothing has run: three idle circles, and no claim about any of them.
+		const idle = checksBlock({ plan: {}, progress: {}, stepId: step.id }, step);
+		assert.strictEqual((idle.match(/○/g) ?? []).length, 3);
+		assert.doesNotMatch(idle, /never reached/);
+
+		// One failed and stopped the run. The other two are NOT two more failures
+		// — which is exactly how a real run of this got read as "both checks
+		// didn't pass" when only one of them had an opinion.
+		const run = { verdict: 'fail', results: [{ check: step.checks[0], verdict: 'fail', output: 'syntax error', durationMs: 1 }] };
+		const stopped = checksBlock({ plan: {}, progress: {}, stepId: step.id, checks: run }, step);
+		assert.strictEqual((stopped.match(/✕/g) ?? []).length, 1);
+		assert.strictEqual((stopped.match(/○/g) ?? []).length, 0);
+		assert.strictEqual((stopped.match(/class="skipped"/g) ?? []).length, 2);
+		assert.match(stopped, /an earlier check failed/);
+
+		// A run that merely could not answer is not a stop: everything still ran.
+		const amber = { verdict: 'unavailable', results: step.checks.map((check) => ({ check, verdict: 'unavailable', output: '', durationMs: 1 })) };
+		const all = checksBlock({ plan: {}, progress: {}, stepId: step.id, checks: amber }, step);
+		assert.strictEqual((all.match(/class="skipped"/g) ?? []).length, 0);
+		assert.strictEqual((all.match(/!/g) ?? []).length, 3);
 	},
 };
 
