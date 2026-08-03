@@ -424,10 +424,18 @@ const cases = {
 
 	// R74/R75. Foundations used to carry `cd web && npm install` — the blanket
 	// form of exactly what a reader objected to: a thirty-eight package install
-	// for code that does not exist for another six hundred steps.
-	'foundations no longer install what no file has asked for': () => {
+	// for code that does not exist for another six hundred steps — and
+	// `cd backend && go mod download`, which a full mechanical pass showed exits 1
+	// with `cd: backend: No such file or directory`, because Foundations' own
+	// first step is what creates that directory.
+	'foundations install nothing, because there is nothing yet to install': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
-		assert.deepStrictEqual(plan.stages[0].setup, ['cd backend && go mod download']);
+		assert.deepStrictEqual(plan.stages[0].setup, []);
+		// …and the stages that DO carry one all come after a file that needs it.
+		const order = plan.stages.flatMap((s) => s.steps);
+		for (const stage of plan.stages.filter((s) => s.setup.length)) {
+			assert.ok(order.indexOf(stage.steps[0]) > 0, `${stage.id} installs before anything is written`);
+		}
 	},
 
 	// The measurement this rests on, restated: on merkle the first consumer of a

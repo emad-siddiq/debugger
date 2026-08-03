@@ -1852,15 +1852,20 @@ export function buildPlan(
 		blurb: 'The manifests: what the project is called, what it depends on, how it is built. '
 			+ 'You type package.json and the configs; go.mod and the lockfiles are generated — the step runs the command.',
 		cls: 'foundations',
-		// `npm install` USED TO BE HERE, once per package.json, and it was the
-		// blanket form of exactly what this stage should not do: install thirty-eight
-		// packages for code that does not exist yet. The dev half is now a command on
-		// the manifest step itself and the runtime half arrives at the file that
-		// first imports it (see the batching pass at the end of this function), so
-		// there is nothing left for a stage-wide install to add.
-		setup: [...modules.keys()].map((d) => `cd ${d || '.'} && go mod download`),
-		setupWhy: 'A generated `go.mod` requires nothing until a package has been tidied against it, so this'
-			+ ' downloads nothing today. It is here as the command, for the first time there is something to download.',
+		// EMPTY, and that is the finding rather than an omission.
+		//
+		// This stage used to carry `cd <module> && go mod download` per module and
+		// `cd <dir> && npm install` per package. The npm half was the blanket form of
+		// exactly what this stage should not do — install thirty-eight packages for
+		// code that does not exist for another six hundred steps — and it is now a
+		// command on the manifest step (dev) and on the stage that first imports each
+		// package (runtime). The Go half was worse than useless: a full mechanical
+		// pass ran both lines and both exited 1 with `cd: backend: No such file or
+		// directory`, because Foundations' first step is what CREATES that directory.
+		// Even once it exists, `go mod download` against a `go.mod` that `go mod init`
+		// has just written has no requires to fetch — and `go mod tidy`, on the first
+		// package stage of each module, already downloads what it resolves.
+		setup: [],
 		checks: [],
 		tools: [],
 	}, foundationSteps);

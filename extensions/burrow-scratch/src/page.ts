@@ -214,8 +214,10 @@ export function derivedBlock(step: ScratchStep): string {
 	const what = step.derived.map((d) => `<code>${escape(d.writes)}</code>`).join(' and ');
 	return `<section><h2>Not yours to type</h2>
 		<p class="quiet">The ${what} block is version ranges, and a range copied off another file is transcription
-		rather than a decision. The versions below are the reference's own: resolving them fresh would install
+		rather than a decision. The ranges below are the reference's own: installing without them would fetch
 		whatever is newest today, which can be a major the code you are about to write was not built against.
+		What npm writes back is its own caret over what it finds inside each range, so this block will not come
+		out byte-identical to the reference — and nothing here asks it to.
 		Type the rest of the file first — the command edits what is already there — then run this.</p>
 		<ul class="links">${rows}</ul>
 		<div class="actions"><button data-act="terminal">Open a terminal in ${escape(step.derived[0].cwd || '.')}</button></div></section>`;

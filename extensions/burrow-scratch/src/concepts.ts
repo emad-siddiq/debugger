@@ -69,9 +69,9 @@ export const CONCEPTS: Readonly<Record<ConceptId, Concept>> = {
 		term: 'An npm manifest',
 		text: 'A `package.json` names a package, the dependencies it needs and the scripts that run it. '
 			+ 'A dependency is a *range* — `^5.2.0` admits 5.9.1 — so identical text can resolve differently a '
-			+ 'month apart, and it is the lockfile beside it, not this file, that makes an install reproducible. '
-			+ 'Which is why a range is copied from what you are rebuilding rather than resolved fresh: the newest '
-			+ 'version today can be a major the code was not written against, and that failure looks like yours. '
+			+ 'month apart. The range you install WITH is copied from what you are rebuilding: left open, an '
+			+ 'installer fetches whatever is newest today, which can be a major the code was not written against. '
+			+ 'What it writes BACK is its own caret over what it found, so this text may not come out identical. '
 			+ 'The `scripts` block is the part nothing can derive — the project\'s real command-line interface, '
 			+ 'and what someone arriving reads to find out how it is built, started and tested.',
 	},
