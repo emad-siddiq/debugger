@@ -164,7 +164,13 @@ export function instruction(step: ScratchStep, stage: ScratchStage): string {
 		const asserts = step.title === 'go.mod'
 			? 'the checks confirm the command ran, that the file is there, and that it declares the right module path'
 			+ ' — the <code>require</code> list is filled in later, by the first package you write'
-			: 'the checks run the command and then look for the file';
+			: step.kind === 'lock'
+				// A lockfile gained a third check when it moved (R77), and this sentence
+				// did not move with it. Reading the shipped page is what caught it — the
+				// same defect WO-84 fixed one step over, and worth fixing the same way.
+				? 'the checks run the command, look for the file, and then ask what it locked'
+				+ ' — a command that installs nothing still writes one'
+				: 'the checks run the command and then look for the file';
 		return `Run <code>${escape(step.command ?? '')}</code>${step.commandCwd ? ` in <code>${escape(step.commandCwd)}</code>` : ''}. `
 			+ `A ${step.title} is written by the toolchain — ${asserts}.`;
 	}

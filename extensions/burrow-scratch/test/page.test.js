@@ -143,6 +143,20 @@ const cases = {
 		assert.ok(foundations.length >= 2, `Foundations renders ${foundations.length}`);
 	},
 
+	// A lockfile gained a third check when it moved out of Foundations, and the
+	// sentence describing its checks did not move with it — caught by reading the
+	// shipped page, which is exactly how the go.mod one was caught.
+	'the instruction on a generated file names the checks that file actually has': () => {
+		const plan = buildPlan(manifests(), { name: 'app', reference: '/ref' });
+		const say = (id) => instruction(plan.steps[id], plan.stages.find((s) => s.id === plan.steps[id].stage)).replace(/<[^>]+>/g, '');
+		const lock = plan.steps['web/package-lock.json'];
+		assert.strictEqual(lock.checks.length, 3, 'the fixture must exercise a lockfile with all three');
+		assert.match(say('web/package-lock.json'), /ask what it locked/);
+		assert.doesNotMatch(say('web/package-lock.json'), /then look for the file\.$/);
+		// …and go.mod keeps its own, which is a different set again.
+		assert.match(say('backend/go.mod'), /declares the right module path/);
+	},
+
 	// WO-85 Phase 0. The sentence counted step ids by extension under a directory
 	// prefix and called the number a fact about imports. This is the case it got
 	// wrong on merkle, reduced to the two properties that produce it.
