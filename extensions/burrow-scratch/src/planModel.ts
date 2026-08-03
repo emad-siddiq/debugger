@@ -69,8 +69,11 @@ export interface Check {
 	 *   in process by {@link parseFile}. No toolchain, no network, one file: a
 	 *   check at ITS OWN step cannot resolve imports that are still hundreds of
 	 *   steps away, and a compiler asked to would fail correct work.
+	 * `declares` — it exports the names the reference exports. The other half of
+	 *   `parse` for a language with no minimum content: an empty TypeScript file
+	 *   is valid TypeScript, so parsing alone passes a file containing a space.
 	 */
-	readonly kind: 'exists' | 'shell' | 'parse';
+	readonly kind: 'exists' | 'shell' | 'parse' | 'declares';
 	readonly label: string;
 	/** `shell` only. Run with the scratch root as the default cwd. */
 	readonly cmd?: string;
@@ -1228,6 +1231,7 @@ function checksFor(
 	step: {
 		id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string;
 		modulePath?: string; bytes?: number; npm?: NpmManifest; topKeys?: readonly string[];
+		declares?: readonly string[];
 	},
 	goModuleDir: string | undefined,
 ): Check[] {
@@ -1300,6 +1304,18 @@ function checksFor(
 		const deferred = baseName(step.id) === 'package.json' ? ['dependencies', 'devDependencies'] : [];
 		const keys = (step.topKeys ?? []).filter((k) => !deferred.includes(k));
 		checks.push({ kind: 'parse', label: parseLabel(lang, keys), lang, ...(keys.length ? { keys } : {}) });
+		// An EMPTY TypeScript file is valid TypeScript, so parsing it is not by
+		// itself a verdict — a file containing one space passes both checks above.
+		// What the reference exports is the rest of the answer, and the plan already
+		// read it. Go needs none of this: `gofmt -e` rejects a file with no
+		// `package` clause, which is the same floor by another route.
+		if ((lang === 'ts' || lang === 'tsx' || lang === 'js') && step.declares?.length) {
+			const names = step.declares;
+			checks.push({
+				kind: 'declares', lang, keys: names,
+				label: `it exports ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${names.length - 3} more` : ''}`,
+			});
+		}
 	}
 	// Two languages with no parser aboard and a real one on the machine. `bash -n`
 	// reads the script and refuses to run it; Python's own `ast` is the compiler's
@@ -1765,7 +1781,7 @@ export function buildPlan(
 			const topKeys = lang ? topLevelKeys(lang, a.file.text) : [];
 			const shape = {
 				id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd,
-				modulePath: declares, bytes: a.file.bytes, npm, topKeys,
+				modulePath: declares, bytes: a.file.bytes, npm, topKeys, declares: a.declares,
 			};
 			steps[p] = {
 				id: p,

@@ -259,9 +259,13 @@ const cases = {
 		fs.writeFileSync(path.join(dir, 'Badge.tsx'), ' ');
 		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', { kind: 'exists', label: 'e' })).verdict, 'pass');
 		// An EMPTY TypeScript file is valid TypeScript, so the parser has nothing to
-		// say about a file containing one space. That gap is closed by the next
-		// commit, and named here rather than left implied.
+		// say about a file containing one space — which is exactly why the step also
+		// carries what the reference exports.
 		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', check)).verdict, 'pass');
+		const exports = checkOf([['ui/Badge.tsx', 'export const Badge = () => <b>1</b>;\n']], 'ui/Badge.tsx', /exports/);
+		const space = await runCheck(root, 'ui/Badge.tsx', exports);
+		assert.strictEqual(space.verdict, 'fail');
+		assert.match(space.output, /nothing exported here is called `Badge`/);
 
 		// Half-written, and the row names the line.
 		fs.writeFileSync(path.join(dir, 'Badge.tsx'), 'export function Badge() {\n\treturn <div>\n}\n');

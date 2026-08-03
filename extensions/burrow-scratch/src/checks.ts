@@ -14,7 +14,7 @@ import { exec } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseFile } from './parse';
-import { Check, Precondition } from './planModel';
+import { Check, Precondition, tsDeclares } from './planModel';
 import { fileState } from './workspace';
 
 /**
@@ -90,6 +90,27 @@ export async function runCheck(root: string, stepId: string | undefined, check: 
 			output: ok ? ''
 				: state === 'empty' ? `${name} is there but empty — nothing written to it yet. If you have typed into it, save it (⌘S) and run the checks again.`
 					: `${name} does not exist yet.`,
+			durationMs: Date.now() - started,
+		};
+	}
+	// What the reference exports, read out of the scratch the same way it was read
+	// out of the reference. Not a type-check and not a signature: the NAMES, which
+	// is the smallest thing that distinguishes a file from a file with nothing in
+	// it, and the largest thing that does not need the rest of the project.
+	if (check.kind === 'declares') {
+		const rel = stepId ?? '';
+		let text: string;
+		try {
+			text = fs.readFileSync(path.join(root, rel), 'utf8');
+		} catch {
+			return { check, verdict: 'fail', output: `${rel} does not exist yet.`, durationMs: Date.now() - started };
+		}
+		const have = new Set(tsDeclares(text));
+		const missing = (check.keys ?? []).filter((k) => !have.has(k));
+		return {
+			check,
+			verdict: missing.length ? 'fail' : 'pass',
+			output: missing.length ? `${rel}: nothing exported here is called ${missing.map((k) => `\`${k}\``).join(', ')}.` : '',
 			durationMs: Date.now() - started,
 		};
 	}
