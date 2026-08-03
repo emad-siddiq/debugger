@@ -73,8 +73,31 @@ function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: 
 	});
 }
 
-export async function runCheck(root: string, stepId: string | undefined, check: Check, timeoutMs = 120_000): Promise<CheckResult> {
+export async function runCheck(root: string, stepId: string | undefined, check: Check, timeoutMs = 120_000, reference?: string): Promise<CheckResult> {
 	const started = Date.now();
+	// A `copy` step's whole instruction is "reproduce this file", so reproducing
+	// it is the verdict. Absent reference → `unavailable`: a scratch outlives the
+	// folder it was planned from, and a moved project is not the reader's mistake.
+	if (check.kind === 'same') {
+		if (!reference || !stepId) {
+			return { check, verdict: 'unavailable', reason: 'no-tool', output: 'the reference project is not where the plan left it.', durationMs: Date.now() - started };
+		}
+		let want: Buffer, got: Buffer;
+		try {
+			want = fs.readFileSync(path.join(reference, stepId));
+		} catch {
+			return { check, verdict: 'unavailable', reason: 'no-tool', output: `${stepId} is no longer in the reference project.`, durationMs: Date.now() - started };
+		}
+		try {
+			got = fs.readFileSync(path.join(root, stepId));
+		} catch {
+			return { check, verdict: 'fail', output: `${stepId} does not exist yet.`, durationMs: Date.now() - started };
+		}
+		if (got.equals(want)) {
+			return { check, verdict: 'pass', output: '', durationMs: Date.now() - started };
+		}
+		return { check, verdict: 'fail', durationMs: Date.now() - started, output: firstDifference(want, got, stepId) };
+	}
 	if (check.kind === 'exists') {
 		const state = stepId ? fileState(root, stepId) : 'missing';
 		const name = stepId ?? 'the file';
@@ -171,10 +194,28 @@ export function preconditionMet(root: string, needs: Precondition): boolean {
 	return entries.some((name) => name === needs.match || (needs.match.startsWith('.') && name.endsWith(needs.match)));
 }
 
-export async function runChecks(root: string, stepId: string | undefined, checks: readonly Check[]): Promise<CheckRun> {
+/** Where the two files first disagree, in lines. "They differ" sends a reader to
+ *  a diff tool; a line number sends them to a line. */
+function firstDifference(want: Buffer, got: Buffer, stepId: string): string {
+	const a = want.toString('utf8').split('\n'), b = got.toString('utf8').split('\n');
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		if (a[i] !== b[i]) {
+			if (b[i] === undefined) {
+				return `${stepId}:${i + 1}: the reference has ${a.length - i} more line${a.length - i === 1 ? '' : 's'} — this copy stops here.`;
+			}
+			if (a[i] === undefined) {
+				return `${stepId}:${i + 1}: the reference ends above this line.`;
+			}
+			return `${stepId}:${i + 1}: differs from the reference.\n  reference: ${a[i].slice(0, 120)}\n  yours:     ${b[i].slice(0, 120)}`;
+		}
+	}
+	return `${stepId}: same lines, different bytes — a line ending or a trailing character.`;
+}
+
+export async function runChecks(root: string, stepId: string | undefined, checks: readonly Check[], reference?: string): Promise<CheckRun> {
 	const results: CheckResult[] = [];
 	for (const check of checks) {
-		const result = await runCheck(root, stepId, check);
+		const result = await runCheck(root, stepId, check, undefined, reference);
 		results.push(result);
 		if (result.verdict === 'fail') {
 			// Stop at the first failure: `go build` after a parse error tells you

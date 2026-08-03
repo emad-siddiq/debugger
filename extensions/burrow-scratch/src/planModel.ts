@@ -69,11 +69,15 @@ export interface Check {
 	 *   in process by {@link parseFile}. No toolchain, no network, one file: a
 	 *   check at ITS OWN step cannot resolve imports that are still hundreds of
 	 *   steps away, and a compiler asked to would fail correct work.
+	 * `same` — byte-identical to the reference. ONLY for a `copy` step, where the
+	 *   instruction is *"copy this one in"* and byte-identity is therefore the
+	 *   whole of what done means. On a step you type it would be a transcription
+	 *   test, which is not what any of this is for.
 	 * `declares` — it exports the names the reference exports. The other half of
 	 *   `parse` for a language with no minimum content: an empty TypeScript file
 	 *   is valid TypeScript, so parsing alone passes a file containing a space.
 	 */
-	readonly kind: 'exists' | 'shell' | 'parse' | 'declares';
+	readonly kind: 'exists' | 'shell' | 'parse' | 'same' | 'declares';
 	readonly label: string;
 	/** `shell` only. Run with the scratch root as the default cwd. */
 	readonly cmd?: string;
@@ -1289,6 +1293,12 @@ function checksFor(
 	}
 	const checks: Check[] = [existsCheck(step.bytes)];
 	if (step.mode === 'copy') {
+		// 624 of merkle's steps are prose and diagrams, and the whole verdict on
+		// every one of them was that a file existed. Nothing here parses a Markdown
+		// document usefully — almost any text is valid Markdown, which is the point
+		// of it — but a `copy` step does not need parsing: the instruction is to
+		// reproduce the file, so reproducing it is the check.
+		checks.push({ kind: 'same', label: 'it matches the reference, byte for byte' });
 		return checks;
 	}
 	// Does it hold together? The one question a check can ask about a file with

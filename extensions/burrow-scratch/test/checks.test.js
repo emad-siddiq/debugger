@@ -279,6 +279,37 @@ const cases = {
 		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', check)).verdict, 'pass');
 	},
 
+	// 624 of merkle's steps are prose and diagrams. Nothing parses Markdown
+	// usefully, but a `copy` step's instruction IS byte-identity.
+	'a copy step is checked against the reference, and says which line differs': async () => {
+		const text = '# Title\n\nOne.\nTwo.\n';
+		const check = checkOf([['docs/a.md', text]], 'docs/a.md', /matches the reference/);
+		assert.strictEqual(check.kind, 'same');
+		const ref = fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-ref-'));
+		fs.mkdirSync(path.join(ref, 'docs'), { recursive: true });
+		fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+		fs.writeFileSync(path.join(ref, 'docs', 'a.md'), text);
+
+		fs.writeFileSync(path.join(root, 'docs', 'a.md'), text);
+		assert.strictEqual((await runCheck(root, 'docs/a.md', check, undefined, ref)).verdict, 'pass');
+
+		fs.writeFileSync(path.join(root, 'docs', 'a.md'), '# Title\n\nOne.\nTwo!\n');
+		const wrong = await runCheck(root, 'docs/a.md', check, undefined, ref);
+		assert.strictEqual(wrong.verdict, 'fail');
+		assert.match(wrong.output, /docs\/a\.md:4: differs from the reference/);
+		assert.match(wrong.output, /reference: Two\./);
+
+		fs.writeFileSync(path.join(root, 'docs', 'a.md'), '# Title\n');
+		assert.match((await runCheck(root, 'docs/a.md', check, undefined, ref)).output, /the reference has \d+ more lines/);
+
+		// A scratch outlives the folder it was planned from. That is not a failure
+		// of the reader's copy, so it is not reported as one.
+		fs.rmSync(ref, { recursive: true, force: true });
+		const gone = await runCheck(root, 'docs/a.md', check, undefined, ref);
+		assert.strictEqual(gone.verdict, 'unavailable');
+		assert.match(gone.output, /no longer in the reference project/);
+	},
+
 	'a run that stops at a failure leaves the rest with no result at all': async () => {
 		// The distinction the page has to draw: these checks did not fail, they
 		// were never reached. Reported here as "fewer results than checks", which

@@ -508,6 +508,10 @@ const cases = {
 			.map((s) => s.id);
 		assert.deepStrictEqual(weak, ['Makefile'], `only the residue named in the report may be exists-only:\n${weak.join('\n')}`);
 
+		// …and a `copy` step, where nothing parses prose usefully, is checked on the
+		// thing its own instruction asks for.
+		assert.ok(plan.steps['README.md'].checks.some((c) => c.kind === 'same'));
+
 		// A reference file the project itself leaves empty gets no content check:
 		// there is no such thing as an empty stylesheet that parses badly, and
 		// demanding one would be a step that can never be completed.

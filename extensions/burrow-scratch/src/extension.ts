@@ -543,7 +543,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			if (plan.steps[id].mode === 'generate') {
 				ensureGenerateCwd(id);
 			}
-			const run = await runChecks(root, id, plan.steps[id].checks);
+			const run = await runChecks(root, id, plan.steps[id].checks, plan.reference);
 			// Keep the run for the page only while this step is still the one on
 			// it — the shared slot must not outlive a tab switch (see the finally).
 			checks = currentId() === id ? run : undefined;
