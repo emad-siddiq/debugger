@@ -1162,6 +1162,29 @@ function devDepsCheck(names: readonly string[], cwd: string): Check {
 }
 
 /**
+ * A lockfile that locks what the manifest asks for.
+ *
+ * `npm install` beside a manifest with an empty dependency block exits 0 and
+ * writes a four-line lockfile, so "the command succeeded" and "the file exists"
+ * both went green on a file with nothing in it — the {@link Precondition} hole,
+ * reopened one file over from where it was closed. The remedy is `go mod tidy`'s:
+ * the step moved to where its input exists, and the verdict asks what it produced.
+ */
+function lockCheck(cwd: string): Check {
+	return {
+		kind: 'shell', cwd,
+		label: 'it locks every package the manifest names',
+		cmd: nodeCheck(READ_MANIFEST
+			+ 'const l=JSON.parse(fs.readFileSync("package-lock.json","utf8"));'
+			+ 'const named=Object.keys(Object.assign({},p.dependencies,p.devDependencies));'
+			+ 'const have=new Set(Object.keys(l.packages||{}).filter((k)=>k.includes("node_modules/")).map((k)=>k.slice(k.lastIndexOf("node_modules/")+13)));'
+			+ 'const miss=named.filter((n)=>!have.has(n));'
+			+ 'if(miss.length){console.error(named.length+" named by package.json, "+(named.length-miss.length)+" locked. Not locked: "+miss.join(", "));process.exit(1)}'
+			+ 'console.log(named.length+" packages named, all "+named.length+" locked.")'),
+	};
+}
+
+/**
  * The directory a step's own command runs in: a `generate` step's, or the first
  * {@link DerivedPart} of a step that is otherwise typed. `undefined` when the
  * step has no command at all, which is what "Open a terminal" keys off.
@@ -1236,6 +1259,9 @@ function checksFor(
 		return [
 			{ kind: 'shell', label: `\`${step.command}\` succeeds`, cmd: rerunSafe, cwd: step.commandCwd, needs: generateInputs(step) },
 			existsCheck(step.bytes),
+			// A lockfile's whole job is to pin what the manifest asked for, so that
+			// is the verdict — not that a file appeared.
+			...(LOCK_MANIFEST.get(baseName(step.id)) === 'package.json' && step.npm ? [lockCheck(step.commandCwd ?? dirName(step.id))] : []),
 		];
 	}
 	const checks: Check[] = [existsCheck(step.bytes)];
@@ -1469,6 +1495,20 @@ function stageTools(
 	return tools;
 }
 
+/** Take a step out of the stage it was planned into and put it at the front of
+ *  another. Both stage objects are rebuilt rather than mutated, so a plan handed
+ *  out earlier cannot change under its holder. */
+function moveStep(stages: ScratchStage[], steps: Record<string, ScratchStep>, id: string, toStage: string): void {
+	const from = stages.findIndex((s) => s.steps.includes(id));
+	const to = stages.findIndex((s) => s.id === toStage);
+	if (from < 0 || to < 0 || from === to) {
+		return;
+	}
+	stages[from] = { ...stages[from], steps: stages[from].steps.filter((s) => s !== id) };
+	stages[to] = { ...stages[to], steps: [id, ...stages[to].steps] };
+	steps[id] = { ...steps[id], stage: toStage };
+}
+
 /**
  * Where a runtime dependency arrives — R74/R75, and the measurement behind them.
  *
@@ -1486,7 +1526,10 @@ function stageTools(
  * the set of packages that stage's own files introduce.
  *
  * A setup line is not a step and carries no import edge, so nothing here can move
- * the ordering invariant.
+ * the ordering invariant. The one thing that does is the lockfile, which stops
+ * being a Foundations step: `npm install` beside a manifest with an empty
+ * dependency block writes a lockfile with nothing in it, and the step now sits
+ * where there is something to lock.
  */
 function installPass(
 	stages: ScratchStage[],
@@ -1545,6 +1588,10 @@ function installPass(
 				+ (first && orphans.length ? ` The command also carries ${orphans.length} package${orphans.length === 1 ? '' : 's'} the manifest`
 					+ ` declares that nothing in the project imports: ${list(orphans)}.` : '')
 				+ ' Nothing before this stage needed any of it, which is why it is not installed with the manifest.');
+		}
+		const lockId = join(dir, 'package-lock.json');
+		if (steps[lockId]) {
+			moveStep(stages, steps, lockId, ordered[0]);
 		}
 	}
 
@@ -2109,14 +2156,31 @@ export function forwardDeps(plan: ScratchPlan): ReadonlyMap<string, ReadonlyMap<
 	return out;
 }
 
-/** Reverse edges: which steps name this one as a dependency. Computed rather
- *  than stored so the plan file stays a tree and cannot disagree with itself. */
+/** The kinds a stage-level dependency can actually be about. A Go package or a
+ *  TypeScript directory is imported as a unit, so every code file in it is a
+ *  reason the importer waits; a lockfile or a golden fixture that happens to sit
+ *  in the same stage is not imported by anybody. */
+const IMPORTABLE: ReadonlySet<StepKind> = new Set<StepKind>(['go', 'gotest', 'ts', 'tsx', 'style']);
+
+/**
+ * Reverse edges: which steps name this one as a dependency. Computed rather than
+ * stored so the plan file stays a tree and cannot disagree with itself.
+ *
+ * The stage-level half is qualified by kind. A stage edge means "s imports the
+ * package this stage is", and a step that is not code is not part of that
+ * package: `frontend/package-lock.json` now sits in the stage that first installs
+ * a runtime dependency, and without the filter every file importing that stage
+ * would have been listed under *What it unlocks* on a lockfile — the same class
+ * of true-looking sentence this pass exists to remove. `testdata` fixtures folded
+ * into a Go package stage were in the same position and had been all along.
+ */
 export function dependents(plan: ScratchPlan, stepId: string): string[] {
 	const step = plan.steps[stepId];
 	if (!step) {
 		return [];
 	}
+	const viaStage = IMPORTABLE.has(step.kind);
 	return Object.values(plan.steps)
-		.filter((s) => s.deps.includes(stepId) || (s.stage !== step.stage && s.depStages.includes(step.stage)))
+		.filter((s) => s.deps.includes(stepId) || (viaStage && s.stage !== step.stage && s.depStages.includes(step.stage)))
 		.map((s) => s.id);
 }

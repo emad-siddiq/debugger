@@ -456,7 +456,12 @@ const cases = {
 		// The one nothing imports rides with the first batch and is NAMED there.
 		assert.match(plan.stages.find((s) => s.id === 'web/src/ui').setupWhy, /nothing in the project imports: `unused`/);
 
-		assert.ok(order.indexOf('web/package.json') < order.indexOf('web/src/ui/Badge.tsx'));
+		// R77 — the lockfile follows the first install that has something to lock.
+		// It was step 2, beside a manifest whose dependency block was still empty.
+		assert.strictEqual(plan.steps['web/package-lock.json'].stage, 'web/src/ui');
+		assert.ok(order.indexOf('web/package-lock.json') > order.indexOf('web/package.json'));
+		// …and nothing imports a lockfile, wherever it now sits.
+		assert.deepStrictEqual(dependents(plan, 'web/package-lock.json'), []);
 	},
 
 	// The authored half, asserted. "Exists and is not empty" passed on `{}`.

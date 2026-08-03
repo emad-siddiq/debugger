@@ -218,6 +218,33 @@ const cases = {
 		assert.match(partial.output, /no script named: build$/m);
 	},
 
+	// R77. `npm install` beside a manifest with an empty dependency block exits 0
+	// and writes a lockfile with nothing in it: the command-succeeded check and
+	// the file-exists check both go green on a file that locks nothing.
+	'a lockfile is checked on what it locks, not on existing': async () => {
+		const manifest = '{"name":"npm","dependencies":{"left-pad":"^1.3.0"}}';
+		const check = checkOf([['npm/package.json', manifest], ['npm/package-lock.json', '{}']], 'npm/package-lock.json', /locks every package/);
+		const dir = path.join(root, 'npm');
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, 'package.json'), manifest);
+
+		// What `npm install` writes when there is nothing to install — four lines,
+		// and every check the step used to carry passes on it.
+		fs.writeFileSync(path.join(dir, 'package-lock.json'),
+			'{\n  "name": "npm",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "npm"\n    }\n  }\n}\n');
+		assert.strictEqual((await runCheck(root, 'npm/package-lock.json', { kind: 'exists', label: 'e' })).verdict, 'pass');
+		const empty = await runCheck(root, 'npm/package-lock.json', check);
+		assert.strictEqual(empty.verdict, 'fail');
+		assert.match(empty.output, /1 named by package\.json, 0 locked\. Not locked: left-pad/);
+
+		// …and the same check on a lockfile that did lock it.
+		fs.writeFileSync(path.join(dir, 'package-lock.json'),
+			'{"name":"npm","lockfileVersion":3,"packages":{"":{"name":"npm"},"node_modules/left-pad":{"version":"1.3.0"}}}');
+		const locked = await runCheck(root, 'npm/package-lock.json', check);
+		assert.strictEqual(locked.verdict, 'pass');
+		assert.match(locked.output, /1 packages named, all 1 locked/);
+	},
+
 	'a run that stops at a failure leaves the rest with no result at all': async () => {
 		// The distinction the page has to draw: these checks did not fail, they
 		// were never reached. Reported here as "fewer results than checks", which
