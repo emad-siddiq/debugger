@@ -13,6 +13,7 @@
 import { exec } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { parseFile } from './parse';
 import { Check, Precondition } from './planModel';
 import { fileState } from './workspace';
 
@@ -91,6 +92,24 @@ export async function runCheck(root: string, stepId: string | undefined, check: 
 					: `${name} does not exist yet.`,
 			durationMs: Date.now() - started,
 		};
+	}
+	// A parser, in this process. No shell, no PATH, no network, and one file: the
+	// three reasons a compiler cannot be the check at a step whose imports are
+	// hundreds of steps away. See `parse.ts`.
+	if (check.kind === 'parse') {
+		const rel = stepId ?? '';
+		let text: string;
+		try {
+			text = fs.readFileSync(path.join(root, rel), 'utf8');
+		} catch {
+			// Unreachable in a run — the `exists` check runs first and stops it. Said
+			// plainly anyway rather than reported as a parse failure of nothing.
+			return { check, verdict: 'fail', output: `${rel} does not exist yet.`, durationMs: Date.now() - started };
+		}
+		const verdict = parseFile(check.lang ?? 'json', rel, text, check.keys ?? []);
+		return verdict.unavailable
+			? { check, verdict: 'unavailable', reason: 'no-tool', output: verdict.message, durationMs: Date.now() - started }
+			: { check, verdict: verdict.ok ? 'pass' : 'fail', output: verdict.message, durationMs: Date.now() - started };
 	}
 	const cwd = path.join(root, check.cwd ?? '');
 	// A scratch starts with NO directories, so a check can arrive before the

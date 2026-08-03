@@ -22,6 +22,8 @@
 // particular project — it reads go.mod for the module path and package.json
 // for the JS root, and everything else falls out of the file tree.
 
+import { ParseLang, langOf, parseLabel, topLevelKeys } from './parse';
+
 export type StepKind = 'go' | 'gotest' | 'ts' | 'tsx' | 'style' | 'sql' | 'manifest' | 'lock' | 'doc' | 'other';
 
 /**
@@ -59,7 +61,16 @@ export interface Precondition {
 }
 
 export interface Check {
-	readonly kind: 'exists' | 'shell';
+	/**
+	 * `exists` — the file is there, and has something in it.
+	 * `shell` — a command, run in the scratch. It can be missing, and then the
+	 *   verdict is "could not run".
+	 * `parse` — the file holds together as an instance of its language, decided
+	 *   in process by {@link parseFile}. No toolchain, no network, one file: a
+	 *   check at ITS OWN step cannot resolve imports that are still hundreds of
+	 *   steps away, and a compiler asked to would fail correct work.
+	 */
+	readonly kind: 'exists' | 'shell' | 'parse';
 	readonly label: string;
 	/** `shell` only. Run with the scratch root as the default cwd. */
 	readonly cmd?: string;
@@ -73,6 +84,11 @@ export interface Check {
 	 * guessed at check time — see `checksFor`.
 	 */
 	readonly mayBeEmpty?: boolean;
+	/** `parse` only. */
+	readonly lang?: ParseLang;
+	/** `parse` only: top-level names the reference declares, every one of which
+	 *  the scratch's copy has to declare too. `{}` is valid JSON. */
+	readonly keys?: readonly string[];
 }
 
 export interface ToolHint {
@@ -1209,7 +1225,10 @@ function derivedFor(relPath: string, npm: NpmManifest | undefined): DerivedPart[
 }
 
 function checksFor(
-	step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string; modulePath?: string; bytes?: number; npm?: NpmManifest },
+	step: {
+		id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string;
+		modulePath?: string; bytes?: number; npm?: NpmManifest; topKeys?: readonly string[];
+	},
 	goModuleDir: string | undefined,
 ): Check[] {
 	if (step.mode === 'generate') {
@@ -1267,6 +1286,29 @@ function checksFor(
 	const checks: Check[] = [existsCheck(step.bytes)];
 	if (step.mode === 'copy') {
 		return checks;
+	}
+	// Does it hold together? The one question a check can ask about a file with
+	// nothing below it written, and the question 1,056 written steps were never
+	// asked: their whole verdict was that the file was not empty, which one space
+	// satisfies. A reference file the project itself leaves empty gets nothing —
+	// there is no such thing as an empty stylesheet that parses badly.
+	const lang = step.bytes === 0 ? undefined : langOf(step.id);
+	if (lang) {
+		// `dependencies` and `devDependencies` are a command's to write and arrive
+		// after this step (see `DerivedPart` and `installPass`), so requiring them
+		// here would be a check nothing the reader does at this step can turn green.
+		const deferred = baseName(step.id) === 'package.json' ? ['dependencies', 'devDependencies'] : [];
+		const keys = (step.topKeys ?? []).filter((k) => !deferred.includes(k));
+		checks.push({ kind: 'parse', label: parseLabel(lang, keys), lang, ...(keys.length ? { keys } : {}) });
+	}
+	// Two languages with no parser aboard and a real one on the machine. `bash -n`
+	// reads the script and refuses to run it; Python's own `ast` is the compiler's
+	// front half. Both report as "could not run" when absent, never as a pass.
+	if (/\.sh$/.test(step.id)) {
+		checks.push({ kind: 'shell', label: 'it parses as a shell script', cmd: `bash -n "${step.id}"` });
+	}
+	if (/\.py$/.test(step.id)) {
+		checks.push({ kind: 'shell', label: 'it parses as Python', cmd: `python3 -c 'import ast,sys;ast.parse(open(sys.argv[1]).read(),sys.argv[1])' "${step.id}"` });
 	}
 	// The authored half of a manifest, asserted. Everything else about a
 	// `package.json` is a command's to write (see `DerivedPart`); the `scripts`
@@ -1570,7 +1612,16 @@ function installPass(
 		}
 		const ordered = [...batches.keys()].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
 		if (!ordered.length) {
-			continue;
+			// Every dependency declared and none of them imported. The rule has no
+			// first importer to point at, so the install stays where the manifest is
+			// — which is what it would have been anyway, and is not a reason to drop
+			// the packages on the floor.
+			const home = steps[join(dir, 'package.json')]?.stage;
+			if (home === undefined) {
+				continue;
+			}
+			ordered.push(home);
+			batches.set(home, []);
 		}
 		// A dependency nothing imports has no first importer, and this rule has
 		// nothing to say about it. It still has to be installed for the manifest to
@@ -1708,7 +1759,14 @@ export function buildPlan(
 			const mode: StepMode = gen ? 'generate' : a.kind === 'doc' ? 'copy' : a.kind === 'lock' ? 'copy' : 'write';
 			const npm = npmFor(p);
 			const derived = derivedFor(p, npm);
-			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd, modulePath: declares, bytes: a.file.bytes, npm };
+			// Read from the REFERENCE, like the byte count `existsCheck` uses: a check
+			// running against a scratch cannot work out what "correct" would be.
+			const lang = a.file.bytes === 0 ? undefined : langOf(p);
+			const topKeys = lang ? topLevelKeys(lang, a.file.text) : [];
+			const shape = {
+				id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd,
+				modulePath: declares, bytes: a.file.bytes, npm, topKeys,
+			};
 			steps[p] = {
 				id: p,
 				stage: stage.id,

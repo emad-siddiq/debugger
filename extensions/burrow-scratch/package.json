@@ -25,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-scratch",
 		"watch": "gulp watch-extension:burrow-scratch",
-		"test": "node test/planModel.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js && node test/concepts.test.js && node test/ghost.test.js && node test/workspace.test.js"
+		"test": "node test/planModel.test.js && node test/parse.test.js && node test/progressModel.test.js && node test/page.test.js && node test/checks.test.js && node test/concepts.test.js && node test/ghost.test.js && node test/workspace.test.js"
 	},
 	"contributes": {
 		"commands": [

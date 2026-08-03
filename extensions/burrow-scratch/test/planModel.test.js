@@ -467,18 +467,53 @@ const cases = {
 	// The authored half, asserted. "Exists and is not empty" passed on `{}`.
 	'a manifest is checked on the block a person decides': () => {
 		const plan = buildPlan(split(), { name: 'app', reference: '/ref' });
-		const labels = plan.steps['web/package.json'].checks.map((c) => c.label);
-		assert.deepStrictEqual(labels, [
+		const step = plan.steps['web/package.json'];
+		assert.deepStrictEqual(step.checks.map((c) => c.label), [
 			'the file exists and is not empty',
+			'it parses, and declares the 2 top-level keys',
 			'it declares all 2 scripts',
 			'all 2 devDependencies are named and installed',
 		]);
+		// `dependencies` and `devDependencies` are NOT among the keys asserted: both
+		// are written by a command that runs after this step, so requiring them here
+		// would be a check nothing done at this step could turn green — the shape of
+		// the defect that started all of this.
+		assert.deepStrictEqual(step.checks[1].keys, ['name', 'scripts']);
+
 		// R79 — a manifest that declares neither gets neither, and stays a write
-		// step. There is nothing to defer and nothing to assert.
+		// step. There is nothing to defer.
 		const bare = buildPlan([file('test/package.json', '{"name":"oracle"}')], { name: 'x', reference: '/ref' });
 		assert.strictEqual(bare.steps['test/package.json'].mode, 'write');
 		assert.strictEqual(bare.steps['test/package.json'].derived, undefined);
-		assert.deepStrictEqual(bare.steps['test/package.json'].checks.map((c) => c.label), ['the file exists and is not empty']);
+		assert.deepStrictEqual(bare.steps['test/package.json'].checks.map((c) => c.kind), ['exists', 'parse']);
+	},
+
+	// R80. 1,680 of merkle's 2,094 steps had exactly one check between them and a
+	// green tick, and one space satisfies it. Asserted on the FIXTURES rather than
+	// on a percentage: a rule that holds for eleven kinds here holds for 1,416
+	// steps there, and a percentage would drift without failing.
+	'every written step is checked on something a wrong file fails': () => {
+		const files = [
+			...project(), ...configs(),
+			file('web/src/ui/Badge.css', '.badge { color: red; }\n'),
+			file('web/src/ui/Badge.test.tsx', "import { Badge } from './Badge';\nexport const t = Badge;\n"),
+			file('infra/k8s/00-ns.yaml', 'apiVersion: v1\nkind: Namespace\n'),
+			file('scripts/run.sh', '#!/bin/sh\necho hi\n'),
+			file('scripts/render.py', 'import sys\nprint(sys.argv)\n'),
+			file('docs/a.svg', '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>\n'),
+		];
+		const plan = buildPlan(files, { name: 'app', reference: '/ref' });
+		const weak = Object.values(plan.steps)
+			.filter((s) => s.mode !== 'copy' && !s.checks.some((c) => c.kind !== 'exists'))
+			.map((s) => s.id);
+		assert.deepStrictEqual(weak, ['Makefile'], `only the residue named in the report may be exists-only:\n${weak.join('\n')}`);
+
+		// A reference file the project itself leaves empty gets no content check:
+		// there is no such thing as an empty stylesheet that parses badly, and
+		// demanding one would be a step that can never be completed.
+		const empty = buildPlan([file('web/blank.css', '')], { name: 'x', reference: '/ref' });
+		assert.deepStrictEqual(empty.steps['web/blank.css'].checks.map((c) => c.kind), ['exists']);
+		assert.strictEqual(empty.steps['web/blank.css'].checks[0].mayBeEmpty, true);
 	},
 	'a package doc comment becomes the stage blurb': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });

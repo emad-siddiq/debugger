@@ -245,6 +245,36 @@ const cases = {
 		assert.match(locked.output, /1 packages named, all 1 locked/);
 	},
 
+	// WO-85 Phase 2. The step's verdict, end to end: the plan emits a `parse`
+	// check, `runCheck` runs it in process, and the row says where it stopped.
+	//
+	// NEGATIVE TEST against pre-fix code: there is no `parse` kind, so `checkOf`
+	// finds nothing and this throws before it can assert.
+	'a written file is checked on holding together, not on being non-empty': async () => {
+		const check = checkOf([['ui/Badge.tsx', 'export const Badge = () => <b>1</b>;\n']], 'ui/Badge.tsx', /parses/);
+		const dir = path.join(root, 'ui');
+		fs.mkdirSync(dir, { recursive: true });
+
+		// The state the old check called done.
+		fs.writeFileSync(path.join(dir, 'Badge.tsx'), ' ');
+		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', { kind: 'exists', label: 'e' })).verdict, 'pass');
+		// An EMPTY TypeScript file is valid TypeScript, so the parser has nothing to
+		// say about a file containing one space. That gap is closed by the next
+		// commit, and named here rather than left implied.
+		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', check)).verdict, 'pass');
+
+		// Half-written, and the row names the line.
+		fs.writeFileSync(path.join(dir, 'Badge.tsx'), 'export function Badge() {\n\treturn <div>\n}\n');
+		const half = await runCheck(root, 'ui/Badge.tsx', check);
+		assert.strictEqual(half.verdict, 'fail');
+		assert.match(half.output, /^ui\/Badge\.tsx:\d+:\d+: /);
+
+		// Byte-identical to the reference: green, with an import that resolves to
+		// nothing because the file it names is hundreds of steps away.
+		fs.writeFileSync(path.join(dir, 'Badge.tsx'), 'export const Badge = () => <b>1</b>;\n');
+		assert.strictEqual((await runCheck(root, 'ui/Badge.tsx', check)).verdict, 'pass');
+	},
+
 	'a run that stops at a failure leaves the rest with no result at all': async () => {
 		// The distinction the page has to draw: these checks did not fail, they
 		// were never reached. Reported here as "fewer results than checks", which
