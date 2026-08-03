@@ -112,6 +112,36 @@ export interface ScratchStep {
 	readonly routes?: readonly string[];
 	/** How many routes reach it in total, when more than `routes` names. */
 	readonly routeCount?: number;
+	/** Manifests only: how far this one actually reaches. See {@link ManifestReach}. */
+	readonly resolves?: ManifestReach;
+}
+
+/**
+ * How far a manifest actually reaches — measured, not counted by prefix.
+ *
+ * The page used to say *"every bare import under `test/` — 1 modules' worth —
+ * resolves through the dependencies this file names"* about a manifest that
+ * declares **no dependencies**, beside a single `.mjs` whose only imports are
+ * `node:fs`, `node:path` and `node:url`. The sentence was false twice over, and
+ * the reason it could be is that it never opened either file: it counted step ids
+ * by extension under a directory prefix and presented the number as a graph fact.
+ *
+ * So the number is now the answer to a question you can check by opening files:
+ * **how many of them import something this manifest names.** A specifier is
+ * resolved against the manifest's own dependency block (`dependencies` and the
+ * three fields beside it) or, for a `go.mod`, against its module path and its
+ * `require` list. Nothing else counts.
+ */
+export interface ManifestReach {
+	/** Files under this manifest that import at least one specifier it names. */
+	readonly files: number;
+	/** Distinct names from this manifest that those files actually import. For a
+	 *  `go.mod` this is the requires only — the module path is named separately,
+	 *  because it is the half the step's own check asserts. */
+	readonly names: number;
+	/** The three most-imported of them, for the page to say out loud rather than
+	 *  leaving the reader with a bare number they cannot place. */
+	readonly top: readonly string[];
 }
 
 export type StageClass = 'foundations' | 'schema' | 'go' | 'web' | 'rest';
@@ -427,6 +457,159 @@ export function tsImports(text: string): string[] {
 		}
 	}
 	return specs;
+}
+
+/**
+ * The package a bare specifier belongs to: `react-dom/client` → `react-dom`,
+ * `@scope/pkg/sub` → `@scope/pkg`.
+ *
+ * `undefined` for everything that is not a package — a relative path, the `@/`
+ * source alias, a Node builtin. `node:fs` is the case that matters: a file whose
+ * every import is a builtin depends on no manifest at all, and counting it as one
+ * is how a dependency-free package came to claim it resolved something.
+ */
+export function packageOf(spec: string): string | undefined {
+	if (!spec || spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/') || spec.startsWith('node:')) {
+		return undefined;
+	}
+	const parts = spec.split('/');
+	return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+/** Module paths a `go.mod` requires, from either form of the directive. Version
+ *  and `// indirect` are dropped: this answers "does this import resolve through
+ *  the manifest", not "at what version". */
+export function goRequires(text: string): string[] {
+	const out: string[] = [];
+	const push = (p: string | undefined): void => {
+		if (p && !out.includes(p)) {
+			out.push(p);
+		}
+	};
+	for (const block of text.matchAll(/^require\s*\(([\s\S]*?)^\)/gm)) {
+		for (const line of block[1].split('\n')) {
+			push(/^\s*(\S+)\s+v\S/.exec(line)?.[1]);
+		}
+	}
+	for (const single of text.matchAll(/^require\s+(\S+)\s+v\S/gm)) {
+		push(single[1]);
+	}
+	return out;
+}
+
+/** The nearest enclosing owner directory, longest prefix wins. `''` is the
+ *  project root and owns anything no deeper owner claims. */
+function nearestOwner(rel: string, owners: ReadonlySet<string>): string | undefined {
+	let best: string | undefined;
+	for (const dir of owners) {
+		if ((dir === '' || rel.startsWith(`${dir}/`)) && (best === undefined || dir.length > best.length)) {
+			best = dir;
+		}
+	}
+	return best;
+}
+
+/**
+ * Per manifest, how many files under it import something it names — and which
+ * names those are. See {@link ManifestReach} for why this replaced a prefix count.
+ *
+ * Nearest manifest wins, so a nested package is not credited to its parent. The
+ * manifest's own file never counts itself.
+ */
+export function manifestReach(files: readonly SourceFile[]): Map<string, ManifestReach> {
+	const npm = new Map<string, Set<string>>();
+	const go = new Map<string, { module: string; requires: readonly string[] }>();
+	for (const f of files) {
+		const base = baseName(f.path);
+		if (base === 'package.json') {
+			const named = new Set<string>();
+			try {
+				const json = JSON.parse(f.text) as Record<string, Record<string, string> | undefined>;
+				for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+					for (const name of Object.keys(json[field] ?? {})) {
+						named.add(name);
+					}
+				}
+			} catch {
+				// A manifest that does not parse names nothing. Not silent: its own
+				// step carries a `parse` check that says so in as many words.
+			}
+			npm.set(dirName(f.path), named);
+		} else if (base === 'go.mod') {
+			const module = /^module\s+(\S+)/m.exec(f.text)?.[1];
+			if (module) {
+				go.set(dirName(f.path), { module, requires: goRequires(f.text) });
+			}
+		}
+	}
+
+	const counted = new Map<string, number>();
+	const tally = new Map<string, Map<string, number>>();
+	const bump = (id: string, names: readonly string[]): void => {
+		counted.set(id, (counted.get(id) ?? 0) + 1);
+		const t = tally.get(id) ?? new Map<string, number>();
+		for (const n of names) {
+			t.set(n, (t.get(n) ?? 0) + 1);
+		}
+		tally.set(id, t);
+	};
+
+	const npmDirs = new Set(npm.keys());
+	const goDirs = new Set(go.keys());
+	for (const f of files) {
+		if (isJsModule(f.path)) {
+			const dir = nearestOwner(f.path, npmDirs);
+			if (dir === undefined) {
+				continue;
+			}
+			const named = npm.get(dir)!;
+			const used = [...new Set(tsImports(f.text).map(packageOf).filter((p): p is string => !!p && named.has(p)))];
+			if (used.length) {
+				bump(join(dir, 'package.json'), used);
+			}
+		} else if (f.path.endsWith('.go')) {
+			const dir = nearestOwner(f.path, goDirs);
+			if (dir === undefined) {
+				continue;
+			}
+			const { module, requires } = go.get(dir)!;
+			// The module path is counted as a HIT but not as a name: it is the half
+			// this step's own check asserts, and the page says it separately.
+			let internal = false;
+			const used = new Set<string>();
+			for (const spec of goImports(f.text)) {
+				if (spec === module || spec.startsWith(`${module}/`)) {
+					internal = true;
+					continue;
+				}
+				const req = requires.find((r) => spec === r || spec.startsWith(`${r}/`));
+				if (req) {
+					used.add(req);
+				}
+			}
+			if (internal || used.size) {
+				bump(join(dir, 'go.mod'), [...used]);
+			}
+		}
+	}
+
+	const out = new Map<string, ManifestReach>();
+	for (const dir of npmDirs) {
+		out.set(join(dir, 'package.json'), reachOf(join(dir, 'package.json'), counted, tally));
+	}
+	for (const dir of goDirs) {
+		out.set(join(dir, 'go.mod'), reachOf(join(dir, 'go.mod'), counted, tally));
+	}
+	return out;
+}
+
+function reachOf(id: string, counted: ReadonlyMap<string, number>, tally: ReadonlyMap<string, Map<string, number>>): ManifestReach {
+	const names = tally.get(id) ?? new Map<string, number>();
+	return {
+		files: counted.get(id) ?? 0,
+		names: names.size,
+		top: [...names].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 3).map(([n]) => n),
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,6 +1343,9 @@ export function buildPlan(
 	const source = files.filter((f) => !isIgnored(f.path) && f.bytes <= MAX_BYTES
 		&& baseName(f.path) !== 'go.sum' && !orphanLock(f.path));
 	const analysed = analyse(source);
+	// Measured once over the step universe, so the numerator on the page and the
+	// denominator it is quoted against are counted from the same set of files.
+	const reach = manifestReach(source);
 	const modules = new Map<string, string>();
 	for (const f of source) {
 		if (baseName(f.path) === 'go.mod') {
@@ -1231,6 +1417,7 @@ export function buildPlan(
 				checks: checksFor(shape, owner?.[0]),
 				...noteFor(p),
 				...routesFor(p),
+				...(reach.has(p) ? { resolves: reach.get(p)! } : {}),
 			};
 			claimed.add(p);
 		}

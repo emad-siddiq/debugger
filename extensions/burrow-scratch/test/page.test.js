@@ -65,19 +65,24 @@ const barrel = () => {
 
 /** One Foundations stage carrying every class WO-79 distinguishes: two module
  *  roots, a lockfile, a referenced config, a config referenced by an EARLIER
- *  one, two interchangeable configs, and a Makefile nothing reads. */
+ *  one, two interchangeable configs, and a Makefile nothing reads.
+ *
+ *  The manifests NAME dependencies and the files beside them IMPORT those
+ *  dependencies, because that is the only thing `unlocksAll` counts now. The
+ *  older fixture named none and imported none, and still rendered an unlocks
+ *  sentence on every manifest in it — which is precisely the defect. */
 const manifests = () => [
-	file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n'),
-	file('backend/main.go', 'package main\n\nfunc main() {}\n'),
-	file('web/package.json', '{"name":"web"}'),
+	file('backend/go.mod', 'module example.com/app\n\ngo 1.25.0\n\nrequire github.com/go-chi/chi/v5 v5.2.1\n'),
+	file('backend/main.go', 'package main\n\nimport (\n\t"net/http"\n\n\t"github.com/go-chi/chi/v5"\n)\n\nfunc main() { var _ http.Handler = chi.NewRouter() }\n'),
+	file('web/package.json', '{"name":"web","dependencies":{"react":"^19.0.0"},"devDependencies":{"vite":"^8.0.0"}}'),
 	file('web/package-lock.json', '{"name":"web","lockfileVersion":3}'),
 	file('web/tsconfig.json', '{\n\t"references": [{ "path": "./tsconfig.app.json" }]\n}\n'),
 	file('web/tsconfig.app.json', '{ "compilerOptions": { "strict": true } }\n'),
 	file('web/.vite.mockport.config.ts', "import base from './vite.config.ts';\nexport default base;\n"),
 	file('web/eslint.config.js', 'export default [];\n'),
 	file('web/playwright.config.ts', 'export default {};\n'),
-	file('web/vite.config.ts', 'export default {};\n'),
-	file('web/src/app.ts', 'export const app = 1;\n'),
+	file('web/vite.config.ts', "import { defineConfig } from 'vite';\nexport default defineConfig({});\n"),
+	file('web/src/app.ts', "import { useState } from 'react';\nexport const app = useState;\n"),
 	file('Makefile', 'run:\n\techo hi\n'),
 ];
 
@@ -133,6 +138,53 @@ const cases = {
 		const foundations = plan.stages[0];
 		const said = foundations.steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
 		assert.ok(said.length >= 3, `the fixture must exercise several: ${said.length}`);
+	},
+
+	// WO-85 Phase 0. The sentence counted step ids by extension under a directory
+	// prefix and called the number a fact about imports. This is the case it got
+	// wrong on merkle, reduced to the two properties that produce it.
+	//
+	// NEGATIVE TEST — run against the pre-fix build it reports:
+	//   ✗ a manifest that names no dependencies unlocks nothing
+	//     Expected values to be strictly equal:
+	//     + actual - expected
+	//     + "Every bare import under <code>test/</code> — 1 modules' worth — resolves…"
+	//     - ''
+	'a manifest that names no dependencies unlocks nothing': () => {
+		const plan = buildPlan([
+			file('test/package.json', '{"name":"oracle","description":"Dependency-free."}'),
+			file('test/ts/oracle.mjs', "import fs from 'node:fs';\nimport path from 'node:path';\nexport const run = () => [fs, path];\n"),
+		], { name: 'test', reference: '/ref' });
+		assert.strictEqual(unlocksAll(plan, plan.steps['test/package.json']), '',
+			'a manifest with no dependency block cannot be what anything resolves through');
+	},
+
+	// The positive half: the count is importers, and the file that imports only
+	// its neighbours is not one of them.
+	'the unlocks count is files that import a named package, not files under a prefix': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"dependencies":{"react":"^19.0.0"}}'),
+			file('web/src/a.tsx', "import React from 'react';\nexport const A = () => React;\n"),
+			file('web/src/b.tsx', "import { A } from './a';\nexport const B = () => A;\n"),
+			file('web/src/c.ts', "import fs from 'node:fs';\nexport const c = fs;\n"),
+		], { name: 'web', reference: '/ref' });
+		const said = unlocksAll(plan, plan.steps['web/package.json']).replace(/<[^>]+>/g, '');
+		// One importer of three candidate files — the old count was three.
+		assert.match(said, /^1 of the 3 files under web\/ imports a package this file names — react\.$/, said);
+	},
+
+	// And for a go.mod, where "named" means the module path OR a require. A file
+	// importing only the standard library resolves nothing through it.
+	'a go.mod counts the files that resolve through it, stdlib-only ones excluded': () => {
+		const plan = buildPlan([
+			file('svc/go.mod', 'module example.com/svc\n\ngo 1.24\n\nrequire (\n\tgithub.com/go-chi/chi/v5 v5.2.1\n)\n'),
+			file('svc/main.go', 'package main\n\nimport "example.com/svc/app"\n\nfunc main() { app.New() }\n'),
+			file('svc/app/app.go', 'package app\n\nimport "github.com/go-chi/chi/v5"\n\nfunc New() { chi.NewRouter() }\n'),
+			file('svc/util/util.go', 'package util\n\nimport "fmt"\n\nfunc S() string { return fmt.Sprint(1) }\n'),
+		], { name: 'svc', reference: '/ref' });
+		const said = unlocksAll(plan, plan.steps['svc/go.mod']).replace(/<[^>]+>/g, '');
+		assert.match(said, /^2 of the 3 Go files under svc\/ resolve an import through this file/, said);
+		assert.match(said, /its own module path, or one of github\.com\/go-chi\/chi\/v5\.$/, said);
 	},
 
 	// WO-79 §1. The three derivable classes, and the honest placeholder.

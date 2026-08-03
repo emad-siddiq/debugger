@@ -186,22 +186,26 @@ export function instruction(step: ScratchStep, stage: ScratchStage): string {
 }
 
 /**
- * What a manifest unlocks, when that is a fact and not a prefix count.
+ * What a manifest unlocks — the files that actually import something it names.
  *
- * The old version counted every step whose path started with this file's
- * directory and called the number a graph fact. On merkle that rendered **one
- * identical sentence with one identical number on ten of Foundations' seventeen
- * steps** — a sentence that does not change when the file changes says nothing
- * about the file — and on the root `package-lock.json` it asserted that 2,093
- * files resolved through an empty seven-line lockfile.
+ * WO-79 narrowed this from "every step under this prefix" to "every `.ts`-ish
+ * step under this prefix" and the narrowing did not make it true. It was still a
+ * count of file NAMES presented as a fact about imports, and on `test/package.json`
+ * — a manifest whose own description reads *"Dependency-free"* — it rendered
+ * *"every bare import under `test/` — 1 modules' worth — resolves through the
+ * dependencies this file names"*, about a manifest that names none and a file
+ * (`test/ts/oracle.mjs`) whose only imports are `node:` builtins. Two false
+ * claims and a plural disagreement in one sentence, none of which required
+ * opening a file to produce.
  *
- * Delegated in WO-79: make it a graph fact or re-phrase it. **Re-phrased**, and
- * narrowed to the two kinds where the claim is actually true. A `go.mod` really
- * is on the import path of every Go file in its module — `goModuleOf` resolves
- * through it, so the plan already relies on the fact. A `package.json` really is
- * how every bare specifier under it resolves. A Makefile is on nobody's import
- * path and a tsconfig has real dependents the graph can now name, so both get
- * nothing from here and fall back to those.
+ * The number is now {@link ManifestReach}: files that import a specifier this
+ * manifest resolves. It is smaller — 333 rather than 465 on merkle's frontend —
+ * and it is quoted AGAINST the old denominator, on purpose. "333 of the 465" is
+ * the sentence a reader can check; "465" alone was the sentence that could not
+ * be wrong because it was not about anything.
+ *
+ * A Makefile is on nobody's import path and a tsconfig has real dependents the
+ * graph can name, so both still get nothing from here and fall back to those.
  */
 export function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
 	const base = step.title;
@@ -210,13 +214,27 @@ export function unlocksAll(plan: ScratchPlan, step: ScratchStep): string {
 	const where = `<code>${escape(dir || './')}</code>`;
 	const under = (suffix: string): number =>
 		Object.keys(plan.steps).filter((id) => id !== step.id && id.startsWith(dir) && id.endsWith(suffix)).length;
-	if (base === 'go.mod') {
-		const n = under('.go');
-		return n ? `Every Go file under ${where} — ${n} of them — resolves its imports through the module path this file declares.` : '';
+	const reach = step.resolves;
+	// No reach is no sentence. A manifest nothing imports through unlocks nothing,
+	// and saying so in a paragraph about zero would be the same defect politely.
+	if ((base === 'go.mod' || base === 'package.json') && !reach?.files) {
+		return '';
 	}
-	if (base === 'package.json') {
-		const n = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].reduce((sum, ext) => sum + under(ext), 0);
-		return n ? `Every bare import under ${where} — ${n} modules' worth — resolves through the dependencies this file names.` : '';
+	// Named, not just counted. `26` on its own is a number a reader has to take on
+	// trust; `react, lucide-react, vitest and 23 more` is one they can go and look
+	// at — and naming them is what makes the count checkable rather than merely
+	// smaller than the one it replaced.
+	const named = reach?.top.map((t) => `<code>${escape(t)}</code>`).join(', ') ?? '';
+	const more = reach && reach.names > reach.top.length ? ` and ${reach.names - reach.top.length} more` : '';
+	if (base === 'go.mod' && reach) {
+		const via = reach.names ? `its own module path, or one of ${named}${more}` : 'its own module path';
+		return `${reach.files} of the ${under('.go')} Go files under ${where}`
+			+ ` resolve${reach.files === 1 ? 's' : ''} an import through this file — ${via}.`;
+	}
+	if (base === 'package.json' && reach) {
+		const total = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].reduce((sum, ext) => sum + under(ext), 0);
+		return `${reach.files} of the ${total} files under ${where} import${reach.files === 1 ? 's' : ''}`
+			+ ` a package this file names${named ? ` — ${named}${more}` : ''}.`;
 	}
 	if (step.kind === 'lock') {
 		const manifest = Object.keys(plan.steps).find((id) => id.startsWith(dir) && /(package|go)\.(json|mod)$/.test(id));
