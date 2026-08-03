@@ -44,6 +44,27 @@ const migrating = () => [
 	file('backend/cmd/migrate/main.go', 'package main\n\nimport "example.com/app/internal/migrate"\n\nfunc main() {\n\t_ = migrate.Run("migrations")\n}\n'),
 ];
 
+/**
+ * A manifest whose two halves have different distances to their consumers — the
+ * shape the split is about, at five files.
+ *
+ * `vite` is imported by the config beside the manifest; `react` and `recharts`
+ * by files further down, in different stages; `unused` by nothing at all, which
+ * is not a hypothetical (merkle declares four such).
+ */
+const split = () => [
+	file('web/package.json', JSON.stringify({
+		name: 'web',
+		scripts: { dev: 'vite', test: 'vitest run' },
+		dependencies: { react: '^19.2.4', recharts: '^3.8.1', unused: '^1.0.0' },
+		devDependencies: { vite: '^8.0.1', vitest: '^3.2.4' },
+	})),
+	file('web/package-lock.json', '{"name":"web","lockfileVersion":3}'),
+	file('web/vite.config.ts', "import { defineConfig } from 'vite';\nexport default defineConfig({});\n"),
+	file('web/src/ui/Badge.tsx', "import React from 'react';\nexport const Badge = () => React;\n"),
+	file('web/src/chart/Chart.tsx', "import { Line } from 'recharts';\nimport { Badge } from '../ui/Badge';\nexport const Chart = () => [Line, Badge];\n"),
+];
+
 /** A flows.json with `traced` dialled to whatever the case needs. */
 const flows = (traced) => ({
 	backend: '/ref/backend',
@@ -401,9 +422,58 @@ const cases = {
 			'the module resolves and the tests are there, so the Test Lab is offered and nothing else is');
 	},
 
-	'foundations carry the one-off dependency installs': () => {
+	// R74/R75. Foundations used to carry `cd web && npm install` — the blanket
+	// form of exactly what a reader objected to: a thirty-eight package install
+	// for code that does not exist for another six hundred steps.
+	'foundations no longer install what no file has asked for': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });
-		assert.deepStrictEqual(plan.stages[0].setup, ['cd backend && go mod download', 'cd web && npm install']);
+		assert.deepStrictEqual(plan.stages[0].setup, ['cd backend && go mod download']);
+	},
+
+	// The measurement this rests on, restated: on merkle the first consumer of a
+	// devDependency is 8 steps after the manifest and the first consumer of a
+	// runtime dependency is 657 steps after it. One rule for both is wrong either
+	// way round, so there are two.
+	'the two halves of a dependency block arrive where their consumers are': () => {
+		const plan = buildPlan(split(), { name: 'app', reference: '/ref' });
+		const order = plan.stages.flatMap((s) => s.steps);
+
+		// devDependencies — a command on the manifest step, at the reference's
+		// ranges. `npm install -D vite` would write whatever is newest today.
+		assert.deepStrictEqual(plan.steps['web/package.json'].derived, [
+			{ cmd: 'npm install -D vite@^8.0.1 vitest@^3.2.4', cwd: 'web', writes: 'devDependencies' },
+		]);
+
+		// dependencies — batched onto the stage holding the first file to import
+		// them, in plan order, one command per stage rather than one per package.
+		const installs = plan.stages
+			.filter((s) => s.setup.some((c) => c.includes('npm install')))
+			.map((s) => [s.id, s.setup.find((c) => c.includes('npm install'))]);
+		assert.deepStrictEqual(installs, [
+			['web/src/ui', 'cd web && npm install react@^19.2.4 unused@^1.0.0'],
+			['web/src/chart', 'cd web && npm install recharts@^3.8.1'],
+		]);
+		// The one nothing imports rides with the first batch and is NAMED there.
+		assert.match(plan.stages.find((s) => s.id === 'web/src/ui').setupWhy, /nothing in the project imports: `unused`/);
+
+		assert.ok(order.indexOf('web/package.json') < order.indexOf('web/src/ui/Badge.tsx'));
+	},
+
+	// The authored half, asserted. "Exists and is not empty" passed on `{}`.
+	'a manifest is checked on the block a person decides': () => {
+		const plan = buildPlan(split(), { name: 'app', reference: '/ref' });
+		const labels = plan.steps['web/package.json'].checks.map((c) => c.label);
+		assert.deepStrictEqual(labels, [
+			'the file exists and is not empty',
+			'it declares all 2 scripts',
+			'all 2 devDependencies are named and installed',
+		]);
+		// R79 — a manifest that declares neither gets neither, and stays a write
+		// step. There is nothing to defer and nothing to assert.
+		const bare = buildPlan([file('test/package.json', '{"name":"oracle"}')], { name: 'x', reference: '/ref' });
+		assert.strictEqual(bare.steps['test/package.json'].mode, 'write');
+		assert.strictEqual(bare.steps['test/package.json'].derived, undefined);
+		assert.deepStrictEqual(bare.steps['test/package.json'].checks.map((c) => c.label), ['the file exists and is not empty']);
 	},
 	'a package doc comment becomes the stage blurb': () => {
 		const plan = buildPlan(project(), { name: 'app', reference: '/ref' });

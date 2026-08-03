@@ -81,6 +81,31 @@ export interface ToolHint {
 	readonly why: string;
 }
 
+/**
+ * The half of a file a command writes, on a step you type the rest of.
+ *
+ * `go.mod` could become a whole `generate` step because there is nothing in it a
+ * person decides. A `package.json` is not like that: its name, its `type` and its
+ * `scripts` are the project stating what it is and how it is run, and its
+ * dependency block is thirty-nine lines of version ranges nobody invents. Making
+ * the whole file generated would delete the first; leaving it all typed is what
+ * the plan did, and what a reader objected to in as many words — *"this still
+ * wants me to populate package.json by hand"*.
+ *
+ * So the step is split rather than reclassified. The ranges are the REFERENCE's
+ * own (`react@^19.2.4`, not `react`): resolving fresh would install whatever is
+ * newest today, which can be a major the code beside it was not written against,
+ * and the scratch would then fail to build for a reason the reader did not cause.
+ */
+export interface DerivedPart {
+	/** What to run, as the reader would type it. */
+	readonly cmd: string;
+	/** Scratch-relative directory to run it in. */
+	readonly cwd: string;
+	/** The part of the file it fills in, so the page can say what you do NOT type. */
+	readonly writes: string;
+}
+
 export interface ScratchStep {
 	/** The reference-relative POSIX path. Doubles as the path inside the
 	 *  scratch, which is why it is also the stable id. */
@@ -94,6 +119,8 @@ export interface ScratchStep {
 	/** `generate` only: what to run, relative to {@link ScratchStep.commandCwd}. */
 	readonly command?: string;
 	readonly commandCwd?: string;
+	/** `write` steps whose file is part authored and part generated. See {@link DerivedPart}. */
+	readonly derived?: readonly DerivedPart[];
 	/** The file's own leading comment, or a derived sentence when it has none. */
 	readonly summary: string;
 	/** Top-level exported declarations, in source order. */
@@ -182,6 +209,10 @@ export interface ScratchStage {
 	readonly steps: readonly string[];
 	/** Run once before the stage's checks can pass (dependency installs). */
 	readonly setup: readonly string[];
+	/** Why this stage carries that `setup`, when the reason is particular to it —
+	 *  a runtime dependency arriving at the file that first imports it, rather
+	 *  than a blanket install at the top of the plan. */
+	readonly setupWhy?: string;
 	/** What to run when the stage is finished. */
 	readonly checks: readonly Check[];
 	/** Burrow tools this stage lights up, with the reason. */
@@ -495,6 +526,53 @@ export function goRequires(text: string): string[] {
 		push(single[1]);
 	}
 	return out;
+}
+
+/** The three parts of a `package.json` this plan distinguishes: what a person
+ *  decides, what a command installs now, and what a command installs later. */
+export interface NpmManifest {
+	/** Script names, in declaration order. The project's own command line. */
+	readonly scripts: readonly string[];
+	/** Runtime dependencies and their ranges, verbatim from the reference. */
+	readonly dependencies: Readonly<Record<string, string>>;
+	readonly devDependencies: Readonly<Record<string, string>>;
+}
+
+/** `undefined` when the file is not JSON at all — the manifest's own `parse`
+ *  check is what says so, and guessing here would say it twice and worse. */
+export function npmManifest(text: string): NpmManifest | undefined {
+	try {
+		const json = JSON.parse(text) as { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+		return {
+			scripts: Object.keys(json.scripts ?? {}),
+			dependencies: json.dependencies ?? {},
+			devDependencies: json.devDependencies ?? {},
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** A shell word, quoted only when it has to be. The command is READ as much as
+ *  it is run — it is printed on the page for the reader to type — so
+ *  `react@^19.2.4` stays legible and only an exotic range gets quotes. */
+function shellArg(word: string): string {
+	return /^[A-Za-z0-9@._/^~+-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * `npm install` for a named set, at the reference's own ranges (R76).
+ *
+ * `npm install react` writes whatever is newest the day it runs. That is the
+ * honest thing for a project being started and the wrong thing for one being
+ * REBUILT: a major version the reference's code was not written against turns
+ * into a compile error the reader did not cause and cannot diagnose. So the
+ * range is transcribed — which is exactly what `go mod init <path>` already does
+ * with a module path, and the same argument.
+ */
+export function installCommand(names: readonly string[], ranges: Readonly<Record<string, string>>, dev: boolean): string {
+	const args = names.map((n) => shellArg(ranges[n] ? `${n}@${ranges[n]}` : n)).join(' ');
+	return `npm install ${dev ? '-D ' : ''}${args}`;
 }
 
 /** The nearest enclosing owner directory, longest prefix wins. `''` is the
@@ -1036,8 +1114,79 @@ function existsCheck(bytes: number | undefined): Check {
 		: { kind: 'exists', label: 'the file exists and is not empty' };
 }
 
+/**
+ * A `node -e` program as one shell word.
+ *
+ * Node is a prerequisite of anything with a `package.json`, and a check that
+ * needs it reports its absence as "could not run" rather than as the reader's
+ * mistake — that is what `isMissingTool` is for. The alternative was a pile of
+ * `grep`s, which cannot tell a key in `scripts` from the same word in a comment
+ * and would fail a correct file to make a point.
+ */
+function nodeCheck(program: string): string {
+	return `node -e '${program.replace(/'/g, `'\\''`)}'`;
+}
+
+const READ_MANIFEST = 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));';
+
+/** The `scripts` block, named one by one. This is the part of the manifest a
+ *  person decides, so it is the part with a verdict: "exists and is not empty"
+ *  passed on a file containing `{}`. */
+function scriptsCheck(scripts: readonly string[], cwd: string): Check {
+	return {
+		kind: 'shell', cwd,
+		label: `it declares all ${scripts.length} script${scripts.length === 1 ? '' : 's'}`,
+		cmd: nodeCheck(READ_MANIFEST
+			+ `const w=${JSON.stringify(scripts)};const m=w.filter((k)=>!(p.scripts||{})[k]);`
+			+ 'if(m.length){console.error("package.json declares no script named: "+m.join(", "));process.exit(1)}'
+			+ 'console.log(w.length+" scripts, all present.")'),
+	};
+}
+
+/** Named AND installed, reported separately: they fail for different reasons and
+ *  the fix is different. Not in `devDependencies` means the command has not run;
+ *  not in `node_modules` means it ran somewhere else. */
+function devDepsCheck(names: readonly string[], cwd: string): Check {
+	return {
+		kind: 'shell', cwd,
+		label: `all ${names.length} devDependencies are named and installed`,
+		cmd: nodeCheck(READ_MANIFEST
+			+ `const w=${JSON.stringify(names)};`
+			+ 'const nd=w.filter((k)=>!(p.devDependencies||{})[k]);'
+			+ 'const ni=w.filter((k)=>!fs.existsSync("node_modules/"+k+"/package.json"));'
+			+ 'if(nd.length)console.error("not in devDependencies: "+nd.join(", "));'
+			+ 'if(ni.length)console.error("declared but not installed: "+ni.join(", "));'
+			+ 'if(nd.length||ni.length)process.exit(1);'
+			+ 'console.log(w.length+" devDependencies, all named and installed.")'),
+	};
+}
+
+/**
+ * The directory a step's own command runs in: a `generate` step's, or the first
+ * {@link DerivedPart} of a step that is otherwise typed. `undefined` when the
+ * step has no command at all, which is what "Open a terminal" keys off.
+ */
+export function commandCwdOf(step: ScratchStep): string | undefined {
+	if (step.mode === 'generate') {
+		return step.commandCwd ?? dirName(step.id);
+	}
+	return step.derived?.[0]?.cwd;
+}
+
+/** The half of a `package.json` a command writes. See {@link DerivedPart}. */
+function derivedFor(relPath: string, npm: NpmManifest | undefined): DerivedPart[] {
+	if (baseName(relPath) !== 'package.json' || !npm) {
+		return [];
+	}
+	const dev = Object.keys(npm.devDependencies);
+	// devDependencies only. The runtime half is not a command on THIS step: it is
+	// installed at the file that first imports it, which on a real project is
+	// hundreds of steps away — see the batching pass at the end of `buildPlan`.
+	return dev.length ? [{ cmd: installCommand(dev, npm.devDependencies, true), cwd: dirName(relPath), writes: 'devDependencies' }] : [];
+}
+
 function checksFor(
-	step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string; modulePath?: string; bytes?: number },
+	step: { id: string; kind: StepKind; mode: StepMode; command?: string; commandCwd?: string; modulePath?: string; bytes?: number; npm?: NpmManifest },
 	goModuleDir: string | undefined,
 ): Check[] {
 	if (step.mode === 'generate') {
@@ -1092,6 +1241,19 @@ function checksFor(
 	const checks: Check[] = [existsCheck(step.bytes)];
 	if (step.mode === 'copy') {
 		return checks;
+	}
+	// The authored half of a manifest, asserted. Everything else about a
+	// `package.json` is a command's to write (see `DerivedPart`); the `scripts`
+	// block is the part a person decides, and it was checked by nothing.
+	if (baseName(step.id) === 'package.json' && step.npm) {
+		const cwd = dirName(step.id);
+		if (step.npm.scripts.length) {
+			checks.push(scriptsCheck(step.npm.scripts, cwd));
+		}
+		const dev = Object.keys(step.npm.devDependencies);
+		if (dev.length) {
+			checks.push(devDepsCheck(dev, cwd));
+		}
 	}
 	if (step.kind === 'go' || step.kind === 'gotest') {
 		// Per-FILE and dependency-free: gofmt parses the file and says where it
@@ -1307,6 +1469,93 @@ function stageTools(
 	return tools;
 }
 
+/**
+ * Where a runtime dependency arrives — R74/R75, and the measurement behind them.
+ *
+ * `frontend/package.json` is step 3. The first file importing anything it names
+ * is step 11; the first file importing a **runtime** dependency is step 660. The
+ * two halves of one block are 649 steps apart, so a single rule for both is wrong
+ * whichever way it is written: defer everything and five Foundations steps stop
+ * working, install everything and you have run a thirty-eight package install for
+ * code that does not exist yet.
+ *
+ * So they are separated. `devDependencies` install on the manifest step itself
+ * (see `derivedFor`) because the configs immediately below it import them.
+ * `dependencies` install on the stage holding the first file that imports them,
+ * BATCHED per stage — thirteen commands on merkle rather than eighteen, each one
+ * the set of packages that stage's own files introduce.
+ *
+ * A setup line is not a step and carries no import edge, so nothing here can move
+ * the ordering invariant.
+ */
+function installPass(
+	stages: ScratchStage[],
+	steps: Record<string, ScratchStep>,
+	analysed: ReadonlyMap<string, Analysed>,
+	npmOf: ReadonlyMap<string, NpmManifest>,
+): void {
+	const order = stages.flatMap((s) => s.steps);
+	const npmDirs = new Set(npmOf.keys());
+	const rank = new Map(stages.map((s, i) => [s.id, i]));
+	const extra = new Map<string, string[]>();
+	const why = new Map<string, string>();
+
+	for (const [dir, npm] of npmOf) {
+		const runtime = Object.keys(npm.dependencies);
+		if (!runtime.length) {
+			continue;
+		}
+		const firstStage = new Map<string, string>();
+		for (const id of order) {
+			const text = analysed.get(id)?.file.text;
+			if (text === undefined || !isJsModule(id) || nearestOwner(id, npmDirs) !== dir) {
+				continue;
+			}
+			for (const spec of tsImports(text)) {
+				const pkg = packageOf(spec);
+				if (pkg !== undefined && npm.dependencies[pkg] !== undefined && !firstStage.has(pkg)) {
+					firstStage.set(pkg, steps[id].stage);
+				}
+			}
+		}
+		const batches = new Map<string, string[]>();
+		for (const pkg of runtime) {
+			const stage = firstStage.get(pkg);
+			if (stage !== undefined) {
+				batches.set(stage, [...(batches.get(stage) ?? []), pkg]);
+			}
+		}
+		const ordered = [...batches.keys()].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+		if (!ordered.length) {
+			continue;
+		}
+		// A dependency nothing imports has no first importer, and this rule has
+		// nothing to say about it. It still has to be installed for the manifest to
+		// reach the reference, so it joins the first batch — and is NAMED there,
+		// because "declared and never imported" is a fact about the project worth
+		// telling rather than a gap to quietly paper over.
+		const orphans = runtime.filter((pkg) => !firstStage.has(pkg));
+		for (const stage of ordered) {
+			const first = stage === ordered[0];
+			const named = batches.get(stage)!;
+			const list = (names: readonly string[]) => names.map((n) => `\`${n}\``).join(', ');
+			extra.set(stage, [...(extra.get(stage) ?? []),
+			`cd ${dir || '.'} && ${installCommand([...named, ...(first ? orphans : [])], npm.dependencies, false)}`]);
+			why.set(stage, `${list(named)} — this stage holds the first file that imports ${named.length === 1 ? 'it' : 'them'}.`
+				+ (first && orphans.length ? ` The command also carries ${orphans.length} package${orphans.length === 1 ? '' : 's'} the manifest`
+					+ ` declares that nothing in the project imports: ${list(orphans)}.` : '')
+				+ ' Nothing before this stage needed any of it, which is why it is not installed with the manifest.');
+		}
+	}
+
+	for (let i = 0; i < stages.length; i++) {
+		const add = extra.get(stages[i].id);
+		if (add) {
+			stages[i] = { ...stages[i], setup: [...stages[i].setup, ...add], setupWhy: why.get(stages[i].id) };
+		}
+	}
+}
+
 export function buildPlan(
 	files: readonly SourceFile[],
 	options: {
@@ -1347,11 +1596,21 @@ export function buildPlan(
 	// denominator it is quoted against are counted from the same set of files.
 	const reach = manifestReach(source);
 	const modules = new Map<string, string>();
+	const npmOf = new Map<string, NpmManifest>();
 	for (const f of source) {
 		if (baseName(f.path) === 'go.mod') {
 			modules.set(dirName(f.path), /^module\s+(\S+)/m.exec(f.text)?.[1] ?? '');
+		} else if (baseName(f.path) === 'package.json') {
+			const manifest = npmManifest(f.text);
+			if (manifest) {
+				npmOf.set(dirName(f.path), manifest);
+			}
 		}
 	}
+	/** The manifest a step is about: its own, for a `package.json`; the one beside
+	 *  it, for the lockfile it is generated from. */
+	const npmFor = (p: string): NpmManifest | undefined =>
+		baseName(p) === 'package.json' || LOCK_MANIFEST.get(baseName(p)) === 'package.json' ? npmOf.get(dirName(p)) : undefined;
 
 	const stages: ScratchStage[] = [];
 	const steps: Record<string, ScratchStep> = {};
@@ -1400,7 +1659,9 @@ export function buildPlan(
 			const declares = baseName(p) === 'go.mod' ? modules.get(dirName(p)) : undefined;
 			const gen = generatedBy(p, baseName(p) === 'go.mod' ? declares : owner?.[1]);
 			const mode: StepMode = gen ? 'generate' : a.kind === 'doc' ? 'copy' : a.kind === 'lock' ? 'copy' : 'write';
-			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd, modulePath: declares, bytes: a.file.bytes };
+			const npm = npmFor(p);
+			const derived = derivedFor(p, npm);
+			const shape = { id: p, kind: a.kind, mode, command: gen?.cmd, commandCwd: gen?.cwd, modulePath: declares, bytes: a.file.bytes, npm };
 			steps[p] = {
 				id: p,
 				stage: stage.id,
@@ -1410,6 +1671,7 @@ export function buildPlan(
 				lines: a.lines,
 				bytes: a.file.bytes,
 				...(gen ? { command: gen.cmd, commandCwd: gen.cwd } : {}),
+				...(derived.length ? { derived } : {}),
 				summary: a.summary,
 				declares: a.declares,
 				deps: a.deps,
@@ -1459,10 +1721,15 @@ export function buildPlan(
 		blurb: 'The manifests: what the project is called, what it depends on, how it is built. '
 			+ 'You type package.json and the configs; go.mod and the lockfiles are generated — the step runs the command.',
 		cls: 'foundations',
-		setup: [
-			...[...modules.keys()].map((d) => `cd ${d || '.'} && go mod download`),
-			...source.filter((f) => baseName(f.path) === 'package.json').map((f) => `cd ${dirName(f.path) || '.'} && npm install`),
-		],
+		// `npm install` USED TO BE HERE, once per package.json, and it was the
+		// blanket form of exactly what this stage should not do: install thirty-eight
+		// packages for code that does not exist yet. The dev half is now a command on
+		// the manifest step itself and the runtime half arrives at the file that
+		// first imports it (see the batching pass at the end of this function), so
+		// there is nothing left for a stage-wide install to add.
+		setup: [...modules.keys()].map((d) => `cd ${d || '.'} && go mod download`),
+		setupWhy: 'A generated `go.mod` requires nothing until a package has been tidied against it, so this'
+			+ ' downloads nothing today. It is here as the command, for the first time there is something to download.',
 		checks: [],
 		tools: [],
 	}, foundationSteps);
@@ -1626,6 +1893,10 @@ export function buildPlan(
 			}, left.slice().sort());
 		}
 	}
+
+	// LAST, because it needs the whole order: a dependency's first importer is a
+	// fact about the plan, not about any one stage. See `installPass`.
+	installPass(stages, steps, analysed, npmOf);
 
 	const all = Object.values(steps);
 	return {

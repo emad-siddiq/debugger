@@ -26,7 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CheckRun, preconditionMet, runChecks, summarize } from './checks';
-import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, routeIndex } from './planModel';
+import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, commandCwdOf, routeIndex } from './planModel';
 import { ghostLines, ghostSuggestion } from './ghost';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
@@ -509,7 +509,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	 *  reached. Reaching it is what creates it. */
 	const ensureGenerateCwd = (id: string): string => {
 		const step = plan.steps[id];
-		const rel = step.mode === 'generate' ? (step.commandCwd ?? path.dirname(id)) : '';
+		const rel = commandCwdOf(step) ?? '';
 		const abs = path.join(root, rel === '.' ? '' : rel);
 		fs.mkdirSync(abs, { recursive: true });
 		return abs;
@@ -789,12 +789,13 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	register('burrow.scratch.terminal', (() => {
 		const id = currentId();
 		const step = id ? plan.steps[id] : undefined;
-		if (!id || !step || step.mode !== 'generate') {
+		const rel = step ? commandCwdOf(step) : undefined;
+		if (!id || !step || rel === undefined) {
 			return;
 		}
 		const cwd = ensureGenerateCwd(id);
-		vscode.window.createTerminal({ name: `Scratch — ${step.commandCwd || '.'}`, cwd }).show();
-		log.appendLine(`terminal for ${id} (cwd ${step.commandCwd || '.'})`);
+		vscode.window.createTerminal({ name: `Scratch — ${rel || '.'}`, cwd }).show();
+		log.appendLine(`terminal for ${id} (cwd ${rel || '.'})`);
 	}) as never);
 
 	/**

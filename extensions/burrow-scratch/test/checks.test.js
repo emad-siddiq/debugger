@@ -21,6 +21,13 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { runCheck, runChecks, summarize } = require('../out/checks');
+const { buildPlan } = require('../out/planModel');
+
+/** The check the PLAN emits, not a copy of it. A test that retypes the command
+ *  proves the test's command works. */
+const checkOf = (files, stepId, match) =>
+	buildPlan(files.map((f) => ({ path: f[0], text: f[1], bytes: Buffer.byteLength(f[1]) })), { name: 'x', reference: '/ref' })
+		.steps[stepId].checks.find((c) => match.test(c.label));
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-checks-'));
 fs.mkdirSync(path.join(root, 'mod'), { recursive: true });
@@ -176,6 +183,39 @@ const cases = {
 		fs.writeFileSync(path.join(dir, 'go.mod'), 'module example.com/app/v2\n');
 		assert.strictEqual((await runCheck(root, 'mod/go.mod', { kind: 'shell', label: 'declares', cmd, cwd: 'mod' })).verdict, 'fail');
 		fs.rmSync(path.join(dir, 'go.mod'));
+	},
+
+	// WO-85 Phase 1. The `scripts` block is the half of a manifest a person
+	// decides, and until now the whole verdict on it was that the file was not
+	// empty — which `{"name":"npm"}` satisfies.
+	//
+	// NEGATIVE TEST against pre-fix code: `checkOf` returns `undefined` there,
+	// because the plan emitted no such check to run.
+	'the scripts check reads the scripts block and names what is missing': async () => {
+		const reference = '{"name":"npm","scripts":{"dev":"vite","build":"vite build"}}';
+		const check = checkOf([['npm/package.json', reference]], 'npm/package.json', /scripts/);
+		const dir = path.join(root, 'npm');
+		fs.mkdirSync(dir, { recursive: true });
+		const write = (text) => fs.writeFileSync(path.join(dir, 'package.json'), text);
+
+		// T2 — byte-identical to the reference, green.
+		write(reference);
+		assert.strictEqual((await runCheck(root, 'npm/package.json', check)).verdict, 'pass');
+
+		// A manifest with no scripts at all: red, and it says which ones.
+		write('{"name":"npm"}');
+		const bare = await runCheck(root, 'npm/package.json', check);
+		assert.strictEqual(bare.verdict, 'fail');
+		assert.match(bare.output, /declares no script named: dev, build/);
+		// The check it is standing beside passes on that same file — which is the
+		// whole reason this one had to exist.
+		assert.strictEqual((await runCheck(root, 'npm/package.json', { kind: 'exists', label: 'e' })).verdict, 'pass');
+
+		// One missing out of two is still red, and names only the missing one.
+		write('{"scripts":{"dev":"vite"}}');
+		const partial = await runCheck(root, 'npm/package.json', check);
+		assert.strictEqual(partial.verdict, 'fail');
+		assert.match(partial.output, /no script named: build$/m);
 	},
 
 	'a run that stops at a failure leaves the rest with no result at all': async () => {

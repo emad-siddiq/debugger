@@ -68,11 +68,12 @@ export const CONCEPTS: Readonly<Record<ConceptId, Concept>> = {
 	'npm-manifest': {
 		term: 'An npm manifest',
 		text: 'A `package.json` names a package, the dependencies it needs and the scripts that run it. '
-			+ 'A dependency here is a *range* — `^5.2.0` admits 5.9.1 — so this file records an intention rather '
-			+ 'than a decision, and two installs a month apart can resolve differently from identical text. '
-			+ 'The `scripts` block is the project\'s real command-line interface: `npm run <name>` runs the entry '
-			+ 'rather than a shell alias, so the names here are what someone arriving at the project reads to find '
-			+ 'out how it is built, started and tested.',
+			+ 'A dependency is a *range* — `^5.2.0` admits 5.9.1 — so identical text can resolve differently a '
+			+ 'month apart, and it is the lockfile beside it, not this file, that makes an install reproducible. '
+			+ 'Which is why a range is copied from what you are rebuilding rather than resolved fresh: the newest '
+			+ 'version today can be a major the code was not written against, and that failure looks like yours. '
+			+ 'The `scripts` block is the part nothing can derive — the project\'s real command-line interface, '
+			+ 'and what someone arriving reads to find out how it is built, started and tested.',
 	},
 	'lockfile': {
 		term: 'A lockfile',
