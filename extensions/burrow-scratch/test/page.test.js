@@ -134,10 +134,13 @@ const cases = {
 			const said = stage.steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
 			assert.strictEqual(new Set(said).size, said.length, `${stage.id} repeats a sentence:\n${said.join('\n')}`);
 		}
-		// It is only worth asserting because more than one step renders one.
-		const foundations = plan.stages[0];
-		const said = foundations.steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
-		assert.ok(said.length >= 3, `the fixture must exercise several: ${said.length}`);
+		// It is only worth asserting because more than one step renders one. Counted
+		// across the plan rather than inside Foundations: since R77 the lockfile is
+		// planned where its install has something to lock, which is not this stage.
+		const all = Object.values(plan.steps).map((s) => unlocksAll(plan, s)).filter(Boolean);
+		assert.ok(all.length >= 3, `the fixture must exercise several: ${all.length}`);
+		const foundations = plan.stages[0].steps.map((id) => unlocksAll(plan, plan.steps[id])).filter(Boolean);
+		assert.ok(foundations.length >= 2, `Foundations renders ${foundations.length}`);
 	},
 
 	// WO-85 Phase 0. The sentence counted step ids by extension under a directory
