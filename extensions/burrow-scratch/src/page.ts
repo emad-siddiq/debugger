@@ -36,6 +36,15 @@ export interface PageState {
 	readonly stepId: string;
 	readonly checks?: CheckRun;
 	readonly running?: boolean;
+	/**
+	 * These verdicts came off disk, not from a run in this window.
+	 *
+	 * The distinction is load-bearing twice. The rows have to say so, because a
+	 * remembered green tick is a claim about a file that may have been edited
+	 * since; and the offer must not fire on one, or reopening a window would
+	 * invite a reader onward from a check that last ran on Tuesday.
+	 */
+	readonly remembered?: boolean;
 }
 
 export class StepPage implements Disposable {
@@ -472,6 +481,82 @@ export function positionOf(output: string): { readonly file: string; readonly li
 	return m ? { file: m[1], line: Number(m[2]), column: Number(m[3] ?? 1) } : undefined;
 }
 
+/** How long ago, in the words a person uses about their own evening. */
+export function ago(then: string, now: number): string {
+	const ms = now - Date.parse(then);
+	if (!Number.isFinite(ms) || ms < 0) {
+		return 'earlier';
+	}
+	const minutes = Math.round(ms / 60_000);
+	if (minutes < 1) {
+		return 'a moment ago';
+	}
+	if (minutes < 60) {
+		return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+	}
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) {
+		return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+	}
+	const days = Math.round(hours / 24);
+	return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** A remembered verdict says it is remembered. A tick that came off disk is a
+ *  claim about a file that may have been edited since it was made. */
+function rememberedNote(state: PageState): string {
+	const at = state.progress.steps[state.stepId]?.checkedAt;
+	return `From your last run${at ? `, ${escape(ago(at, Date.now()))}` : ''} — save the file to run them again. `;
+}
+
+/**
+ * The remembered results of a step, as a run the page can render.
+ *
+ * Matched to the step's CURRENT checks by label, so a re-plan that changed what
+ * a step asserts drops the verdicts it no longer has rather than painting an old
+ * answer onto a new question.
+ */
+export function rememberedRun(plan: ScratchPlan, progress: Progress, stepId: string): CheckRun | undefined {
+	const memory = progress.steps[stepId]?.results;
+	const checks = plan.steps[stepId]?.checks ?? [];
+	if (!memory?.length || !checks.length) {
+		return undefined;
+	}
+	const results = memory
+		.map((m) => {
+			const check = checks.find((c) => c.label === m.label);
+			return check ? { check, verdict: m.verdict, output: m.output, durationMs: 0 } : undefined;
+		})
+		.filter((r): r is NonNullable<typeof r> => !!r);
+	if (!results.length) {
+		return undefined;
+	}
+	const verdict = results.some((r) => r.verdict === 'fail') ? 'fail'
+		: results.some((r) => r.verdict === 'unavailable') ? 'unavailable' : 'pass';
+	return { results, verdict, ...(results.length < checks.length ? { partial: true } : {}) };
+}
+
+/**
+ * *You were here* — the one line a reopened window owes the reader.
+ *
+ * Generated: the file, when it was last touched, and how far through its stage
+ * it is in lines (R82). No streak, no encouragement, no animated number — the
+ * question a person has on reopening is "where was I", and that is the whole of
+ * what this answers.
+ */
+export function wereHere(plan: ScratchPlan, progress: Progress, stepId: string, now: number): string {
+	const step = plan.steps[stepId];
+	const stage = plan.stages.find((s) => s.id === step?.stage);
+	if (!step || !stage) {
+		return '';
+	}
+	const p = lineProgress(plan, progress, stage.steps);
+	const at = progress.steps[stepId]?.at;
+	return `<p class="wereHere quiet">You were here${at ? ` ${escape(ago(at, now))}` : ''} — `
+		+ `<code>${escape(stepId)}</code>, ${p.stepsDone} of ${p.steps} files into ${escape(stage.title)} `
+		+ `(${p.linesDone.toLocaleString()} of ${p.lines.toLocaleString()} lines).</p>`;
+}
+
 export function checksBlock(state: PageState, step: ScratchStep): string {
 	const ran = !!state.checks;
 	const partial = state.checks?.partial === true;
@@ -501,12 +586,13 @@ export function checksBlock(state: PageState, step: ScratchStep): string {
 			+ `${check.cmd ? `<code>${escape(check.cmd)}</code>` : ''}${run}</span>${detail}</li>`;
 	}).join('');
 	// Said once, at the top, rather than implied by which rows have buttons.
+	const when = state.remembered ? rememberedNote(state) : '';
 	const how = shellCount === step.checks.length
 		? `Every check here runs a command, so they run when you ask.`
 		: shellCount === 0
 			? `These run on save — press ⌘S and the marks update.`
 			: `${step.checks.length - shellCount} of these run on save; the ${shellCount === 1 ? 'other runs a command' : `other ${shellCount} run commands`}, so ${shellCount === 1 ? 'it runs' : 'they run'} when you ask.`;
-	return `<section><h2>When it is done</h2><p class="quiet how">${how}</p><ul class="checks">${rows}</ul></section>`;
+	return `<section><h2>When it is done</h2><p class="quiet how">${when}${how}</p><ul class="checks">${rows}</ul></section>`;
 }
 
 /**
@@ -522,7 +608,7 @@ export function checksBlock(state: PageState, step: ScratchStep): string {
  */
 export function offerBlock(plan: ScratchPlan, progress: Progress, state: PageState, step: ScratchStep): string {
 	const run = state.checks;
-	const allGreen = !!run && !run.partial && run.results.length === step.checks.length
+	const allGreen = !!run && !state.remembered && !run.partial && run.results.length === step.checks.length
 		&& run.results.every((r) => r.verdict === 'pass');
 	if (!allGreen) {
 		return '';
@@ -638,6 +724,8 @@ function html(state: PageState): string {
 	section.concept p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--vscode-descriptionForeground); max-width: 74ch; }
 	section.concept h2 { color: var(--vscode-foreground); }
 	p.how { margin: 0 0 8px; font-size: 11.5px; }
+	p.wereHere { margin: 12px 0 0; font-size: 12px; padding: 7px 11px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); }
+	.consulted { font-size: 10.5px; opacity: .8; }
 	button.tiny { margin-left: 8px; padding: 1px 8px; font-size: 11px; vertical-align: baseline; }
 	button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 	section.offer { margin-top: 22px; }
@@ -659,7 +747,9 @@ function html(state: PageState): string {
 	<div class="chiprow">
 		${stateChip(state_)}
 		<span class="quiet">${KIND_LABEL[step.kind] ?? step.kind} · ${step.lines} lines in the reference · ${inStage.settled}/${inStage.total} done in ${escape(stage.title)}</span>
+		${progress.steps[stepId]?.consulted ? `<span class="quiet consulted">reference opened</span>` : ''}
 	</div>
+	${state.remembered ? wereHere(plan, progress, stepId, Date.now()) : ''}
 	<p class="lede">${instruction(step, stage)}</p>
 	${conceptBlock(step)}
 	${step.summary ? `<p class="quiet">The reference's own note: ${escape(step.summary.slice(0, 400))}</p>` : ''}
@@ -706,7 +796,7 @@ function html(state: PageState): string {
 		? `<button class="primary" data-act="terminal">Open a terminal in ${escape(step.commandCwd || '.')}</button>`
 		: `<button class="primary" data-act="open">Open the file</button>`}
 		<button data-act="check"${state.running ? ' disabled' : ''}>${state.running ? 'Checking…' : 'Run the checks'}</button>
-		<button data-act="reference">Show the reference</button>
+		<button data-act="reference">${progress.steps[stepId]?.consulted ? 'Show the reference again' : 'Show the reference'}</button>
 		${step.mode === 'copy' || !settled ? `<button data-act="copy">Copy the reference in</button>` : ''}
 		${settled ? `<button data-act="undone">Reopen this step</button>` : `<button data-act="done">Mark written</button>`}
 		<button data-act="next">Next file →</button>

@@ -20,6 +20,19 @@ import { ScratchPlan } from './planModel';
 
 export type StepState = 'todo' | 'writing' | 'done' | 'copied';
 
+/**
+ * One check's last known answer, kept so a reopened window can show it.
+ *
+ * Keyed by LABEL, which is what `checksBlock` already matches on, and which
+ * survives a re-plan that renumbers steps. The output is kept short: this is a
+ * memory of a verdict, not a log.
+ */
+export interface CheckMemory {
+	readonly label: string;
+	readonly verdict: 'pass' | 'fail' | 'unavailable';
+	readonly output: string;
+}
+
 export interface StepRecord {
 	readonly state: StepState;
 	/** ISO timestamp of the last state change. */
@@ -32,11 +45,27 @@ export interface StepRecord {
 	 * fact on disk, and a stage went green on checks that never executed.
 	 */
 	readonly checks?: 'pass' | 'fail' | 'unavailable';
+	/** Row by row, so reopening shows what you were looking at rather than a
+	 *  column of hollow circles that reads as "nothing has ever run". */
+	readonly results?: readonly CheckMemory[];
+	/** When those results were produced — a remembered verdict has to say it is
+	 *  remembered, or it is a claim about a file that may have changed since. */
+	readonly checkedAt?: string;
+	/**
+	 * The reader opened the reference for this step (R86).
+	 *
+	 * Recorded and shown; it gates nothing and subtracts from nothing. The
+	 * reference is on their disk and pretending otherwise would be the product's
+	 * first dishonest sentence — but a rebuild you looked things up during is a
+	 * different rebuild from one you did not, and only the person doing it can
+	 * decide what that is worth.
+	 */
+	readonly consulted?: boolean;
 	readonly note?: string;
 }
 
 export interface Progress {
-	readonly version: 1;
+	readonly version: 2;
 	/** The step the developer is on. Undefined only before the first open. */
 	readonly current?: string;
 	readonly steps: Readonly<Record<string, StepRecord>>;
@@ -44,8 +73,33 @@ export interface Progress {
 	readonly updatedAt: string;
 }
 
+export const PROGRESS_VERSION = 2;
+
 export function emptyProgress(now: string): Progress {
-	return { version: 1, steps: {}, startedAt: now, updatedAt: now };
+	return { version: 2, steps: {}, startedAt: now, updatedAt: now };
+}
+
+/**
+ * A version 1 progress file, read by this version. Lossless in both directions
+ * of what version 1 could express: every field it had survives, and the three
+ * this version adds are simply absent until something records them.
+ *
+ * Written back as version 2 on the next save, so the migration happens once and
+ * a reader who never runs a check keeps a file that is still true.
+ */
+export function migrateProgress(raw: unknown): Progress | undefined {
+	const p = raw as Partial<Progress> | undefined;
+	const version = (p as { version?: number } | undefined)?.version;
+	if (!p || typeof p !== 'object' || !p.steps || (version !== 1 && version !== 2)) {
+		return undefined;
+	}
+	return {
+		version: 2,
+		...(p.current ? { current: p.current } : {}),
+		steps: p.steps,
+		startedAt: p.startedAt ?? new Date(0).toISOString(),
+		updatedAt: p.updatedAt ?? p.startedAt ?? new Date(0).toISOString(),
+	};
 }
 
 export function stateOf(progress: Progress, stepId: string): StepState {
@@ -69,9 +123,26 @@ export function setCurrent(progress: Progress, stepId: string, now: string): Pro
 	return { ...progress, current: stepId, updatedAt: now };
 }
 
-export function recordCheck(progress: Progress, stepId: string, verdict: 'pass' | 'fail' | 'unavailable', now: string): Progress {
+export function recordCheck(progress: Progress, stepId: string, verdict: 'pass' | 'fail' | 'unavailable', now: string, results?: readonly CheckMemory[]): Progress {
 	const record = progress.steps[stepId] ?? { state: 'writing' as StepState, at: now };
-	return { ...progress, steps: { ...progress.steps, [stepId]: { ...record, checks: verdict, at: now } }, updatedAt: now };
+	return {
+		...progress,
+		steps: {
+			...progress.steps,
+			[stepId]: { ...record, checks: verdict, at: now, ...(results ? { results, checkedAt: now } : {}) },
+		},
+		updatedAt: now,
+	};
+}
+
+/** R86: the reader opened the reference for this step. Sticky — having looked
+ *  once is a fact about the rebuild, and un-looking is not a thing. */
+export function recordConsulted(progress: Progress, stepId: string, now: string): Progress {
+	const record = progress.steps[stepId] ?? { state: 'todo' as StepState, at: now };
+	if (record.consulted) {
+		return progress;
+	}
+	return { ...progress, steps: { ...progress.steps, [stepId]: { ...record, consulted: true } }, updatedAt: now };
 }
 
 /** The plan's steps in the order they are meant to be written. */

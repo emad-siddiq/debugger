@@ -23,8 +23,8 @@ Module._load = function (request, ...rest) {
 };
 
 const { buildPlan } = require('../out/planModel');
-const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, offerBlock, positionOf, unlocksAll, whyNow } = require('../out/page');
-const { emptyProgress, setState } = require('../out/progressModel');
+const { emptyProgress, recordCheck, setState } = require('../out/progressModel');
+const { CYCLE_NOTE, DEFECT_NOTE, ago, checksBlock, instruction, linkList, offerBlock, positionOf, rememberedRun, wereHere, unlocksAll, whyNow } = require('../out/page');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
 
@@ -348,6 +348,71 @@ const cases = {
 		assert.strictEqual(offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: failed }, step), '');
 		assert.strictEqual(offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: { ...green, partial: true } }, step), '',
 			'a partial run must never offer to move on');
+	},
+
+	'a remembered verdict says it is remembered, and never offers to move on': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/docs/one.md', '# one\n'),
+			file('web/docs/two.md', '# two\n'),
+		], { name: 'web', reference: '/ref' });
+		const docs = plan.stages.find((s) => s.steps.some((id) => id.startsWith('web/docs/')));
+		const step = plan.steps[docs.steps[0]];
+		let progress = emptyProgress('2026-08-05T00:00:00.000Z');
+		progress = setState(progress, step.id, 'writing', '2026-08-05T09:00:00.000Z');
+		progress = recordCheck(progress, step.id, 'pass', '2026-08-05T09:00:00.000Z',
+			step.checks.map((c) => ({ label: c.label, verdict: 'pass', output: '' })));
+
+		const run = rememberedRun(plan, progress, step.id);
+		assert.ok(run, 'the last run comes back off disk');
+		assert.strictEqual(run.results.length, step.checks.length);
+		const state = { plan, progress, stepId: step.id, checks: run, remembered: true };
+		const html = checksBlock(state, step);
+		assert.ok(/From your last run/.test(html), `the rows must not look freshly run: ${html.slice(0, 200)}`);
+		// The one that matters: a window reopened onto a green step must not invite
+		// the reader onward from a check that last ran last night.
+		assert.strictEqual(offerBlock(plan, progress, state, step), '',
+			'a remembered pass is not a pass that just happened');
+		assert.ok(/data-act="offer"/.test(offerBlock(plan, progress, { ...state, remembered: false }, step)),
+			'…and the same run, freshly made, does offer');
+	},
+
+	'a re-plan that changed a step\'s checks drops the answers it no longer has': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/docs/one.md', '# one\n'),
+		], { name: 'web', reference: '/ref' });
+		const id = 'web/docs/one.md';
+		const progress = recordCheck(emptyProgress('2026-08-05T00:00:00.000Z'), id, 'pass', '2026-08-05T09:00:00.000Z',
+			[{ label: 'a check this step no longer has', verdict: 'pass', output: '' }]);
+		assert.strictEqual(rememberedRun(plan, progress, id), undefined,
+			'an old answer must not be painted onto a new question');
+	},
+
+	'you were here says where, when, and how far — in lines': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/src/lib/a.ts', 'export const a = 1;\n'),
+			file('web/src/lib/b.ts', `export const b = 1;\n${'// filler\n'.repeat(98)}`),
+		], { name: 'web', reference: '/ref' });
+		const now = Date.parse('2026-08-05T12:00:00.000Z');
+		let progress = setState(emptyProgress('2026-08-05T00:00:00.000Z'), 'web/src/lib/a.ts', 'done', '2026-08-05T11:00:00.000Z');
+		progress = setState(progress, 'web/src/lib/b.ts', 'writing', '2026-08-05T11:30:00.000Z');
+		const line = wereHere(plan, progress, 'web/src/lib/b.ts', now);
+		assert.ok(/You were here 30 minutes ago/.test(line), line);
+		assert.ok(/1 of 2 files/.test(line), line);
+		assert.ok(/lines\)/.test(line), `progress is denominated in lines: ${line}`);
+		// R87: no streak, no encouragement, no exclamation.
+		assert.ok(!/!|streak|keep going|well done|nice/i.test(line), line);
+	},
+
+	'how long ago, in the words a person uses': () => {
+		const now = Date.parse('2026-08-05T12:00:00.000Z');
+		assert.strictEqual(ago('2026-08-05T11:59:40.000Z', now), 'a moment ago');
+		assert.strictEqual(ago('2026-08-05T11:59:00.000Z', now), '1 minute ago');
+		assert.strictEqual(ago('2026-08-05T11:00:00.000Z', now), '1 hour ago');
+		assert.strictEqual(ago('2026-08-03T12:00:00.000Z', now), '2 days ago');
+		assert.strictEqual(ago('not a date', now), 'earlier');
 	},
 };
 

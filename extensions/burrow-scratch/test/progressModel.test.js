@@ -13,7 +13,7 @@
 const assert = require('node:assert');
 const {
 	emptyProgress, isSettled, nextStep, order, overallTally, percent,
-	recordCheck, resumeAt, setCurrent, setState, stageState, stageTally, stateOf,
+	migrateProgress, recordCheck, recordConsulted, resumeAt, setCurrent, setState, stageState, stageTally, stateOf,
 } = require('../out/progressModel');
 
 const T0 = '2026-07-27T10:00:00.000Z';
@@ -152,6 +152,62 @@ const cases = {
 		assert.strictEqual(stateOf(before, 'a/one.go'), 'todo');
 		assert.strictEqual(stateOf(after, 'a/one.go'), 'done');
 		assert.strictEqual(before.startedAt, after.startedAt);
+	},
+
+	'a version 1 progress file survives the format change intact': () => {
+		// A scratch is somebody's evenings. Version 1 is migrated, never discarded,
+		// and everything it could express comes through unchanged.
+		const v1 = {
+			version: 1,
+			current: 'backend/go.mod',
+			startedAt: T0,
+			updatedAt: T1,
+			steps: {
+				'backend/go.mod': { state: 'done', at: T1, checks: 'pass' },
+				'test/go.mod': { state: 'writing', at: T0, note: 'left half typed' },
+			},
+		};
+		const migrated = migrateProgress(v1);
+		assert.strictEqual(migrated.version, 2);
+		assert.strictEqual(migrated.current, 'backend/go.mod');
+		assert.strictEqual(migrated.startedAt, T0);
+		assert.deepStrictEqual(migrated.steps, v1.steps, 'not one field of not one step is lost');
+		assert.strictEqual(stateOf(migrated, 'backend/go.mod'), 'done');
+		// …and it is idempotent, so a file already at 2 is not rewritten twice.
+		assert.deepStrictEqual(migrateProgress(migrated), migrated);
+		// Anything that is not a progress file is refused rather than half-read.
+		assert.strictEqual(migrateProgress({ version: 9, steps: {} }), undefined);
+		assert.strictEqual(migrateProgress(null), undefined);
+		assert.strictEqual(migrateProgress({ version: 1 }), undefined);
+	},
+
+	'the last check run is remembered row by row': () => {
+		// Reopening on a column of hollow circles reads as "nothing has ever run"
+		// about a step whose checks all passed twenty minutes before you closed it.
+		const results = [
+			{ label: 'the file exists and is not empty', verdict: 'pass', output: '' },
+			{ label: 'it parses', verdict: 'fail', output: 'a.json:2:1: unexpected }' },
+		];
+		const p = recordCheck(emptyProgress(T0), 'a.json', 'fail', T1, results);
+		assert.deepStrictEqual(p.steps['a.json'].results, results);
+		assert.strictEqual(p.steps['a.json'].checkedAt, T1, 'and when — a remembered tick has to say it is remembered');
+		// A run recorded without results does not erase the ones already there.
+		const again = recordCheck(p, 'a.json', 'pass', T1);
+		assert.deepStrictEqual(again.steps['a.json'].results, results);
+	},
+
+	'opening the reference is recorded, and gates nothing': () => {
+		const p = recordConsulted(emptyProgress(T0), 'a.json', T1);
+		assert.strictEqual(p.steps['a.json'].consulted, true);
+		assert.strictEqual(stateOf(p, 'a.json'), 'todo', 'looking is not working');
+		// Sticky: having looked once is a fact, and un-looking is not a thing.
+		const twice = recordConsulted(p, 'a.json', T1);
+		assert.strictEqual(twice, p, 'no rewrite, no new timestamp');
+		// It never touches the tally — R86 says it gates nothing and subtracts
+		// from nothing, and a progress bar that docked you for reading would be
+		// the product taking a view it has not earned.
+		const done = setState(p, 'a.json', 'done', T1);
+		assert.strictEqual(stateOf(done, 'a.json'), 'done');
 	},
 };
 

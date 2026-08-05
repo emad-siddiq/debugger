@@ -30,8 +30,8 @@ import { FlowsDoc, MIN_TRACED_FLOWS, ScratchPlan, buildPlan, commandCwdOf, route
 import { CopyResult, frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
 import { copySteps, lineProgress, nextActionable } from './journey';
 import { ghostLines, ghostSuggestion } from './ghost';
-import { PageMessage, StepPage } from './page';
-import { Progress, isSettled, nextStep, order, overallTally, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
+import { PageMessage, StepPage, rememberedRun } from './page';
+import { Progress, isSettled, nextStep, order, overallTally, recordCheck, recordConsulted, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
 import { StepsProvider } from './stepsTree';
 import { announceOnVisible } from './toolSurface';
@@ -649,7 +649,8 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			// not passing, and a tally that counted it would be the stage-goes-green-
 			// on-checks-that-never-ran defect wearing a save trigger.
 			if (!run.partial) {
-				save(recordCheck(progress, id, run.verdict, new Date().toISOString()), false);
+				save(recordCheck(progress, id, run.verdict, new Date().toISOString(),
+					run.results.map((r) => ({ label: r.check.label, verdict: r.verdict, output: r.output.slice(0, 600) }))), false);
 			}
 			return run;
 		} finally {
@@ -895,6 +896,11 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		// …and a diff needs two sides. A `generate` step has no file until its
 		// command has run, so show the reference on its own rather than diffing
 		// against something that is not there.
+		// R86: recorded, and it gates nothing. The reference is on the reader's
+		// disk; pretending it is not there would be the product's first dishonest
+		// sentence. What a rebuild you looked things up during is worth is the
+		// reader's judgement, and they can only make it if the fact is kept.
+		save(recordConsulted(progress, id, new Date().toISOString()), id === currentId());
 		if (!fs.existsSync(ensureFile(root, id, plan.steps[id]?.mode))) {
 			const reference = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(plan.reference, id)));
 			await vscode.window.showTextDocument(reference, { preview: true });
@@ -1076,12 +1082,30 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			.then((choice) => choice === 'Reload' && vscode.commands.executeCommand('workbench.action.reloadWindow'));
 	}) as never);
 
-	// Resume where the developer stopped, without stealing focus at startup.
+	/**
+	 * Reopening lands on your step (WO-86 Phase 4).
+	 *
+	 * What this replaces set `current` and stopped: the window came back on the
+	 * Explorer with no tab, and the one fact it held — that you were three files
+	 * into Foundations — was on disk and nowhere on screen. Finding your way back
+	 * in was two clicks and knowing which of eleven activity-bar icons was the
+	 * mortar board.
+	 *
+	 * `preserveFocus`, so the cursor is in the file rather than in a webview, and
+	 * the check rows come back from `progress.results` marked as REMEMBERED —
+	 * they are last night's answers about a file that may have been edited since,
+	 * and the page says so rather than showing a fresh-looking tick.
+	 */
 	const resume = resumeAt(plan, progress);
 	if (resume) {
 		save(setCurrent(progress, resume, new Date().toISOString()), false);
 		tree.update(plan, progress);
 		badge();
-		log.appendLine(`resumed at ${resume} (${lineProgress(plan, progress, order(plan)).percent}%)`);
+		const started = Date.now();
+		void (async () => {
+			await openIfPresent(resume, { preview: true, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
+			page.show({ plan, progress, stepId: resume, checks: rememberedRun(plan, progress, resume), remembered: true }, false);
+			log.appendLine(`resumed at ${resume} (${lineProgress(plan, progress, order(plan)).percent}% of lines) in ${Date.now() - started}ms`);
+		})();
 	}
 }

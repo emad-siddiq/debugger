@@ -19,7 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ScratchPlan, StepMode } from './planModel';
-import { Progress, emptyProgress, overallTally, percent } from './progressModel';
+import { Progress, emptyProgress, migrateProgress, overallTally, percent } from './progressModel';
 
 export const SCRATCH_DIR = '.burrow-scratch';
 export const PLAN_FILE = `${SCRATCH_DIR}/plan.json`;
@@ -51,11 +51,18 @@ export function readPlan(root: string): ScratchPlan | undefined {
 	}
 }
 
+/**
+ * The progress on disk, whatever version wrote it.
+ *
+ * A scratch is somebody's evenings. A format change that lost one would be
+ * unforgivable, so version 1 is migrated rather than discarded — see
+ * `migrateProgress`, which is lossless for everything version 1 could express.
+ */
 export function readProgress(root: string, now: string): Progress {
 	try {
-		const progress = JSON.parse(fs.readFileSync(progressPath(root), 'utf8')) as Progress;
-		if (progress.version === 1 && progress.steps) {
-			return progress;
+		const migrated = migrateProgress(JSON.parse(fs.readFileSync(progressPath(root), 'utf8')));
+		if (migrated) {
+			return migrated;
 		}
 	} catch {
 		// A missing or corrupt progress file means "start over", never "crash".
