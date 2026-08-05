@@ -339,6 +339,13 @@ const cases = {
 		const offered = offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: green }, step);
 		assert.ok(/data-act="offer"/.test(offered), 'a green step offers the next one');
 		assert.ok(/Nothing moves until you do/.test(offered), 'and says it will not move on its own');
+		// Taking the offer settles the step it leaves, and the button says so —
+		// the alternative is a hand-off that costs two presses, the second of
+		// which re-runs the checks that produced the offer.
+		assert.ok(new RegExp(`marks <code>${step.title}</code> written`).test(offered), offered);
+		const done = setState(progress, step.id, 'done', '2026-08-05T10:00:00.000Z');
+		assert.ok(!/written/.test(offerBlock(plan, done, { plan, progress: done, stepId: step.id, checks: green }, step)),
+			'…and stops saying so once it is');
 		assert.ok(offered.includes(plan.steps[docs.steps[1]].title), 'the offer names the next file in this stage');
 
 		// Nothing offered before a run, on a failure, or on a partial run — the last

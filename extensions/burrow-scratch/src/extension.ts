@@ -713,6 +713,18 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			}
 			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
 			case 'offer': {
+				// The offer settles the step it is leaving. It only renders on a run
+				// where every check passed, so recording that as written is stating
+				// what already happened — and the alternative is a loop where the
+				// hand-off costs two presses and the second one is ceremony.
+				//
+				// `setState` directly rather than `markDone`: markDone re-runs the
+				// checks, and re-running the run that produced this offer is the
+				// ceremony again with a wait attached.
+				if (!isSettled(stateOf(progress, id))) {
+					save(setState(progress, id, 'done', new Date().toISOString()), false);
+					badge();
+				}
 				const next = offerNext(id);
 				return next ? void goto(next, true) : undefined;
 			}

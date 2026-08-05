@@ -623,11 +623,13 @@ export function offerBlock(plan: ScratchPlan, progress: Progress, state: PageSta
 	const where = target.stage === here
 		? `next in ${escape(stage?.title ?? '')}`
 		: `first file of ${escape(stage?.title ?? '')}, stage ${plan.stages.findIndex((s) => s.id === target.stage) + 1}`;
+	const settled = stateOf(progress, step.id) === 'done' || stateOf(progress, step.id) === 'copied';
 	return `<section class="offer">
 		<h2>Every check passed</h2>
 		<p class="lede"><button class="primary" data-act="offer">${escape(target.title)} →</button>
 		<span class="quiet">${where} · ${target.lines} line${target.lines === 1 ? '' : 's'}</span></p>
-		<p class="quiet">Enter takes it. Nothing moves until you do.</p>
+		<p class="quiet">Enter takes it${settled ? '' : `, and marks <code>${escape(step.title)}</code> written`}.
+		Nothing moves until you do.</p>
 	</section>`;
 }
 
