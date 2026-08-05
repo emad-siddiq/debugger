@@ -1,7 +1,7 @@
 {
 	"name": "burrow-scratch",
 	"displayName": "Burrow Scratch",
-	"description": "Rebuild a project by hand, one file at a time, in a second Burrow window. Reads the reference project, orders every file so nothing is written before what it imports, and turns that order into stages you work through \u2014 with per-file checks, a diff against the reference when you want it, and progress saved in the scratch folder itself. See docs/plans/08-scratch-mode.md.",
+	"description": "Rebuild a project by hand, one file at a time, in a second Burrow window. Reads the reference project, orders every file so nothing is written before what it imports, and turns that order into stages you work through — with per-file checks, a diff against the reference when you want it, and progress saved in the scratch folder itself. See docs/plans/08-scratch-mode.md.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -31,7 +31,7 @@
 		"commands": [
 			{
 				"command": "burrow.scratch.start",
-				"title": "New Scratch Build\u2026",
+				"title": "New Scratch Build…",
 				"category": "Scratch"
 			},
 			{
@@ -111,6 +111,12 @@
 				"title": "Re-plan Against the Reference",
 				"category": "Scratch",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "burrow.scratch.copyStage",
+				"title": "Bring In This Stage's Documents",
+				"category": "Scratch",
+				"icon": "$(files)"
 			}
 		],
 		"menus": {
@@ -166,6 +172,10 @@
 				{
 					"command": "burrow.scratch.replan",
 					"when": "burrow.scratch.active"
+				},
+				{
+					"command": "burrow.scratch.copyStage",
+					"when": "burrow.scratch.active"
 				}
 			],
 			"view/title": [
@@ -200,6 +210,11 @@
 					"command": "burrow.scratch.reference",
 					"when": "view == burrowScratchSteps && viewItem =~ /burrowScratchStep/",
 					"group": "inline@1"
+				},
+				{
+					"command": "burrow.scratch.copyStage",
+					"when": "view == burrowScratchSteps && viewItem == burrowScratchStage",
+					"group": "inline@2"
 				}
 			]
 		},

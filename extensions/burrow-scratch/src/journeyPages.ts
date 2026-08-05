@@ -52,7 +52,10 @@ export function journeyStyle(nonce: string): string {
 	ul { margin: 8px 0 0; padding: 0; list-style: none; }
 	ul.links li, ul.steps li { padding: 3px 0; font-size: 12px; font-family: var(--vscode-editor-font-family); }
 	ul.steps .mark { display: inline-block; width: 18px; color: var(--vscode-descriptionForeground); }
-	ul.steps li.done .mark, ul.steps li.copied .mark { color: var(--vscode-testing-iconPassed, #3fb950); }
+	ul.steps li.done .mark, ul.steps li.copied .mark, ul.steps li.pass .mark { color: var(--vscode-testing-iconPassed, #3fb950); }
+	ul.steps li.fail .mark { color: var(--vscode-testing-iconFailed, #f85149); }
+	ul.steps li.unavailable .mark { color: var(--vscode-editorWarning-foreground, #d29922); }
+	ul.steps pre.out { margin: 4px 0 0 18px; padding: 6px 9px; background: var(--vscode-textCodeBlock-background); border-radius: 4px; font-size: 11px; white-space: pre-wrap; }
 	table { border-collapse: collapse; margin-top: 12px; font-size: 12px; }
 	th, td { text-align: left; padding: 3px 18px 3px 0; }
 	th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
@@ -210,7 +213,39 @@ export function stageDependents(plan: ScratchPlan, stageId: string): readonly st
  * import this one, and the first is the router" is the answer to *why am I
  * doing this now*, and it is a fact the plan already holds.
  */
-export function stagePageHtml(plan: ScratchPlan, progress: Progress, stageId: string, style: string): string {
+/** One file's verdict after a stage-wide materialize — R83 keeps the checks per
+ *  file, so the report is per file too. */
+export interface CopyResult {
+	readonly id: string;
+	readonly verdict: 'pass' | 'fail' | 'unavailable';
+	readonly output: string;
+}
+
+/**
+ * The report a bulk copy leaves behind.
+ *
+ * Per file, and the failures first. "624 files copied" is the sentence that
+ * makes a bulk action feel like a cheat; "624 copied, 624 byte-identical to the
+ * reference, and here are the three that are not" is the same action with its
+ * verdict still attached.
+ */
+export function copyReport(results: readonly CopyResult[]): string {
+	if (!results.length) {
+		return '';
+	}
+	const bad = results.filter((r) => r.verdict !== 'pass');
+	const rows = [...bad, ...results.filter((r) => r.verdict === 'pass')].slice(0, 60).map((r) =>
+		`<li class="${r.verdict}"><span class="mark">${r.verdict === 'pass' ? '✓' : r.verdict === 'fail' ? '✕' : '!'}</span>`
+		+ `<a data-goto="${escape(r.id)}">${escape(r.id)}</a>`
+		+ `${r.output ? `<pre class="out">${escape(r.output.slice(0, 600))}</pre>` : ''}</li>`).join('');
+	return `<section>
+		<h2>What came in</h2>
+		<p class="lede">${results.length} file${results.length === 1 ? '' : 's'} copied · ${results.length - bad.length} byte-identical to the reference${bad.length ? ` · <strong>${bad.length} not</strong>` : ''}.</p>
+		<ul class="steps">${rows}${results.length > 60 ? `<li class="quiet">…and ${results.length - 60} more</li>` : ''}</ul>
+	</section>`;
+}
+
+export function stagePageHtml(plan: ScratchPlan, progress: Progress, stageId: string, style: string, results: readonly CopyResult[] = []): string {
 	const index = plan.stages.findIndex((s) => s.id === stageId);
 	const stage = plan.stages[index];
 	if (!stage) {
@@ -271,11 +306,14 @@ export function stagePageHtml(plan: ScratchPlan, progress: Progress, stageId: st
 		<ul class="steps">${stepRows}</ul>
 	</section>
 
+	${copyReport(results)}
+
 	${copies.length > 1 ? `<section>
 		<h2>The ${copies.length} files here you do not type</h2>
 		<p class="quiet">Prose and diagrams — ${lines(copyLines)} of reading. Bringing them in one press at a time is
 		transcription, not reading, so one action does the lot and every file still gets its own check against the reference.</p>
 		<div class="actions"><button class="primary" data-act="materialize">Bring in all ${copies.length} — then check each</button></div>
+		<p class="quiet">If the reference has moved, nothing is written at all and this says which files it could not find.</p>
 	</section>` : ''}
 
 	<section>

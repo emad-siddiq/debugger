@@ -156,6 +156,34 @@ export function copyReference(root: string, reference: string, stepId: string): 
 }
 
 /**
+ * Bring in every copy step of a stage at once (R83).
+ *
+ * 624 of the plan's 2,094 steps are `copy`, and 465 of them fall in three
+ * unbroken runs — the longest is 275 files. A run of 275 presses is not reading
+ * and it is not typing; the content of a copy step is the reading, and the
+ * presses are transcription theatre with a progress bar attached.
+ *
+ * ALL OR NOTHING. Every source is stat'd before a single byte is written, so a
+ * reference that has moved leaves the scratch exactly as it was rather than
+ * half-populated with no way to tell which half. That is the same rule the
+ * `same` check follows when it degrades to `unavailable`: a scratch outlives the
+ * folder it was planned from, and a moved project is not the reader's mistake.
+ *
+ * Returns the ids it wrote. Throws with the missing ones named — the caller
+ * turns that into a sentence, and there is nothing to undo.
+ */
+export function materializeCopies(root: string, reference: string, stepIds: readonly string[]): readonly string[] {
+	const missing = stepIds.filter((id) => !fs.existsSync(path.join(reference, id)));
+	if (missing.length) {
+		throw new Error(`${missing.length} of ${stepIds.length} are no longer in the reference project: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? `, and ${missing.length - 3} more` : ''}`);
+	}
+	for (const id of stepIds) {
+		copyReference(root, reference, id);
+	}
+	return stepIds;
+}
+
+/**
  * What the disk says about a step's file.
  *
  * `missing` and `empty` are kept apart because conflating them produced the

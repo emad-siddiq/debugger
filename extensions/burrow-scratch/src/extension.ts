@@ -27,15 +27,15 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CheckRun, RunOptions, preconditionMet, runChecks, summarize } from './checks';
 import { FlowsDoc, MIN_TRACED_FLOWS, ScratchPlan, buildPlan, commandCwdOf, routeIndex } from './planModel';
-import { frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
-import { lineProgress, nextActionable } from './journey';
+import { CopyResult, frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
+import { copySteps, lineProgress, nextActionable } from './journey';
 import { ghostLines, ghostSuggestion } from './ghost';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
 import { StepsProvider } from './stepsTree';
 import { announceOnVisible } from './toolSurface';
-import { copyReference, ensureFile, isScratch, materialize, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
+import { copyReference, ensureFile, isScratch, materialize, materializeCopies, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
 
 const TOOL_ID = 'burrow-scratch';
 
@@ -777,6 +777,8 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 				} else if (message?.type === 'enter') {
 					const first = stage.steps.find((id) => !isSettled(stateOf(progress, id))) ?? stage.steps[0];
 					void goto(first, true);
+				} else if (message?.type === 'materialize') {
+					void materializeStage(stage.id);
 				} else if (message?.type === 'close') {
 					stagePanel?.dispose();
 				}
@@ -784,8 +786,60 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 		stagePanel.title = `Scratch — ${stage.title}`;
 		const nonce = nonceOf();
-		stagePanel.webview.html = stagePageHtml(plan, progress, stageId, journeyStyle(nonce)) + journeyScript(nonce);
+		stagePanel.webview.html = stagePageHtml(plan, progress, stageId, journeyStyle(nonce), copyResults.get(stageId) ?? []) + journeyScript(nonce);
 		stagePanel.reveal(stagePanel.viewColumn ?? vscode.ViewColumn.Beside, false);
+	};
+
+	/**
+	 * One action brings in a whole stage's copy steps (R83), and every file still
+	 * earns its own verdict.
+	 *
+	 * The checks run AFTER, per file, and are reported per file — because the
+	 * thing that makes a bulk action honest is that its verdict did not become
+	 * bulk with it. Nothing about the plan moves: 624 copy steps stay 624 copy
+	 * steps, each with its `same` check, each still settled individually. What
+	 * goes is 274 of the 275 presses.
+	 */
+	const copyResults = new Map<string, CopyResult[]>();
+	const materializeStage = async (stageId: string): Promise<void> => {
+		const ids = copySteps(plan, stageId);
+		if (!ids.length) {
+			return;
+		}
+		let written: readonly string[];
+		try {
+			written = materializeCopies(root, plan.reference, ids);
+		} catch (error) {
+			// No partial writes: `materializeCopies` stats everything first, so the
+			// scratch is exactly as it was and the reason is a sentence.
+			copyResults.set(stageId, ids.map((id) => ({ id, verdict: 'unavailable' as const, output: '' })));
+			void vscode.window.showWarningMessage(
+				`Nothing was copied — ${error instanceof Error ? error.message : String(error)}`);
+			showStage(stageId);
+			return;
+		}
+		const results = await vscode.window.withProgress(
+			{ location: vscode.ProgressLocation.Notification, title: `Scratch: checking ${written.length} files against the reference…` },
+			async (report) => {
+				const out: CopyResult[] = [];
+				let n = 0;
+				for (const id of written) {
+					const run = await runChecks(root, id, plan.steps[id].checks, plan.reference);
+					out.push({ id, verdict: run.verdict, output: run.results.find((r) => r.verdict !== 'pass')?.output ?? '' });
+					progress = setState(progress, id, 'copied', new Date().toISOString());
+					progress = recordCheck(progress, id, run.verdict, new Date().toISOString());
+					if (++n % 25 === 0) {
+						report.report({ message: `${n}/${written.length}` });
+					}
+				}
+				return out;
+			},
+		);
+		copyResults.set(stageId, results);
+		save(progress);
+		badge();
+		log.appendLine(`materialized ${stageId}: ${results.length} copied, ${results.filter((r) => r.verdict === 'pass').length} byte-identical`);
+		showStage(stageId);
 	};
 
 	register('burrow.scratch.stagePage', ((arg?: string | { stage?: { id: string } }) => {
@@ -793,6 +847,11 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		if (id) {
 			showStage(id);
 		}
+	}) as never);
+
+	register('burrow.scratch.copyStage', ((arg?: string | { stage?: { id: string } }) => {
+		const id = typeof arg === 'string' ? arg : arg?.stage?.id ?? plan.steps[currentId() ?? '']?.stage;
+		return id ? materializeStage(id) : undefined;
 	}) as never);
 
 	register('burrow.scratch.goto', ((arg?: string | { id?: string }) => {

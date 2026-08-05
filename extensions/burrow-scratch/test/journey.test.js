@@ -230,5 +230,22 @@ test('a stage with one copy step gets no bulk action — one press is not theatr
 	assert.ok(!/data-act="materialize"/.test(html), 'a single copy step does not need a bulk action');
 });
 
+test('a bulk copy still reports every file on its own', () => {
+	const results = [
+		{ id: 'docs/a.md', verdict: 'pass', output: '' },
+		{ id: 'docs/b.md', verdict: 'fail', output: 'docs/b.md:3: differs from the reference.' },
+		{ id: 'docs/c.md', verdict: 'pass', output: '' },
+	];
+	const html = pages.copyReport(results);
+	assert.ok(/3 files copied/.test(html), html.slice(0, 200));
+	assert.ok(/2 byte-identical/.test(html), 'the count that passed');
+	assert.ok(/<strong>1 not<\/strong>/.test(html), 'and the count that did not, said out loud');
+	// The failure is first, and it is a link — a bulk action whose verdict became
+	// bulk with it is the thing R83 must not become.
+	assert.ok(html.indexOf('docs/b.md') < html.indexOf('docs/a.md'), 'failures first');
+	assert.ok(/data-goto="docs\/b.md"/.test(html), 'and reachable');
+	assert.strictEqual(pages.copyReport([]), '', 'nothing copied renders nothing');
+});
+
 console.log(`\n${count - failures}/${count} passed`);
 process.exit(failures ? 1 : 0);

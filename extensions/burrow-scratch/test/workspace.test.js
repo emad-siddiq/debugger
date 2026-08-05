@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { ensureFile, materialize, readProgress } = require('../out/workspace');
+const { ensureFile, materialize, materializeCopies, readProgress } = require('../out/workspace');
 const { buildPlan } = require('../out/planModel');
 
 const file = (p, text = '') => ({ path: p, text, bytes: Buffer.byteLength(text) });
@@ -70,6 +70,44 @@ const cases = {
 		assert.ok(fs.existsSync(path.dirname(abs)), 'the directory the command runs in');
 		assert.ok(!fs.existsSync(abs), 'but not the file — go mod init refuses to overwrite one');
 		fs.rmSync(root, { recursive: true, force: true });
+	},
+
+	'a stage of documents comes in with one action': () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-bulk-'));
+		const reference = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-ref-'));
+		fs.mkdirSync(path.join(reference, 'docs'), { recursive: true });
+		for (const name of ['one.md', 'two.md', 'three.md']) {
+			fs.writeFileSync(path.join(reference, 'docs', name), `# ${name}\n`);
+		}
+		const ids = ['docs/one.md', 'docs/two.md', 'docs/three.md'];
+		const written = materializeCopies(root, reference, ids);
+		assert.deepStrictEqual([...written], ids);
+		for (const id of ids) {
+			assert.strictEqual(fs.readFileSync(path.join(root, id), 'utf8'),
+				fs.readFileSync(path.join(reference, id), 'utf8'), `${id} is not byte-identical`);
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(reference, { recursive: true, force: true });
+	},
+
+	'a reference that has moved writes NOTHING, and says which files it wanted': () => {
+		// The half-populated scratch is the failure mode worth designing against:
+		// a bulk action that gets through two hundred files and stops leaves no way
+		// to tell which half came from where. Everything is stat'd first.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-bulk-'));
+		const reference = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-ref-'));
+		fs.mkdirSync(path.join(reference, 'docs'), { recursive: true });
+		fs.writeFileSync(path.join(reference, 'docs', 'one.md'), '# one\n');
+		const ids = ['docs/one.md', 'docs/gone.md', 'docs/also-gone.md'];
+		assert.throws(() => materializeCopies(root, reference, ids), (error) => {
+			assert.ok(/2 of 3 are no longer in the reference/.test(error.message), error.message);
+			assert.ok(/docs\/gone.md/.test(error.message), 'and names them');
+			return true;
+		});
+		assert.ok(!fs.existsSync(path.join(root, 'docs', 'one.md')),
+			'the one file it COULD have copied must not be there — no partial writes');
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(reference, { recursive: true, force: true });
 	},
 };
 
