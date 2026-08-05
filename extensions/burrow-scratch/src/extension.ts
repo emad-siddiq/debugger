@@ -948,12 +948,18 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			void vscode.window.showErrorMessage(`Could not copy ${id}: ${error instanceof Error ? error.message : String(error)}`);
 			return;
 		}
-		save(setState(progress, id, 'copied', new Date().toISOString()));
+		save(setState(progress, id, 'copied', new Date().toISOString()), false);
+		// The `same` check RUNS. Copying used to mark the step copied and navigate
+		// away without running anything, so the one check a copy step has — is this
+		// byte-identical to the reference — never executed, and the step went green
+		// on the fact that a file had been written. Found by walking it: two `.md`
+		// steps came out of a run with every check still a hollow circle.
+		//
+		// And no navigation (R85): the page shows the verdict, and the offer is a
+		// press. A copy that moves the window before its check has answered is the
+		// same defect one gesture along.
+		await runStepChecks(id);
 		badge();
-		const next = nextStep(plan, progress, id);
-		if (next) {
-			await goto(next);
-		}
 	}) as never);
 
 	register('burrow.scratch.check', (async () => {
