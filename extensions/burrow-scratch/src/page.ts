@@ -8,7 +8,7 @@ import { CheckRun } from './checks';
 import { conceptFor } from './concepts';
 import { ScratchPlan, ScratchStage, ScratchStep, dependents, forwardDeps } from './planModel';
 import { Progress, StepState, stageTally, stateOf } from './progressModel';
-import { lineProgress } from './journey';
+import { lineProgress, nextActionable } from './journey';
 
 // The **step page**: one file's worth of context, in an editor tab beside the
 // code you are about to write.
@@ -24,7 +24,7 @@ import { lineProgress } from './journey';
 // quiet inset stage, theme tokens only.
 
 export type PageMessage =
-	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'terminal' | 'exitFocus' }
+	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'terminal' | 'exitFocus' | 'offer' }
 	| { readonly type: 'goto'; readonly id: string }
 	| { readonly type: 'run'; readonly label: string }
 	| { readonly type: 'at'; readonly where: string }
@@ -510,6 +510,42 @@ export function checksBlock(state: PageState, step: ScratchStep): string {
 }
 
 /**
+ * What a green step offers next (R85) — an offer, never a move.
+ *
+ * `markDone` used to navigate on its own: mark a file written and the window
+ * changed underneath you, to whatever `nextStep` said, which on a plan somebody
+ * had skipped around in was the oldest unwritten file in the project. Two
+ * separate wrongs — going somewhere unasked, and going somewhere wrong.
+ *
+ * Rendered only when every check has actually passed, so it can never be the
+ * thing that carries a reader past a failure they did not notice.
+ */
+export function offerBlock(plan: ScratchPlan, progress: Progress, state: PageState, step: ScratchStep): string {
+	const run = state.checks;
+	const allGreen = !!run && !run.partial && run.results.length === step.checks.length
+		&& run.results.every((r) => r.verdict === 'pass');
+	if (!allGreen) {
+		return '';
+	}
+	const next = nextActionable(plan, progress, step.id);
+	if (!next) {
+		return `<section class="offer"><h2>Done</h2><p class="lede">Every file in the plan is written.</p></section>`;
+	}
+	const target = plan.steps[next];
+	const here = plan.steps[step.id]?.stage;
+	const stage = plan.stages.find((s) => s.id === target.stage);
+	const where = target.stage === here
+		? `next in ${escape(stage?.title ?? '')}`
+		: `first file of ${escape(stage?.title ?? '')}, stage ${plan.stages.findIndex((s) => s.id === target.stage) + 1}`;
+	return `<section class="offer">
+		<h2>Every check passed</h2>
+		<p class="lede"><button class="primary" data-act="offer">${escape(target.title)} →</button>
+		<span class="quiet">${where} · ${target.lines} line${target.lines === 1 ? '' : 's'}</span></p>
+		<p class="quiet">Enter takes it. Nothing moves until you do.</p>
+	</section>`;
+}
+
+/**
  * A list of steps you can click through to. `ofStep`, when given, is the step
  * whose list this is: its dependencies are classified against the plan's own
  * invariant pass, so anything ordered after it is labelled with the reason.
@@ -604,6 +640,9 @@ function html(state: PageState): string {
 	p.how { margin: 0 0 8px; font-size: 11.5px; }
 	button.tiny { margin-left: 8px; padding: 1px 8px; font-size: 11px; vertical-align: baseline; }
 	button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+	section.offer { margin-top: 22px; }
+	section.offer h2 { color: var(--vscode-testing-iconPassed, #3fb950); }
+	section.offer .lede { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 	ul.checks .out a { color: var(--vscode-textLink-foreground); cursor: pointer; }
 	ul.checks .out a:hover { text-decoration: underline; }
 </style>
@@ -648,6 +687,8 @@ function html(state: PageState): string {
 
 	${stage.tools.length ? `<section><h2>Tools this stage lights up</h2>${stage.tools.map((t) => `
 		<div class="tool"><button data-tool="${escape(t.command)}">${escape(t.label)}</button><p class="quiet">${escape(t.why)}</p></div>`).join('')}</section>` : ''}
+
+	${offerBlock(plan, progress, state, step)}
 
 	${milestoneBlock(plan, stage, step)}
 
@@ -701,6 +742,22 @@ function html(state: PageState): string {
 		const goto = e.target.closest('[data-goto]');
 		if (goto) { vscode.postMessage({ type: 'goto', id: goto.dataset.goto }); }
 	});
+	// The offer is keyboard-reachable and it is where the keyboard already is
+	// (R85). A step that has just gone green leaves the reader's hands on ⌘S;
+	// making them find a button with a mouse is the interaction this removes.
+	document.addEventListener('keydown', (e) => {
+		const offer = document.querySelector('[data-act="offer"]');
+		if (offer && (e.key === 'Enter' || e.key === 'ArrowRight') && !e.metaKey && !e.ctrlKey
+			&& !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '')) {
+			e.preventDefault();
+			vscode.postMessage({ type: 'offer' });
+		}
+	});
+	// …and it takes focus when it appears, so Tab and Enter both land on it
+	// without the reader hunting. Focus, never navigation: R85 is explicit that
+	// a green step OFFERS the next one and never takes it.
+	const offerButton = document.querySelector('[data-act="offer"]');
+	if (offerButton) { offerButton.focus({ preventScroll: true }); }
 	document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { vscode.postMessage({ type: 'exitFocus' }); } });
 </script>`;
 }

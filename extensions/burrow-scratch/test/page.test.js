@@ -23,7 +23,8 @@ Module._load = function (request, ...rest) {
 };
 
 const { buildPlan } = require('../out/planModel');
-const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, positionOf, unlocksAll, whyNow } = require('../out/page');
+const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, offerBlock, positionOf, unlocksAll, whyNow } = require('../out/page');
+const { emptyProgress, setState } = require('../out/progressModel');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
 
@@ -324,6 +325,30 @@ const cases = {
 		assert.ok(/data-at="ui\/Badge.tsx:3:1"/.test(html), `no link to the position: ${html}`);
 	},
 
+	'the offer appears only when every check actually passed': () => {
+		const plan = buildPlan([
+			file('web/package.json', '{"name":"web"}'),
+			file('web/docs/one.md', '# one\n'),
+			file('web/docs/two.md', '# two\n'),
+		], { name: 'web', reference: '/ref' });
+		const docs = plan.stages.find((s) => s.steps.some((id) => id.startsWith('web/docs/')));
+		const step = plan.steps[docs.steps[0]];
+		const progress = emptyProgress('2026-08-05T00:00:00.000Z');
+		const green = { verdict: 'pass', results: step.checks.map((check) => ({ check, verdict: 'pass', output: '', durationMs: 1 })) };
+
+		const offered = offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: green }, step);
+		assert.ok(/data-act="offer"/.test(offered), 'a green step offers the next one');
+		assert.ok(/Nothing moves until you do/.test(offered), 'and says it will not move on its own');
+		assert.ok(offered.includes(plan.steps[docs.steps[1]].title), 'the offer names the next file in this stage');
+
+		// Nothing offered before a run, on a failure, or on a partial run — the last
+		// is the one that matters: four free checks passing is not the step passing.
+		assert.strictEqual(offerBlock(plan, progress, { plan, progress, stepId: step.id }, step), '');
+		const failed = { verdict: 'fail', results: [{ check: step.checks[0], verdict: 'fail', output: 'no', durationMs: 1 }] };
+		assert.strictEqual(offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: failed }, step), '');
+		assert.strictEqual(offerBlock(plan, progress, { plan, progress, stepId: step.id, checks: { ...green, partial: true } }, step), '',
+			'a partial run must never offer to move on');
+	},
 };
 
 

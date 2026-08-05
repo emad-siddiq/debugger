@@ -28,7 +28,7 @@ import * as vscode from 'vscode';
 import { CheckRun, RunOptions, preconditionMet, runChecks, summarize } from './checks';
 import { FlowsDoc, MIN_TRACED_FLOWS, ScratchPlan, buildPlan, commandCwdOf, routeIndex } from './planModel';
 import { frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
-import { lineProgress } from './journey';
+import { lineProgress, nextActionable } from './journey';
 import { ghostLines, ghostSuggestion } from './ghost';
 import { PageMessage, StepPage } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
@@ -665,6 +665,9 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 	};
 
+	/** R85's definition, in one place, for the page, the offer and the command. */
+	const offerNext = (from: string): string | undefined => nextActionable(plan, progress, from);
+
 	const markDone = async (id: string): Promise<void> => {
 		const run = await runStepChecks(id);
 		// `unavailable` asks too. It is not a failure and it is not a pass: the
@@ -681,10 +684,12 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 		save(setState(progress, id, 'done', new Date().toISOString()));
 		badge();
-		const next = nextStep(plan, progress, id);
-		if (next) {
-			await goto(next);
-		} else {
+		// NO NAVIGATION (R85). Marking a file written used to move the window to
+		// whatever `nextStep` said, which is two wrongs in one gesture: going
+		// somewhere unasked, and — on a plan somebody has skipped around in —
+		// going to the oldest unwritten file in the project. The page offers the
+		// next step instead, and the offer is a press.
+		if (!offerNext(id)) {
 			void vscode.window.showInformationMessage(`${plan.name} is rebuilt — every file in the plan is written.`);
 		}
 	};
@@ -706,6 +711,10 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 				return;
 			}
 			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
+			case 'offer': {
+				const next = offerNext(id);
+				return next ? void goto(next, true) : undefined;
+			}
 			case 'run': { await runStepChecks(id, { onlyLabel: message.label }); return; }
 			case 'at': {
 				// `path:line:col` from a check's own first line. The path is
