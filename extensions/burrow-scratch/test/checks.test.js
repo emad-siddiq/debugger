@@ -323,7 +323,39 @@ const cases = {
 		assert.strictEqual(run.results.length, 1);
 		assert.strictEqual(run.results[0].check.label, 'first');
 	},
+
+	'a save runs what costs nothing and leaves the commands alone': async () => {
+		// R84's whole contract in one run: the four in-process kinds answer, the
+		// shell check is not run, and the run says so — because a shell check with
+		// no result must not render like one skipped after a failure.
+		fs.writeFileSync(path.join(root, 'kept.json'), '{"a":1}\n');
+		const checks = [
+			{ kind: 'exists', label: 'the file exists and is not empty' },
+			{ kind: 'parse', label: 'it parses', lang: 'json' },
+			{ kind: 'shell', label: 'it builds', cmd: 'true' },
+		];
+		const saved = await runChecks(root, 'kept.json', checks, undefined, { inProcessOnly: true });
+		assert.strictEqual(saved.results.length, 2, 'two of the three ran');
+		assert.strictEqual(saved.partial, true, 'and the run knows it is not the whole verdict');
+		assert.ok(!saved.results.some((r) => r.check.kind === 'shell'), 'no command was run');
+		const full = await runChecks(root, 'kept.json', checks);
+		assert.strictEqual(full.results.length, 3);
+		assert.strictEqual(full.partial, undefined, 'a full run is not partial');
+	},
+
+	'one row can be run on its own': async () => {
+		fs.writeFileSync(path.join(root, 'one.txt'), 'x\n');
+		const run = await runChecks(root, 'one.txt', [
+			{ kind: 'shell', label: 'first', cmd: 'exit 3' },
+			{ kind: 'shell', label: 'second', cmd: 'true' },
+		], undefined, { onlyLabel: 'second' });
+		assert.strictEqual(run.results.length, 1);
+		assert.strictEqual(run.results[0].check.label, 'second');
+		assert.strictEqual(run.verdict, 'pass', 'the failing row above it was not asked for');
+	},
+
 };
+
 
 (async () => {
 	let failed = 0;

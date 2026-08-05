@@ -45,6 +45,30 @@ export interface CheckResult {
 export interface CheckRun {
 	readonly results: readonly CheckResult[];
 	readonly verdict: 'pass' | 'fail' | 'unavailable';
+	/**
+	 * Some of the step's checks were deliberately not run — the save-triggered
+	 * pass (R84) runs only what is free.
+	 *
+	 * The page has to know, or a shell check with no result renders exactly like
+	 * one that was skipped after a failure, and a reader concludes their save
+	 * broke something. It is also why a partial run is never recorded as the
+	 * step's verdict: passing four of six checks is not passing.
+	 */
+	readonly partial?: boolean;
+}
+
+/**
+ * The checks that cost nothing: no process, no PATH, no network.
+ *
+ * This set is exactly what can run on every keystroke's worth of ⌘S without
+ * turning an editor into a build. `shell` is the complement — `go build`,
+ * `npm install`, `gofmt` — and stays behind a press, because a check that takes
+ * eight seconds and shells out is not something to do on save.
+ */
+export const IN_PROCESS: ReadonlySet<Check['kind']> = new Set(['exists', 'parse', 'declares', 'same']);
+
+export function isInProcess(check: Check): boolean {
+	return IN_PROCESS.has(check.kind);
 }
 
 /** `command not found` from a shell, on either platform's wording. */
@@ -212,9 +236,19 @@ function firstDifference(want: Buffer, got: Buffer, stepId: string): string {
 	return `${stepId}: same lines, different bytes — a line ending or a trailing character.`;
 }
 
-export async function runChecks(root: string, stepId: string | undefined, checks: readonly Check[], reference?: string): Promise<CheckRun> {
+export interface RunOptions {
+	/** Run only the checks that cost nothing (R84's save trigger). */
+	readonly inProcessOnly?: boolean;
+	/** Run exactly one check, by label — the per-row "run" affordance. */
+	readonly onlyLabel?: string;
+}
+
+export async function runChecks(root: string, stepId: string | undefined, checks: readonly Check[], reference?: string, options?: RunOptions): Promise<CheckRun> {
+	const wanted = checks.filter((c) =>
+		(options?.onlyLabel === undefined || c.label === options.onlyLabel)
+		&& (!options?.inProcessOnly || isInProcess(c)));
 	const results: CheckResult[] = [];
-	for (const check of checks) {
+	for (const check of wanted) {
 		const result = await runCheck(root, stepId, check, undefined, reference);
 		results.push(result);
 		if (result.verdict === 'fail') {
@@ -226,7 +260,7 @@ export async function runChecks(root: string, stepId: string | undefined, checks
 	const verdict = results.some((r) => r.verdict === 'fail') ? 'fail'
 		: results.some((r) => r.verdict === 'unavailable') ? 'unavailable'
 			: 'pass';
-	return { results, verdict };
+	return { results, verdict, ...(wanted.length < checks.length ? { partial: true } : {}) };
 }
 
 /** One line for the notification and the tree. */

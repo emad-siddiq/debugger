@@ -26,6 +26,8 @@ import { lineProgress } from './journey';
 export type PageMessage =
 	| { readonly type: 'open' | 'reference' | 'copy' | 'done' | 'undone' | 'next' | 'check' | 'setup' | 'milestone' | 'terminal' | 'exitFocus' }
 	| { readonly type: 'goto'; readonly id: string }
+	| { readonly type: 'run'; readonly label: string }
+	| { readonly type: 'at'; readonly where: string }
 	| { readonly type: 'tool'; readonly command: string };
 
 export interface PageState {
@@ -455,22 +457,56 @@ function stateChip(state: StepState): string {
  * reported: *"both checks didn't pass"*, when one had failed and the other had
  * simply never been reached.
  */
+/**
+ * A failure that names a position is a failure you can go to.
+ *
+ * `parse` reports `frontend/src/ui/Badge.tsx:3:1: '}' expected.` and `same`
+ * reports `docs/one.md:14: differs from the reference.` — both already carry the
+ * one thing that turns reading an error into fixing it. The others do not, and
+ * inventing a line for them would be worse than leaving them alone: a link that
+ * lands on line 1 of a file whose problem is that it declares no `Badge` teaches
+ * a reader to stop trusting the links.
+ */
+export function positionOf(output: string): { readonly file: string; readonly line: number; readonly column: number } | undefined {
+	const m = /^([^\s:][^:]*):(\d+)(?::(\d+))?:/.exec(output.trim());
+	return m ? { file: m[1], line: Number(m[2]), column: Number(m[3] ?? 1) } : undefined;
+}
+
 export function checksBlock(state: PageState, step: ScratchStep): string {
 	const ran = !!state.checks;
+	const partial = state.checks?.partial === true;
 	const stopped = state.checks?.results.some((r) => r.verdict === 'fail') === true;
+	const shellCount = step.checks.filter((c) => c.kind === 'shell').length;
 	const rows = step.checks.map((check) => {
 		const result = state.checks?.results.find((r) => r.check.label === check.label);
 		// Skipped only AFTER the one that failed, never before it: the results array
-		// is in check order, so anything already reported is not a skip.
-		const skipped = !result && ran && stopped;
+		// is in check order, so anything already reported is not a skip. And never
+		// on a PARTIAL run — a shell check with no result there was not skipped, it
+		// was not asked, and the two must not wear the same mark.
+		const skipped = !result && ran && stopped && !(partial && check.kind === 'shell');
 		const mark = !result ? (skipped ? '–' : '○') : result.verdict === 'pass' ? '✓' : result.verdict === 'fail' ? '✕' : '!';
 		const cls = !result ? (skipped ? 'skipped' : 'idle') : result.verdict;
-		const detail = result?.output ? `<pre class="out">${escape(result.output.slice(0, 4000))}</pre>`
+		const at = result?.verdict === 'fail' ? positionOf(result.output) : undefined;
+		const detail = result?.output
+			? `<pre class="out">${at
+				? `<a data-at="${escape(`${at.file}:${at.line}:${at.column}`)}">${escape(result.output.split('\n')[0])}</a>${escape(result.output.slice(result.output.split('\n')[0].length, 4000))}`
+				: escape(result.output.slice(0, 4000))}</pre>`
 			: skipped ? `<pre class="out">not run — an earlier check failed, so this one was never reached.</pre>` : '';
+		// Only a shell check gets a press of its own: everything else has already
+		// run by the time you can read the row.
+		const run = check.kind === 'shell'
+			? `<button class="tiny" data-run="${escape(check.label)}"${state.running ? ' disabled' : ''}>run</button>`
+			: '';
 		return `<li class="${cls}"><span class="mark">${mark}</span><span class="ck">${escape(check.label)}`
-			+ `${check.cmd ? `<code>${escape(check.cmd)}</code>` : ''}</span>${detail}</li>`;
+			+ `${check.cmd ? `<code>${escape(check.cmd)}</code>` : ''}${run}</span>${detail}</li>`;
 	}).join('');
-	return `<section><h2>When it is done</h2><ul class="checks">${rows}</ul></section>`;
+	// Said once, at the top, rather than implied by which rows have buttons.
+	const how = shellCount === step.checks.length
+		? `Every check here runs a command, so they run when you ask.`
+		: shellCount === 0
+			? `These run on save — press ⌘S and the marks update.`
+			: `${step.checks.length - shellCount} of these run on save; the ${shellCount === 1 ? 'other runs a command' : `other ${shellCount} run commands`}, so ${shellCount === 1 ? 'it runs' : 'they run'} when you ask.`;
+	return `<section><h2>When it is done</h2><p class="quiet how">${how}</p><ul class="checks">${rows}</ul></section>`;
 }
 
 /**
@@ -565,6 +601,11 @@ function html(state: PageState): string {
 	.decl span { background: var(--vscode-textCodeBlock-background); padding: 1px 7px; border-radius: 3px; }
 	section.concept p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--vscode-descriptionForeground); max-width: 74ch; }
 	section.concept h2 { color: var(--vscode-foreground); }
+	p.how { margin: 0 0 8px; font-size: 11.5px; }
+	button.tiny { margin-left: 8px; padding: 1px 8px; font-size: 11px; vertical-align: baseline; }
+	button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+	ul.checks .out a { color: var(--vscode-textLink-foreground); cursor: pointer; }
+	ul.checks .out a:hover { text-decoration: underline; }
 </style>
 <div class="bar">
 	<span>Stage ${plan.stages.indexOf(stage) + 1}/${plan.stages.length} · file ${index}/${stage.steps.length}</span>
@@ -651,6 +692,10 @@ function html(state: PageState): string {
 	document.addEventListener('click', (e) => {
 		const act = e.target.closest('[data-act]');
 		if (act) { vscode.postMessage({ type: act.dataset.act }); return; }
+		const run = e.target.closest('[data-run]');
+		if (run) { vscode.postMessage({ type: 'run', label: run.dataset.run }); return; }
+		const at = e.target.closest('[data-at]');
+		if (at) { vscode.postMessage({ type: 'at', where: at.dataset.at }); return; }
 		const tool = e.target.closest('[data-tool]');
 		if (tool) { vscode.postMessage({ type: 'tool', command: tool.dataset.tool }); return; }
 		const goto = e.target.closest('[data-goto]');

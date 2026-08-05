@@ -23,7 +23,7 @@ Module._load = function (request, ...rest) {
 };
 
 const { buildPlan } = require('../out/planModel');
-const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, unlocksAll, whyNow } = require('../out/page');
+const { CYCLE_NOTE, DEFECT_NOTE, checksBlock, instruction, linkList, positionOf, unlocksAll, whyNow } = require('../out/page');
 
 const file = (path, text = '') => ({ path, text, bytes: Buffer.byteLength(text) });
 
@@ -283,7 +283,49 @@ const cases = {
 		assert.strictEqual((all.match(/class="skipped"/g) ?? []).length, 0);
 		assert.strictEqual((all.match(/!/g) ?? []).length, 3);
 	},
+
+	'a shell check left unasked does not wear the skipped mark': () => {
+		// The save-triggered run (R84) reports only the in-process kinds. Rendering
+		// the shell row with the same `–` as one skipped after a failure would tell
+		// a reader their save broke something below it.
+		const step = {
+			id: 'a.json', kind: 'manifest', mode: 'write', lines: 3, declares: [], deps: [], depStages: [],
+			checks: [
+				{ kind: 'exists', label: 'the file exists and is not empty' },
+				{ kind: 'parse', label: 'it parses', lang: 'json' },
+				{ kind: 'shell', label: 'it builds', cmd: 'go build ./...' },
+			],
+		};
+		const partial = {
+			partial: true, verdict: 'fail',
+			results: [{ check: step.checks[0], verdict: 'pass', output: '', durationMs: 1 },
+				{ check: step.checks[1], verdict: 'fail', output: 'a.json:2:1: unexpected }', durationMs: 1 }],
+		};
+		const html = checksBlock({ plan: {}, progress: {}, stepId: step.id, checks: partial }, step);
+		assert.strictEqual((html.match(/class="skipped"/g) ?? []).length, 0,
+			'nothing here was skipped — one thing was not asked for');
+		assert.ok(/data-run="it builds"/.test(html), 'and the row it did not ask for offers to run itself');
+		assert.ok(/2 of these run on save/.test(html), `the page must say which are which: ${html.slice(0, 300)}`);
+	},
+
+	'a failure that names a position is a place you can go': () => {
+		assert.deepStrictEqual(positionOf("ui/Badge.tsx:3:1: '}' expected."), { file: 'ui/Badge.tsx', line: 3, column: 1 });
+		assert.deepStrictEqual(positionOf('docs/one.md:14: differs from the reference.'), { file: 'docs/one.md', line: 14, column: 1 });
+		// …and one that does not is left alone rather than pointed at line 1.
+		assert.strictEqual(positionOf('ui/Badge.tsx: nothing exported here is called `Badge`.'), undefined);
+		assert.strictEqual(positionOf('package.json declares no script named: dev'), undefined);
+
+		const step = {
+			id: 'ui/Badge.tsx', kind: 'tsx', mode: 'write', lines: 3, declares: [], deps: [], depStages: [],
+			checks: [{ kind: 'parse', label: 'it parses', lang: 'tsx' }],
+		};
+		const run = { verdict: 'fail', results: [{ check: step.checks[0], verdict: 'fail', output: "ui/Badge.tsx:3:1: '}' expected.", durationMs: 1 }] };
+		const html = checksBlock({ plan: {}, progress: {}, stepId: step.id, checks: run }, step);
+		assert.ok(/data-at="ui\/Badge.tsx:3:1"/.test(html), `no link to the position: ${html}`);
+	},
+
 };
+
 
 let failed = 0;
 for (const [name, run] of Object.entries(cases)) {

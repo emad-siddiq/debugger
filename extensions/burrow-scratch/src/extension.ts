@@ -25,7 +25,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CheckRun, preconditionMet, runChecks, summarize } from './checks';
+import { CheckRun, RunOptions, preconditionMet, runChecks, summarize } from './checks';
 import { FlowsDoc, MIN_TRACED_FLOWS, ScratchPlan, buildPlan, commandCwdOf, routeIndex } from './planModel';
 import { frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
 import { lineProgress } from './journey';
@@ -38,6 +38,10 @@ import { announceOnVisible } from './toolSurface';
 import { copyReference, ensureFile, isScratch, materialize, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
 
 const TOOL_ID = 'burrow-scratch';
+
+/** Long enough that a formatter's second save coalesces with the first, short
+ *  enough that the marks have moved before the eye gets back to them. */
+const SAVE_DEBOUNCE_MS = 250;
 
 function nonceOf(): string {
 	let out = '';
@@ -494,6 +498,43 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	));
 
 	/**
+	 * ⌘S runs the checks that cost nothing (R84).
+	 *
+	 * The gesture a person already makes is the one that should answer them. The
+	 * loop this replaces was: type, save, move the hand to the mouse, find "Run
+	 * the checks", press, read — five actions of which four are ceremony, on
+	 * every one of 1,467 typed files.
+	 *
+	 * Only the in-process kinds run here. `go build` on save would turn an editor
+	 * into a build server and would be wrong anyway: a stage check is about a
+	 * stage. The page says which are which, and a partial run is never recorded as
+	 * the step's verdict.
+	 *
+	 * Debounced, and keyed on the document: a formatter that saves twice, or ⌘S
+	 * held down, must not queue four runs of the same parser.
+	 */
+	const pending = new Map<string, NodeJS.Timeout>();
+	context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
+		if (document.uri.scheme !== 'file') {
+			return;
+		}
+		const rel = path.relative(root, document.uri.fsPath).split(path.sep).join('/');
+		if (rel.startsWith('..') || path.isAbsolute(rel) || !plan.steps[rel]) {
+			return;
+		}
+		clearTimeout(pending.get(rel));
+		pending.set(rel, setTimeout(() => {
+			pending.delete(rel);
+			// Only the step the page is actually on: running checks for a file you
+			// saved in another tab and painting them onto this one is the stale-verdict
+			// bug `goto` clears `checks` to avoid.
+			if (currentId() === rel && !running) {
+				void runStepChecks(rel, { inProcessOnly: true });
+			}
+		}, SAVE_DEBOUNCE_MS));
+	}));
+
+	/**
 	 * The page follows the TABS, not only the rail.
 	 *
 	 * Navigation used to be one-directional — rail/page → editor — so clicking an
@@ -587,7 +628,7 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			.map((doc) => doc.save()));
 	};
 
-	const runStepChecks = async (id: string): Promise<CheckRun> => {
+	const runStepChecks = async (id: string, options?: RunOptions): Promise<CheckRun> => {
 		running = true;
 		page.refresh({ plan, progress, stepId: id, checks, running });
 		try {
@@ -595,14 +636,21 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 			if (plan.steps[id].mode === 'generate') {
 				ensureGenerateCwd(id);
 			}
-			const run = await runChecks(root, id, plan.steps[id].checks, plan.reference);
+			const run = await runChecks(root, id, plan.steps[id].checks, plan.reference, options);
 			// Keep the run for the page only while this step is still the one on
 			// it — the shared slot must not outlive a tab switch (see the finally).
 			checks = currentId() === id ? run : undefined;
-			log.appendLine(`check ${id}: ${run.verdict} — ${summarize(run)}`);
+			log.appendLine(`check ${id}: ${run.verdict}${run.partial ? ' (partial)' : ''} — ${summarize(run)}`);
 			// The real verdict, all three of them. Folding `unavailable` into `pass`
 			// here is what let a stage go green on checks that never executed.
-			save(recordCheck(progress, id, run.verdict, new Date().toISOString()), false);
+			//
+			// A PARTIAL run is not a verdict and is never recorded as one: passing the
+			// four checks that cost nothing while the `go build` was not asked for is
+			// not passing, and a tally that counted it would be the stage-goes-green-
+			// on-checks-that-never-ran defect wearing a save trigger.
+			if (!run.partial) {
+				save(recordCheck(progress, id, run.verdict, new Date().toISOString()), false);
+			}
 			return run;
 		} finally {
 			running = false;
@@ -658,6 +706,19 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 				return;
 			}
 			case 'next': return void vscode.commands.executeCommand('burrow.scratch.next');
+			case 'run': { await runStepChecks(id, { onlyLabel: message.label }); return; }
+			case 'at': {
+				// `path:line:col` from a check's own first line. The path is
+				// scratch-relative because every check reports the step's id.
+				const m = /^(.*):(\d+):(\d+)$/.exec(message.where);
+				if (!m) {
+					return;
+				}
+				const at = new vscode.Position(Math.max(0, Number(m[2]) - 1), Math.max(0, Number(m[3]) - 1));
+				const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(root, m[1])));
+				await vscode.window.showTextDocument(doc, { selection: new vscode.Range(at, at), viewColumn: vscode.ViewColumn.One });
+				return;
+			}
 			case 'setup': return void vscode.commands.executeCommand('burrow.scratch.setup');
 			case 'milestone': return void vscode.commands.executeCommand('burrow.scratch.milestone');
 			case 'terminal': return void vscode.commands.executeCommand('burrow.scratch.terminal');
