@@ -45,6 +45,19 @@ function measure() {
 	const content = (s) => s.checks.some((c) => c.kind !== 'exists');
 	const write = all.filter((s) => s.mode === 'write');
 	const violations = orderViolations(plan);
+	// WO-86's figures: the shape of the journey, measured the same way.
+	const modules = new Set(order.map((id) => (id.includes('/') ? id.slice(0, id.indexOf('/')) : '(root)')));
+	const runs = [];
+	let run = 0;
+	for (const id of order) {
+		if (plan.steps[id].mode === 'copy') { run++; } else { if (run) { runs.push(run); } run = 0; }
+	}
+	if (run) { runs.push(run); }
+	const bigRuns = runs.filter((r) => r >= 50);
+	const allCopyStages = plan.stages.filter((s) => s.steps.length && s.steps.every((id) => plan.steps[id].mode === 'copy'));
+	const claudeSteps = order.filter((id) => id.startsWith('.claude/'));
+	const longest = all.reduce((a, b) => (b.lines > a.lines ? b : a), all[0]);
+	const longestTyped = write.reduce((a, b) => (b.lines > a.lines ? b : a), write[0]);
 	const tenth = Math.round(order.length * 0.1);
 	let tenthLines = 0;
 	for (let i = 0; i < tenth; i++) {
@@ -79,6 +92,15 @@ function measure() {
 		['stage index — frontend/src/main.tsx', stageOf('frontend/src/main.tsx')],
 		['first tenth of the plan — files', tenth],
 		['first tenth of the plan — lines', tenthLines],
+		['modules', modules.size],
+		['stages that are entirely copy steps', allCopyStages.length],
+		['unbroken runs of copy steps', runs.length],
+		['longest unbroken run of copy steps', Math.max(...runs)],
+		['copy steps inside runs of 50 or more', bigRuns.reduce((n, r) => n + r, 0)],
+		['.claude — steps', claudeSteps.length],
+		['.claude — copy steps', claudeSteps.filter((id) => plan.steps[id].mode === 'copy').length],
+		['the longest single file — lines', longest.lines],
+		['the longest file you type — lines', longestTyped.lines],
 	];
 }
 
@@ -110,7 +132,9 @@ if (WRITE) {
 }
 
 let failed = 0;
+let CHECKS = 0;
 const check = (name, run) => {
+	CHECKS++;
 	try {
 		run();
 		console.log(`  ✓ ${name}`);
@@ -159,6 +183,45 @@ check('no plan figure appears in the prose except from the table', () => {
 	assert.deepStrictEqual([...new Set(loose)], [], 'figures in the prose that are not in the measured table');
 });
 
+check('the journey section describes the surfaces that exist', () => {
+	// §8's claims, held against the code rather than against a memory of it.
+	// Every one of these is a sentence in the document that would otherwise stop
+	// being true without anything failing.
+	const journey = require('../out/journey');
+	const pages = require('../out/journeyPages');
+	const { scanProject } = require('../out/scan');
+	const { buildPlan } = require('../out/planModel');
+	const { emptyProgress } = require('../out/progressModel');
+	const plan = buildPlan(scanProject(REFERENCE).files, { name: 'merkle', reference: REFERENCE });
+	const blank = emptyProgress('2026-08-05T00:00:00.000Z');
+
+	// "three levels — module, stage, file"
+	const groups = journey.modulesOf(plan);
+	assert.ok(groups.length > 1 && groups.every((g) => g.stages.length), 'stages group into modules');
+	assert.strictEqual(groups.reduce((n, g) => n + g.stages.length, 0), plan.stages.length);
+
+	// "progress is lines, not files"
+	const order = plan.stages.flatMap((s) => [...s.steps]);
+	assert.strictEqual(journey.lineProgress(plan, blank, order).lines, plan.counts.lines);
+
+	// "next in this stage, else the first file of the next stage whose needs are met"
+	const first = plan.stages[0];
+	assert.strictEqual(journey.nextActionable(plan, blank, first.steps[0]), first.steps[1],
+		'the offer is the next file in the stage you are standing in');
+
+	// "one action per stage brings its copy steps in"
+	const allCopy = plan.stages.find((s) => s.steps.length > 1 && s.steps.every((id) => plan.steps[id].mode === 'copy'));
+	assert.ok(allCopy, 'the plan has a stage that is entirely copy steps');
+	assert.strictEqual(journey.copySteps(plan, allCopy.id).length, allCopy.steps.length);
+	assert.ok(/data-act="materialize"/.test(pages.stagePageHtml(plan, blank, allCopy.id, '')),
+		'and its page offers the one action');
+
+	// "the front door states the size before the location is asked for"
+	const door = pages.frontDoorHtml(plan, '');
+	assert.ok(door.includes(plan.counts.lines.toLocaleString('en-US')), 'the front door carries the line total');
+	assert.ok(door.includes(`${plan.stages.length} stages`), 'and the stage count');
+});
+
 check('the kinds and modes the prose names are the kinds the plan emits', () => {
 	const { scanProject } = require('../out/scan');
 	const { buildPlan } = require('../out/planModel');
@@ -177,5 +240,5 @@ check('the kinds and modes the prose names are the kinds the plan emits', () => 
 	assert.strictEqual(plan.stages[2].id, 'test/oracle');
 });
 
-console.log(`${4 - failed}/4 passed`);
+console.log(`${CHECKS - failed}/${CHECKS} passed`);
 process.exit(failed ? 1 : 0);
