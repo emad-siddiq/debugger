@@ -4,19 +4,31 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event, EventEmitter, ThemeColor, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState } from 'vscode';
+import { ModuleGroup, LineProgress, moduleProgress, modulesOf, stageNeeds, stageProgress, stageStatus } from './journey';
 import { ScratchPlan, ScratchStage } from './planModel';
-import { Progress, stageState, stageTally, stateOf } from './progressModel';
+import { Progress, stateOf } from './progressModel';
 
-// The **Scratch** view: the whole project as an ordered list of stages, and the
-// files inside the one you are on.
+// The **Scratch** view: the journey surface (WO-86 R81).
+//
+// Three levels, because a person's session has three: the module they are in,
+// the stage they are on, and the file in front of them. The flat list this
+// replaces put 477 stages at the top level, which is a scrollbar rather than a
+// map — merkle's `.claude` alone is 69 of them, and finding the frontend meant
+// knowing it starts somewhere after stage 300.
+//
+// Why the tree and not a webview map: 477 stages inside 12 modules is 12 rows
+// until you open one, the workbench virtualizes the rest, and reveal/expand
+// already work. A webview would have to reimplement all of that to arrive at
+// something slower — and it would want the aux bar, which is WO-3 Option C's
+// decision to make and not this one's.
 //
 // It follows the view contract (docs/plans/02): one purpose — where am I and
-// what is next — and one primary action, which is clicking the next file. The
-// stage you are working in is the only one expanded; finished stages collapse
-// behind a tick, and stages you have not reached stay shut. A tree that opens
-// forty-five packages at once is a wall, not an index.
+// what is next — and one primary action, clicking the next file. Only the branch
+// you are working in is expanded; everything else stays shut, because a tree
+// that opens forty-five packages at once is a wall, not an index.
 
 type Node =
+	| { readonly kind: 'module'; readonly group: ModuleGroup }
 	| { readonly kind: 'stage'; readonly stage: ScratchStage; readonly index: number }
 	| { readonly kind: 'step'; readonly id: string };
 
@@ -27,6 +39,11 @@ function dirOf(stepId: string): string {
 	return slash < 0 ? '.' : stepId.slice(0, slash);
 }
 
+/** Progress as R82 denominates it, in the words the rest of the product uses. */
+function lineLabel(p: LineProgress): string {
+	return p.linesDone === p.lines ? `✓ ${p.lines.toLocaleString()} lines` : `${p.percent}% · ${p.linesDone.toLocaleString()}/${p.lines.toLocaleString()} lines`;
+}
+
 export class StepsProvider implements TreeDataProvider<Node> {
 
 	public static readonly viewId = 'burrowScratchSteps';
@@ -34,12 +51,17 @@ export class StepsProvider implements TreeDataProvider<Node> {
 	private readonly changed = new EventEmitter<Node | undefined>();
 	readonly onDidChangeTreeData: Event<Node | undefined> = this.changed.event;
 
-	constructor(private plan: ScratchPlan, private progress: Progress) { }
+	private groups: readonly ModuleGroup[];
+
+	constructor(private plan: ScratchPlan, private progress: Progress) {
+		this.groups = modulesOf(plan);
+	}
 
 	update(plan: ScratchPlan, progress: Progress): void {
 		this.spreadCache.clear();
 		this.plan = plan;
 		this.progress = progress;
+		this.groups = modulesOf(plan);
 		this.changed.fire(undefined);
 	}
 
@@ -48,54 +70,89 @@ export class StepsProvider implements TreeDataProvider<Node> {
 		return this.plan.steps[stepId] ? { kind: 'step', id: stepId } : undefined;
 	}
 
+	/** Three levels means `reveal` needs the whole chain, not just one hop. */
 	getParent(node: Node): Node | undefined {
 		if (node.kind === 'step') {
 			const stageId = this.plan.steps[node.id]?.stage;
 			const index = this.plan.stages.findIndex((s) => s.id === stageId);
 			return index < 0 ? undefined : { kind: 'stage', stage: this.plan.stages[index], index };
 		}
+		if (node.kind === 'stage') {
+			const group = this.groups.find((g) => g.stages.includes(node.stage.id));
+			return group ? { kind: 'module', group } : undefined;
+		}
 		return undefined;
 	}
 
 	getTreeItem(node: Node): TreeItem {
-		return node.kind === 'stage' ? this.stageItem(node.stage, node.index) : this.stepItem(node.id);
+		return node.kind === 'module' ? this.moduleItem(node.group)
+			: node.kind === 'stage' ? this.stageItem(node.stage, node.index)
+				: this.stepItem(node.id);
 	}
 
 	getChildren(node?: Node): Node[] {
 		if (!node) {
-			return this.plan.stages.map((stage, index): Node => ({ kind: 'stage', stage, index }));
+			return this.groups.map((group): Node => ({ kind: 'module', group }));
+		}
+		if (node.kind === 'module') {
+			return node.group.stages.map((id): Node => {
+				const index = this.plan.stages.findIndex((s) => s.id === id);
+				return { kind: 'stage', stage: this.plan.stages[index], index };
+			});
 		}
 		return node.kind === 'stage' ? node.stage.steps.map((id): Node => ({ kind: 'step', id })) : [];
 	}
 
+	private currentStage(): string | undefined {
+		return this.progress.current ? this.plan.steps[this.progress.current]?.stage : undefined;
+	}
+
+	private moduleItem(group: ModuleGroup): TreeItem {
+		const p = moduleProgress(this.plan, this.progress, group);
+		const holdsCurrent = group.stages.includes(this.currentStage() ?? '');
+		const item = new TreeItem(
+			group.title,
+			holdsCurrent ? TreeItemCollapsibleState.Expanded : TreeItemCollapsibleState.Collapsed,
+		);
+		item.id = `module:${group.id}`;
+		item.description = `${lineLabel(p)} · ${group.stages.length} stage${group.stages.length === 1 ? '' : 's'}`;
+		item.iconPath = new ThemeIcon(
+			p.linesDone === p.lines ? 'pass-filled' : holdsCurrent ? 'circle-large-filled' : 'circle-large-outline',
+			new ThemeColor(p.linesDone === p.lines ? 'testing.iconPassed' : 'descriptionForeground'),
+		);
+		item.tooltip = `${group.stages.length} stages · ${p.steps.toLocaleString()} files · ${p.lines.toLocaleString()} lines in the reference`;
+		item.contextValue = 'burrowScratchModule';
+		return item;
+	}
+
 	private stageItem(stage: ScratchStage, index: number): TreeItem {
-		const tally = stageTally(this.plan, this.progress, stage.id);
-		const state = stageState(tally);
-		const current = this.progress.current && this.plan.steps[this.progress.current]?.stage === stage.id;
+		const p = stageProgress(this.plan, this.progress, stage.id);
+		const status = stageStatus(this.plan, this.progress, stage.id);
 		const item = new TreeItem(
 			`${index + 1}. ${stage.title}`,
-			state === 'finished' ? TreeItemCollapsibleState.Collapsed
-				: current || state === 'open' ? TreeItemCollapsibleState.Expanded
-					: TreeItemCollapsibleState.Collapsed,
+			status === 'current' ? TreeItemCollapsibleState.Expanded : TreeItemCollapsibleState.Collapsed,
 		);
 		item.id = `stage:${stage.id}`;
-		// `unproven` gets a warning mark and says how many, never the tick. Every
-		// file is written and something that was meant to prove it did not run —
-		// which is a different fact from finished, and the one the old two-state
-		// tally could not hold.
-		item.description = state === 'finished' ? `✓ ${tally.total}`
-			: state === 'unproven' ? `${tally.total} written · ${tally.unproven} unproven`
-				: `${tally.settled}/${tally.total}`;
+		// Lines lead, files follow. "4/134 files" was the whole of what this said,
+		// and 134 migrations averaging 40 lines against one 1,004-line component
+		// tick the bar identically under it.
+		item.description = status === 'done' ? `✓ ${p.steps} file${p.steps === 1 ? '' : 's'}`
+			: `${lineLabel(p)} · ${p.stepsDone}/${p.steps}`;
 		item.iconPath = new ThemeIcon(
-			state === 'finished' ? 'pass-filled' : state === 'unproven' ? 'warning'
-				: state === 'open' ? 'circle-large-outline' : 'circle-outline',
-			new ThemeColor(state === 'finished' ? 'testing.iconPassed'
-				: state === 'unproven' ? 'testing.iconUnset' : 'descriptionForeground'),
+			status === 'done' ? 'pass-filled'
+				: status === 'current' ? 'arrow-right'
+					: status === 'blocked' ? 'circle-outline' : 'circle-large-outline',
+			new ThemeColor(status === 'done' ? 'testing.iconPassed'
+				: status === 'current' ? 'testing.iconQueued' : 'descriptionForeground'),
 		);
-		item.tooltip = state === 'unproven'
-			? `${stage.blurb}\n\n⚠︎ ${tally.unproven} file(s) here are written but unproven — a check that was supposed to run did not.`
+		const unmet = status === 'blocked' ? stageNeeds(this.plan, stage.id).length : 0;
+		item.tooltip = status === 'blocked'
+			? `${stage.blurb}\n\nNot yet: ${unmet} stage${unmet === 1 ? '' : 's'} it imports are unfinished. Nothing stops you opening it — the plan's order is the guarantee, and this is the map saying so.`
 			: stage.blurb;
 		item.contextValue = 'burrowScratchStage';
+		// Opening a stage is opening its own page, not its first file: what it
+		// builds and what needs it is the question you have on arriving.
+		item.command = { command: 'burrow.scratch.stagePage', title: 'Open this stage', arguments: [stage.id] };
 		return item;
 	}
 

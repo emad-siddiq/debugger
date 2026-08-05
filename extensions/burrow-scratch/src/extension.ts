@@ -26,16 +26,27 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CheckRun, preconditionMet, runChecks, summarize } from './checks';
-import { FlowsDoc, MIN_TRACED_FLOWS, buildPlan, commandCwdOf, routeIndex } from './planModel';
+import { FlowsDoc, MIN_TRACED_FLOWS, ScratchPlan, buildPlan, commandCwdOf, routeIndex } from './planModel';
+import { frontDoorHtml, journeyScript, journeyStyle, stagePageHtml } from './journeyPages';
+import { lineProgress } from './journey';
 import { ghostLines, ghostSuggestion } from './ghost';
 import { PageMessage, StepPage } from './page';
-import { Progress, isSettled, nextStep, order, overallTally, percent, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
+import { Progress, isSettled, nextStep, order, overallTally, recordCheck, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
 import { StepsProvider } from './stepsTree';
 import { announceOnVisible } from './toolSurface';
 import { copyReference, ensureFile, isScratch, materialize, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
 
 const TOOL_ID = 'burrow-scratch';
+
+function nonceOf(): string {
+	let out = '';
+	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	for (let i = 0; i < 32; i++) {
+		out += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+	}
+	return out;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
 	const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -235,6 +246,36 @@ function guessBackend(reference: string): string {
 	return reference;
 }
 
+/**
+ * The first screen of a rebuild: what this is, how big it is, where it ends.
+ *
+ * A webview and not a modal, because a modal that holds a module table is a
+ * modal nobody reads, and because the figures have to be the plan's own — every
+ * number on it came from reading the reference thirty seconds ago. Resolves
+ * `true` only if the reader presses on; closing the tab is "not now".
+ */
+function frontDoor(context: vscode.ExtensionContext, plan: ScratchPlan): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		const panel = vscode.window.createWebviewPanel(
+			'burrow.scratch.frontDoor', `Rebuild ${plan.name}`,
+			vscode.ViewColumn.Active, { enableScripts: true },
+		);
+		const nonce = nonceOf();
+		panel.webview.html = frontDoorHtml(plan, journeyStyle(nonce)) + journeyScript(nonce);
+		let answered = false;
+		const finish = (go: boolean): void => {
+			if (!answered) {
+				answered = true;
+				resolve(go);
+			}
+			panel.dispose();
+		};
+		panel.webview.onDidReceiveMessage((message: { type?: string }) => finish(message?.type === 'start'));
+		panel.onDidDispose(() => finish(false));
+		context.subscriptions.push(panel);
+	});
+}
+
 async function startScratch(context: vscode.ExtensionContext, log: vscode.OutputChannel): Promise<void> {
 	const folder = vscode.workspace.workspaceFolders?.[0];
 	if (!folder) {
@@ -244,6 +285,32 @@ async function startScratch(context: vscode.ExtensionContext, log: vscode.Output
 	const reference = folder.uri.fsPath;
 	if (isScratch(reference)) {
 		void vscode.window.showInformationMessage('This window is already a scratch. Use "Scratch: Re-plan Against the Reference" to pick up changes.');
+		return;
+	}
+
+	// THE PLAN FIRST, then the question. The front door states how big this is —
+	// 279,257 lines for merkle — and a size you find out on step 900 is a size you
+	// found out too late. Reading the reference costs a fraction of a second; the
+	// old order asked where to put a thing before saying what it was.
+	const plan = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: `Scratch: reading ${folder.name}…`, cancellable: false },
+		async (progress) => {
+			const scan = scanProject(reference);
+			progress.report({ message: `${scan.files.length} files — working out the order…` });
+			// Yield once so the notification paints before the plan is built.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const built = buildPlan(scan.files, { name: folder.name, reference, routes: loadRoutes(reference, log), notes: loadNotes(reference, log) });
+			log.appendLine(`planned ${folder.name}: ${built.counts.steps} steps in ${built.counts.stages} stages, ${built.counts.lines} lines (${scan.skipped} binary/oversized files left out)`);
+			return built;
+		},
+	);
+
+	if (!plan.counts.steps) {
+		void vscode.window.showWarningMessage(`Nothing to plan in ${folder.name} — no source files were found.`);
+		return;
+	}
+
+	if (!await frontDoor(context, plan)) {
 		return;
 	}
 
@@ -279,24 +346,6 @@ async function startScratch(context: vscode.ExtensionContext, log: vscode.Output
 			await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest), { forceNewWindow: true });
 			return;
 		}
-	}
-
-	const plan = await vscode.window.withProgress(
-		{ location: vscode.ProgressLocation.Notification, title: `Scratch: reading ${folder.name}…`, cancellable: false },
-		async (progress) => {
-			const scan = scanProject(reference);
-			progress.report({ message: `${scan.files.length} files — working out the order…` });
-			// Yield once so the notification paints before the plan is built.
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			const built = buildPlan(scan.files, { name: folder.name, reference, routes: loadRoutes(reference, log), notes: loadNotes(reference, log) });
-			log.appendLine(`planned ${folder.name}: ${built.counts.steps} steps in ${built.counts.stages} stages, ${built.counts.lines} lines (${scan.skipped} binary/oversized files left out)`);
-			return built;
-		},
-	);
-
-	if (!plan.counts.steps) {
-		void vscode.window.showWarningMessage(`Nothing to plan in ${folder.name} — no source files were found.`);
-		return;
 	}
 
 	try {
@@ -364,10 +413,13 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		}
 	};
 
+	// R82: the headline is lines, with files behind it. `2/2094` moved by the same
+	// amount for an eight-line migration and a 1,004-line dashboard, which is the
+	// one thing a progress figure must not do.
 	const badge = (): void => {
-		const tally = overallTally(plan, progress);
+		const p = lineProgress(plan, progress, order(plan));
 		view.title = 'Scratch';
-		view.description = `${percent(tally)}% · ${tally.settled}/${tally.total}`;
+		view.description = `${p.percent}% · ${p.linesDone.toLocaleString()}/${p.lines.toLocaleString()} lines`;
 	};
 	badge();
 
@@ -626,6 +678,53 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		context.subscriptions.push(vscode.commands.registerCommand(id, handler));
 	};
 
+	/**
+	 * A stage's own page — what it builds, and what downstream needs it.
+	 *
+	 * Opening a stage in the tree opens THIS, not its first file: arriving
+	 * somewhere and being handed a text editor answers a question nobody asked.
+	 * One panel, reused, in the same column as the step page so the two do not
+	 * fight over the layout.
+	 */
+	let stagePanel: vscode.WebviewPanel | undefined;
+	const showStage = (stageId: string): void => {
+		const stage = plan.stages.find((s) => s.id === stageId);
+		if (!stage) {
+			return;
+		}
+		if (!stagePanel) {
+			stagePanel = vscode.window.createWebviewPanel(
+				'burrow.scratch.stage', 'Scratch — stage',
+				{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+				{ enableScripts: true, retainContextWhenHidden: true },
+			);
+			stagePanel.onDidDispose(() => { stagePanel = undefined; });
+			stagePanel.webview.onDidReceiveMessage((message: { type?: string; id?: string }) => {
+				if (message?.type === 'goto' && message.id) {
+					void goto(message.id, true);
+				} else if (message?.type === 'stage' && message.id) {
+					showStage(message.id);
+				} else if (message?.type === 'enter') {
+					const first = stage.steps.find((id) => !isSettled(stateOf(progress, id))) ?? stage.steps[0];
+					void goto(first, true);
+				} else if (message?.type === 'close') {
+					stagePanel?.dispose();
+				}
+			});
+		}
+		stagePanel.title = `Scratch — ${stage.title}`;
+		const nonce = nonceOf();
+		stagePanel.webview.html = stagePageHtml(plan, progress, stageId, journeyStyle(nonce)) + journeyScript(nonce);
+		stagePanel.reveal(stagePanel.viewColumn ?? vscode.ViewColumn.Beside, false);
+	};
+
+	register('burrow.scratch.stagePage', ((arg?: string | { stage?: { id: string } }) => {
+		const id = typeof arg === 'string' ? arg : arg?.stage?.id ?? plan.steps[currentId() ?? '']?.stage;
+		if (id) {
+			showStage(id);
+		}
+	}) as never);
+
 	register('burrow.scratch.goto', ((arg?: string | { id?: string }) => {
 		const id = typeof arg === 'string' ? arg : arg?.id;
 		return id ? goto(id) : undefined;
@@ -854,6 +953,6 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 		save(setCurrent(progress, resume, new Date().toISOString()), false);
 		tree.update(plan, progress);
 		badge();
-		log.appendLine(`resumed at ${resume} (${percent(overallTally(plan, progress))}%)`);
+		log.appendLine(`resumed at ${resume} (${lineProgress(plan, progress, order(plan)).percent}%)`);
 	}
 }

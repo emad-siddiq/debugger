@@ -7,7 +7,8 @@ import { Disposable, ViewColumn, WebviewPanel, commands, window } from 'vscode';
 import { CheckRun } from './checks';
 import { conceptFor } from './concepts';
 import { ScratchPlan, ScratchStage, ScratchStep, dependents, forwardDeps } from './planModel';
-import { Progress, StepState, overallTally, percent, stageTally, stateOf } from './progressModel';
+import { Progress, StepState, stageTally, stateOf } from './progressModel';
+import { lineProgress } from './journey';
 
 // The **step page**: one file's worth of context, in an editor tab beside the
 // code you are about to write.
@@ -512,7 +513,8 @@ function html(state: PageState): string {
 		return `<meta http-equiv="Content-Security-Policy" content="${csp}"><p>Step not in the plan.</p>`;
 	}
 
-	const overall = overallTally(plan, progress);
+	// R82: lines, not steps. See journey.ts.
+	const overall = lineProgress(plan, progress, plan.stages.flatMap((s) => [...s.steps]));
 	const inStage = stageTally(plan, progress, stage.id);
 	const state_ = stateOf(progress, stepId);
 	const settled = state_ === 'done' || state_ === 'copied';
@@ -567,9 +569,9 @@ function html(state: PageState): string {
 <div class="bar">
 	<span>Stage ${plan.stages.indexOf(stage) + 1}/${plan.stages.length} · file ${index}/${stage.steps.length}</span>
 	<span class="grow"></span>
-	<span class="quiet">${overall.settled}/${overall.total} files</span>
-	<span class="track"><i style="width:${percent(overall)}%"></i></span>
-	<span>${percent(overall)}%</span>
+	<span class="quiet">${overall.linesDone.toLocaleString()}/${overall.lines.toLocaleString()} lines · ${overall.stepsDone.toLocaleString()} files</span>
+	<span class="track"><i style="width:${overall.percent}%"></i></span>
+	<span>${overall.percent}%</span>
 </div>
 <main>
 	<h1>${escape(step.title)}</h1>
