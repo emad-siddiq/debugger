@@ -18,7 +18,7 @@
 
 import { LineProgress, ModuleGroup, lineProgress, moduleProgress, modulesOf, stageNeeds, stageProgress, stageStatus } from './journey';
 import { ScratchPlan, ScratchStage, StepKind, dependents } from './planModel';
-import { Progress, isSettled, stateOf } from './progressModel';
+import { Progress, emptyProgress, isSettled, stateOf } from './progressModel';
 
 export function escape(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -146,7 +146,7 @@ export function frontDoorHtml(plan: ScratchPlan, style: string): string {
 	}
 	const last = plan.stages[plan.stages.length - 1];
 	const rows = groups.map((g) => {
-		const p = moduleProgress(plan, { version: 1, steps: {}, startedAt: '', updatedAt: '' }, g);
+		const p = moduleProgress(plan, emptyProgress(''), g);
 		return `<tr><td>${escape(g.title)}</td><td class="n">${g.stages.length}</td><td class="n">${p.steps.toLocaleString()}</td><td class="n">${p.lines.toLocaleString()}</td></tr>`;
 	}).join('');
 
