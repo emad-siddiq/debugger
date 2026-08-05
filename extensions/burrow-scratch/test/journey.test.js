@@ -247,5 +247,27 @@ test('a bulk copy still reports every file on its own', () => {
 	assert.strictEqual(pages.copyReport([]), '', 'nothing copied renders nothing');
 });
 
+test('a stage action names the stage you are looking at, not the first one opened', () => {
+	// The panel's message listener is registered once. Anything it closes over is
+	// frozen at whichever stage was shown first, so `materialize` acted on that
+	// one forever — press "Bring in all 21" on a later stage and the extension
+	// materialized the first, which had one copy step, returned early, and wrote
+	// nothing. Silent, because the page it re-rendered was the one you were
+	// looking at. This is the model half of the fix: the id the page carries has
+	// to be the id the action uses.
+	const plan = project();
+	const docs = plan.stages.find((s) => s.steps.length >= 3 && s.steps.every((id) => plan.steps[id].mode === 'copy'));
+	const other = plan.stages.find((s) => s.id !== docs.id && s.steps.some((id) => plan.steps[id].mode !== 'copy'));
+	assert.ok(docs && other, 'the fixture has both');
+
+	// The page for a stage offers that stage's own count, and no other's.
+	const html = pages.stagePageHtml(plan, emptyProgress(NOW), docs.id, '');
+	assert.ok(new RegExp(`Bring in all ${journey.copySteps(plan, docs.id).length}`).test(html), html.slice(0, 400));
+	// …and a stage with nothing to bring in offers nothing, so a press that
+	// arrived for the wrong stage would have had nothing to act on.
+	assert.strictEqual(journey.copySteps(plan, other.id).length, 0);
+	assert.ok(!/data-act="materialize"/.test(pages.stagePageHtml(plan, emptyProgress(NOW), other.id, '')));
+});
+
 console.log(`\n${count - failures}/${count} passed`);
 process.exit(failures ? 1 : 0);

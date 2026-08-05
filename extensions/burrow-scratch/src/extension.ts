@@ -770,28 +770,47 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 	 * fight over the layout.
 	 */
 	let stagePanel: vscode.WebviewPanel | undefined;
+	/**
+	 * The stage the panel is CURRENTLY showing.
+	 *
+	 * The listener below is registered once, when the panel is created, so
+	 * anything it closes over is frozen at whatever stage was open first. It read
+	 * `stage.id` directly and therefore acted on that first stage forever: press
+	 * *Bring in all 21* on stage 373 and the extension materialized stage 369
+	 * instead — which has one copy step, so it returned early and wrote nothing at
+	 * all. Silent, because the page it re-rendered was still the one you were
+	 * looking at. Found by measuring T3 and noticing that 230 files had reportedly
+	 * been copied and the directory was empty.
+	 */
+	let stageShowing: string | undefined;
 	const showStage = (stageId: string): void => {
 		const stage = plan.stages.find((s) => s.id === stageId);
 		if (!stage) {
 			return;
 		}
+		stageShowing = stageId;
 		if (!stagePanel) {
 			stagePanel = vscode.window.createWebviewPanel(
 				'burrow.scratch.stage', 'Scratch — stage',
 				{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
 				{ enableScripts: true, retainContextWhenHidden: true },
 			);
-			stagePanel.onDidDispose(() => { stagePanel = undefined; });
+				stagePanel.onDidDispose(() => { stagePanel = undefined; stageShowing = undefined; });
 			stagePanel.webview.onDidReceiveMessage((message: { type?: string; id?: string }) => {
 				if (message?.type === 'goto' && message.id) {
 					void goto(message.id, true);
 				} else if (message?.type === 'stage' && message.id) {
 					showStage(message.id);
 				} else if (message?.type === 'enter') {
-					const first = stage.steps.find((id) => !isSettled(stateOf(progress, id))) ?? stage.steps[0];
-					void goto(first, true);
+					const here = plan.stages.find((s) => s.id === stageShowing);
+					const first = here?.steps.find((id) => !isSettled(stateOf(progress, id))) ?? here?.steps[0];
+					if (first) {
+						void goto(first, true);
+					}
 				} else if (message?.type === 'materialize') {
-					void materializeStage(stage.id);
+					if (stageShowing) {
+						void materializeStage(stageShowing);
+					}
 				} else if (message?.type === 'close') {
 					stagePanel?.dispose();
 				}
