@@ -24,7 +24,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-base",
 		"watch": "gulp watch-extension:burrow-go-base",
-		"test": "node test/gopls.test.js && node test/settings.test.js"
+		"test": "node test/gopls.test.js && node test/settings.test.js && node test/webDocs.test.js"
 	},
 	"dependencies": {
 		"vscode-languageclient": "^8.0.2"

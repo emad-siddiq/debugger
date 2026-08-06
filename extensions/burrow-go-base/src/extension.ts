@@ -5,13 +5,19 @@
 
 import { ExtensionContext, Uri, commands, window, workspace } from 'vscode';
 import {
+	CancellationToken,
 	DidChangeConfigurationNotification,
 	LanguageClient,
 	LanguageClientOptions,
+	ResponseError,
 	ServerOptions,
+	ShowDocumentParams,
+	ShowDocumentRequest,
+	ShowDocumentResult,
 } from 'vscode-languageclient/node';
 import { resolveGopls } from './gopls';
 import { buildGoplsSettings } from './settings';
+import { parseGoplsWebPage } from './webDocs';
 
 // burrow-go-base is architecture task 03's language-client slice: a minimal,
 // from-scratch gopls client — deliberately NOT a vendored golang/vscode-go — so it
@@ -36,6 +42,13 @@ const CONFIG_SECTION = 'burrow.go';
 
 /** The section name gopls asks for in its `workspace/configuration` pulls. */
 const GOPLS_SECTION = 'gopls';
+
+/**
+ * The command burrow-go-docs contributes to show one of gopls' own web pages in
+ * a Burrow panel. Named here rather than imported: the two extensions do not
+ * share code, and a command id is the seam the workbench already provides.
+ */
+const OPEN_WEB_COMMAND = 'burrow.goDocs.openWeb';
 
 // Module-scoped so the restart command and deactivate() can reach the running
 // client. Single window, single client — no need for a per-workspace map.
@@ -83,6 +96,25 @@ export async function activate(context: ExtensionContext): Promise<void> {
 }
 
 /**
+ * Hands a `window/showDocument` request back to the default handler.
+ *
+ * Two shapes have to be smoothed over. The middleware signature is
+ * `(params, next)` while the handler it wraps is `(params, token)`, so a token
+ * has to be supplied — and the request has already been accepted by the time we
+ * get here, which makes `None` the honest one. And the handler may answer with a
+ * `ResponseError` rather than a result, which the middleware's return type does
+ * not admit; a failure to open is reported as `success: false`, which is exactly
+ * what it means.
+ */
+async function fallback(
+	params: ShowDocumentParams,
+	next: ShowDocumentRequest.HandlerSignature,
+): Promise<ShowDocumentResult> {
+	const answered = await next(params, CancellationToken.None);
+	return answered instanceof ResponseError ? { success: false } : answered;
+}
+
+/**
  * Reads the `burrow.go` settings for one scope and maps them to what gopls
  * understands. `scopeUri` is gopls' own per-folder scope, so a multi-root
  * workspace gets each folder's settings rather than the first folder's twice.
@@ -123,6 +155,36 @@ async function start(goplsPath: string): Promise<void> {
 		// refines it per folder once gopls starts asking.
 		initializationOptions: goplsSettingsFor(undefined),
 		middleware: {
+			window: {
+				// gopls renders its own documentation, assembly and free-symbols pages
+				// — pkg.go.dev quality, cross-linked, with rendered examples — and
+				// delivers them by asking the editor to open a URL on a localhost
+				// server it started. With no handler here that URL leaves for the
+				// system browser, which is why Burrow's documentation row read ✗ while
+				// the renderer was already running.
+				showDocument: async (params, next) => {
+					const page = parseGoplsWebPage(params.uri);
+					if (!page) {
+						// Not gopls' server. A `file:` URI is how gopls asks to jump to a
+						// declaration, and an external link is a link — both belong to the
+						// default handler, and swallowing either would break navigation.
+						return fallback(params, next);
+					}
+					try {
+						await commands.executeCommand(OPEN_WEB_COMMAND, page);
+						return { success: true };
+					} catch (err) {
+						// burrow-go-docs may be disabled or failed to activate. Falling
+						// through opens a browser, which is worse than the panel but far
+						// better than the page vanishing — and the reason is said out loud
+						// rather than being swallowed with it.
+						void window.showWarningMessage(
+							`Burrow could not open gopls' ${page.kind} view in a panel (${err instanceof Error ? err.message : String(err)}). Opening it outside Burrow instead.`,
+						);
+						return fallback(params, next);
+					}
+				},
+			},
 			workspace: {
 				// gopls does not read `initializationOptions` and stop there — it pulls
 				// `workspace/configuration` for the section "gopls" whenever its cache
