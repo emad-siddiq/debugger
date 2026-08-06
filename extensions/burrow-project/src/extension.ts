@@ -26,7 +26,9 @@ import {
 	Capability, DESCRIPTOR_PATH, FLOW_STATE_PATH, Project, capabilities, detect, merge, parse,
 	parseFlowRun, serialize,
 } from './descriptor';
+import { registerGoTaskProvider } from './goTaskProvider';
 import { DEFAULT_DB_PORT, GeneratedFile, goScaffold, postgresAddition, seedSql } from './goTemplate';
+import { registerRunBar } from './runBar';
 import { installedGoVersion, treeOf, writeDescriptor, writeFiles } from './scaffold';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -37,6 +39,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('burrow.project.addPostgres', () => addPostgres(out)),
 		vscode.commands.registerCommand('burrow.project.describe', () => describe(out)),
 		vscode.commands.registerCommand('burrow.project.explain', () => explain(out)),
+		// The Tasks machinery is compiled in and, since patch 0002 deleted every
+		// stock provider, had nothing to offer. Six Go commands, anchored at the
+		// module root, with the compiler's errors going to Problems.
+		registerGoTaskProvider(projectOf, out),
+		// Task 03's scheme bar, as a right-hand status-bar group: patch 0011 removed
+		// the title bar it was specified to live in, and the patch budget is spent.
+		...registerRunBar(context, projectOf, out),
 		// Read-only, for the other extensions that currently hard-code merkle's
 		// shape. Nothing consumes it yet — that is the follow-on work, and this
 		// exists so it does not need a new detection pass of its own.

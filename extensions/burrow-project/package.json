@@ -12,7 +12,8 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onStartupFinished"
+		"onStartupFinished",
+		"onTaskType:go"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -24,7 +25,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-project",
 		"watch": "gulp watch-extension:burrow-project",
-		"test": "node test/descriptor.test.js && node test/goTemplate.test.js"
+		"test": "node test/descriptor.test.js && node test/goTemplate.test.js && node test/goTasks.test.js && node test/schemeBar.test.js && node test/toolchain.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -51,6 +52,183 @@
 				"title": "What Is This Project?",
 				"category": "Burrow",
 				"icon": "$(question)"
+			},
+			{
+				"command": "burrow.run.start",
+				"title": "Run",
+				"category": "Burrow",
+				"icon": "$(play)"
+			},
+			{
+				"command": "burrow.run.debug",
+				"title": "Debug",
+				"category": "Burrow",
+				"icon": "$(debug-alt)"
+			},
+			{
+				"command": "burrow.run.stop",
+				"title": "Stop the Running Program",
+				"category": "Burrow",
+				"icon": "$(primitive-square)"
+			},
+			{
+				"command": "burrow.run.pick",
+				"title": "Choose the Program to Run…",
+				"category": "Burrow",
+				"icon": "$(target)"
+			},
+			{
+				"command": "burrow.run.toggleRace",
+				"title": "Toggle the Race Detector",
+				"category": "Burrow",
+				"icon": "$(shield)"
+			},
+			{
+				"command": "burrow.toolchain.doctor",
+				"title": "Go Toolchain…",
+				"category": "Burrow",
+				"icon": "$(tools)"
+			}
+		],
+		"taskDefinitions": [
+			{
+				"type": "go",
+				"required": [
+					"task"
+				],
+				"properties": {
+					"task": {
+						"type": "string",
+						"enum": [
+							"build",
+							"test",
+							"vet",
+							"generate",
+							"tidy",
+							"lint"
+						],
+						"description": "Which Go command to run."
+					},
+					"packages": {
+						"type": "string",
+						"description": "Package pattern, e.g. ./... or ./internal/ingest. Ignored by `tidy`, which accepts no arguments.",
+						"default": "./..."
+					}
+				}
+			}
+		],
+		"problemMatchers": [
+			{
+				"name": "go",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-backend",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/backend"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-server",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/server"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-api",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/api"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-cmd",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/cmd"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-src",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/src"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
+			},
+			{
+				"name": "go-service",
+				"owner": "go",
+				"source": "go",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/service"
+				],
+				"pattern": {
+					"regexp": "^(?:vet: |-: )?(?:\\.\\/)?(\\S+\\.go):(\\d+):(\\d+): (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				}
 			}
 		]
 	}
