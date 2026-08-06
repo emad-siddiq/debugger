@@ -15,7 +15,7 @@ import { armSymbolBreakpoint, openSymbol } from './breakpoints';
 import { DiagramPanel } from './diagramPanel';
 import { generateHttp, parseContractFence } from './httpgen';
 import { loadSeedProfile } from './seedProfile';
-import { flowsOf, handlerOf, railMessage, unfollowedOf } from './model';
+import { flowsOf, handlerOf, railMessage, sharedMiddlewareDepth, unfollowedOf } from './model';
 import { cachedDigestFile, cachedFlowsFile, detectProject, flowState, refreshFlows } from './project';
 import { FlowItem, FlowsTree } from './routesTree';
 import { noBackendMessage, whereIs } from './spine';
@@ -113,6 +113,7 @@ export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 			backendDir: paths.backendDir,
 			migrationFor,
 			find: (method, routePath) => flowsOf(tree.document).find(f => f.method === method && f.path === routePath),
+			sharedMiddleware: sharedMiddlewareDepth(flowsOf(tree.document)),
 		};
 	}));
 
@@ -173,7 +174,9 @@ export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 		if (handler?.file) {
 			await openSymbol(paths.backendDir, handler.file, handler.label, handler.line, { preview: true, preserveFocus: true });
 		}
-		panel.show(item.flow, paths.backendDir, migrationFor);
+		// Which middleware is "the root router's stack" is a fact about the whole
+		// route set, not about this flow, so it is measured here and handed down.
+		panel.show(item.flow, paths.backendDir, migrationFor, sharedMiddlewareDepth(flowsOf(tree.document)));
 	}));
 
 	// Search: 235 routes in merkle, grouped into 20-odd domains. The tree is for

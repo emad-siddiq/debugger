@@ -47,15 +47,35 @@ export interface Flow {
 	readonly line: number;
 	readonly middleware?: MW[];
 	readonly nodes: FlowNode[];
-	readonly edges: [number, number][];
+	/** Schema 2 writes objects; a flows.json from before it wrote [from, to]. */
+	readonly edges: FlowEdge[] | [number, number][];
 	readonly tables?: string[];
 	readonly status: 'traced' | 'partial' | 'unknown';
+}
+
+/** What one box DOES to the next. flowscan knows this exactly at the moment it
+ *  builds the edge; before schema 2 it was thrown away. */
+export type EdgeRel = 'calls' | 'executes' | 'reads' | 'writes' | 'unresolved';
+
+export interface FlowEdge {
+	readonly from: number;
+	readonly to: number;
+	/** Absent only on a flows.json written before schema 2. */
+	readonly rel?: EdgeRel;
+	/** The CALL SITE — the line that joins the two boxes, not either box's own. */
+	readonly file?: string;
+	readonly line?: number;
+	readonly col?: number;
 }
 
 export interface MW {
 	readonly label: string;
 	readonly file?: string;
 	readonly line?: number;
+	/** >0 when registered inside an if/switch. Entries sharing a `branch` with
+	 *  different `arm`s are alternatives — at most one of them runs. */
+	readonly branch?: number;
+	readonly arm?: number;
 }
 
 export interface FlowNode {
@@ -132,6 +152,60 @@ export function railMessage(routes: number, unfollowed: readonly Unfollowed[]): 
 	return `${routes} route${routes === 1 ? '' : 's'} traced, and ${n} router${n === 1 ? '' : 's'} `
 		+ `that could not be followed — so there may be more.\n`
 		+ `${first.file}:${first.line} — ${first.reason}${more}`;
+}
+
+/**
+ * The flow's edges, in one shape, never null.
+ *
+ * Two shapes reach here. Schema 2 writes `{from, to, rel, file, line}`; anything
+ * traced before it wrote a bare `[from, to]` pair — and a pre-schema-2
+ * flows.json is not hypothetical, because the cached one in this extension's
+ * storage is what the tree and the diagram are built from at activation, before
+ * anybody presses Refresh. So the first diagram after an update is drawn from
+ * the old shape.
+ *
+ * An old edge keeps `rel` UNDEFINED rather than being given a plausible one.
+ * Guessing "calls" would put a sentence on the screen that the user cannot
+ * check and that is wrong for every query→table edge — which is the defect this
+ * whole feature exists to remove, reintroduced one layer down.
+ */
+export function edgesOf(flow: Flow | undefined): readonly FlowEdge[] {
+	const edges = flow?.edges;
+	if (!Array.isArray(edges)) {
+		return [];
+	}
+	return edges.map(edge => Array.isArray(edge) ? { from: edge[0], to: edge[1] } : edge);
+}
+
+/** Whether anything in this flow can be labelled — false for an older trace. */
+export function hasRelations(flow: Flow | undefined): boolean {
+	return edgesOf(flow).some(edge => !!edge.rel);
+}
+
+/**
+ * How many leading middlewares every route in the project shares.
+ *
+ * The root router's stack runs on everything — in merkle that is 5 to 13 chips
+ * repeated identically on 134 of 235 routes, which is most of the header on
+ * most routes and tells a reader nothing about the route they opened. The
+ * shared part is exactly the longest common PREFIX of the chains, because
+ * middleware order is inherited outermost-first: what differs is always at the
+ * end, and what a route adds for itself is what a reader came to see.
+ *
+ * Fewer than two routes means nothing is established as shared, so it is 0 and
+ * every chip stays visible.
+ */
+export function sharedMiddlewareDepth(flows: readonly Flow[]): number {
+	if (flows.length < 2) {
+		return 0;
+	}
+	const chains = flows.map(flow => (flow.middleware ?? []).map(mw => mw.label));
+	const shortest = chains.reduce((min, c) => Math.min(min, c.length), Infinity);
+	let depth = 0;
+	while (depth < shortest && chains.every(c => c[depth] === chains[0][depth])) {
+		depth++;
+	}
+	return depth;
 }
 
 /** The flow's handler node, when analysis resolved one. */

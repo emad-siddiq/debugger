@@ -9,7 +9,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { flowsOf, groupOf, groupFlows, handlerOf, railMessage, unfollowedOf } = require('../out/model');
+const { edgesOf, flowsOf, groupOf, groupFlows, handlerOf, hasRelations, railMessage, sharedMiddlewareDepth, unfollowedOf } = require('../out/model');
 
 assert.strictEqual(groupOf('/api/validators/chains'), 'validators');
 assert.strictEqual(groupOf('/api/nodes'), 'nodes');
@@ -57,5 +57,50 @@ assert.match(two, /2 routers that could not be followed/);
 assert.match(two, /\(\+1 more\)/);
 
 assert.match(railMessage(1, [{ file: 'a.go', line: 1, reason: 'r' }]), /1 route traced/, 'singular');
+
+// Edges arrive in two shapes. Schema 2 writes objects carrying the relation and
+// the call site; anything traced before it wrote a bare [from, to] pair. The old
+// one is not hypothetical: the cached flows.json in this extension's storage is
+// what the diagram is built from at activation, before anybody presses Refresh.
+assert.deepStrictEqual(edgesOf(undefined), []);
+assert.deepStrictEqual(edgesOf({ edges: null }), [], 'a nil Go slice marshals to null');
+assert.deepStrictEqual(edgesOf({ edges: [] }), []);
+
+const modern = { from: 0, to: 1, rel: 'calls', file: 'gadgets/gadgets.go', line: 37, col: 10 };
+assert.deepStrictEqual(edgesOf({ edges: [modern] }), [modern], 'schema 2 passes straight through');
+
+const old = edgesOf({ edges: [[0, 1], [1, 2]] });
+assert.deepStrictEqual(old.map(e => [e.from, e.to]), [[0, 1], [1, 2]], 'a tuple still reads as an edge');
+// The verb is left UNDEFINED rather than guessed. "calls" is wrong for every
+// query→table edge, and a sentence the user cannot check is the defect this
+// whole feature exists to remove — reintroducing it one layer down is worse
+// than a bare curve.
+assert.ok(old.every(e => e.rel === undefined), 'an old edge is never given an invented relation');
+assert.ok(old.every(e => e.file === undefined), 'nor an invented call site');
+
+assert.deepStrictEqual(edgesOf({ edges: [[0, 1], modern] }).map(e => e.rel), [undefined, 'calls'], 'mixed');
+
+assert.strictEqual(hasRelations({ edges: [modern] }), true);
+assert.strictEqual(hasRelations({ edges: [[0, 1]] }), false, 'an older trace has nothing to label');
+assert.strictEqual(hasRelations({ edges: null }), false);
+
+// The root router's stack is on every route, so it is not what anybody opened
+// this route to see. It is exactly the longest common PREFIX, because chi
+// inherits middleware outermost-first: what a route adds for itself is at the
+// end. In merkle that folds 5–13 chips away on 134 of 235 routes.
+const mws = (...labels) => ({ middleware: labels.map(label => ({ label })) });
+assert.strictEqual(sharedMiddlewareDepth([
+	mws('RequestID', 'Logging', 'JWT'),
+	mws('RequestID', 'Logging', 'RateLimitIP'),
+	mws('RequestID', 'Logging'),
+]), 2, 'the common prefix, and no further');
+assert.strictEqual(sharedMiddlewareDepth([mws('A', 'B'), mws('B', 'A')]), 0, 'order matters — a set would not do');
+assert.strictEqual(sharedMiddlewareDepth([mws(), mws('A')]), 0, 'a route with none shares none');
+assert.strictEqual(sharedMiddlewareDepth([mws('A', 'B')]), 0, 'one route establishes nothing as shared');
+assert.strictEqual(sharedMiddlewareDepth([]), 0);
+assert.strictEqual(sharedMiddlewareDepth([{}, {}]), 0, 'middleware is optional on a Flow');
+// A prefix common to all of them is still all of them — the renderer, not this,
+// decides to keep one chip visible.
+assert.strictEqual(sharedMiddlewareDepth([mws('A', 'B'), mws('A', 'B')]), 2);
 
 console.log('model.test.js OK');

@@ -12,16 +12,17 @@ import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { armSymbolBreakpoint } from './breakpoints';
-import { escapeHtml, LEGEND, renderFlow } from './diagram';
+import { defaultExpanded, escapeHtml, LEGEND, REL_LEGEND, renderFlow } from './diagram';
 import { Flow, handlerOf } from './model';
 
 interface PanelMessage {
-	readonly type: 'open' | 'query' | 'table' | 'breakpoint' | 'exitFocus' | 'refresh';
+	readonly type: 'open' | 'query' | 'table' | 'breakpoint' | 'exitFocus' | 'refresh' | 'toggle';
 	readonly file?: string;
 	readonly line?: number;
 	readonly col?: number;
 	readonly sql?: string;
 	readonly table?: string;
+	readonly node?: number;
 }
 
 /** Everything a REVIVED diagram needs that the panel itself cannot remember: the
@@ -30,6 +31,10 @@ export interface DiagramDeps {
 	readonly backendDir: string;
 	readonly migrationFor: (table: string) => string | undefined;
 	readonly find: (method: string, path: string) => Flow | undefined;
+	/** How many leading middlewares every route here shares — the root router's
+	 *  stack, which folds behind a count. A project-wide fact, so the panel is
+	 *  told it rather than guessing from the one flow it holds. */
+	readonly sharedMiddleware: number;
 }
 
 /** The panel's own state (WO-60): the ROUTE, never the drawing. The diagram is
@@ -48,11 +53,18 @@ export class DiagramPanel implements vscode.Disposable {
 	private flow: Flow | undefined;
 	private backendDir = '';
 	private migrationFor: (table: string) => string | undefined = () => undefined;
+	/** Node indexes whose children are drawn. Belongs to the flow on screen, so
+	 *  drawing a different route replaces it rather than carrying it over. */
+	private expanded = new Set<number>();
+	/** Leading middlewares common to every route — folded behind a count. */
+	private sharedMw = 0;
 
-	show(flow: Flow, backendDir: string, migrationFor: (table: string) => string | undefined): void {
+	show(flow: Flow, backendDir: string, migrationFor: (table: string) => string | undefined, sharedMw: number): void {
 		this.flow = flow;
+		this.expanded = defaultExpanded(flow);
 		this.backendDir = backendDir;
 		this.migrationFor = migrationFor;
+		this.sharedMw = sharedMw;
 		if (!this.panel) {
 			this.panel = vscode.window.createWebviewPanel(
 				DIAGRAM_VIEW_TYPE,
@@ -87,8 +99,10 @@ export class DiagramPanel implements vscode.Disposable {
 				const flow = saved.method && saved.path ? wiring?.find(saved.method, saved.path) : undefined;
 				if (wiring && flow) {
 					this.flow = flow;
+					this.expanded = defaultExpanded(flow);
 					this.backendDir = wiring.backendDir;
 					this.migrationFor = wiring.migrationFor;
+					this.sharedMw = wiring.sharedMiddleware;
 					panel.title = `${flow.method} ${flow.path}`;
 					panel.webview.html = this.html(flow);
 					return;
@@ -111,6 +125,18 @@ export class DiagramPanel implements vscode.Disposable {
 
 	private async onMessage(message: PanelMessage): Promise<void> {
 		switch (message.type) {
+			case 'toggle': {
+				// Layout stays a pure host function with a node test behind it, so
+				// the chevron re-renders rather than re-laying out in the webview.
+				// The page is small; the webview restores its own scroll position.
+				if (this.flow && this.panel && typeof message.node === 'number') {
+					if (!this.expanded.delete(message.node)) {
+						this.expanded.add(message.node);
+					}
+					this.panel.webview.html = this.html(this.flow);
+				}
+				return;
+			}
 			case 'refresh': {
 				// The button a diagram restored without an index offers. Tracing is
 				// explicit work, so it happens because this was clicked.
@@ -204,8 +230,17 @@ export class DiagramPanel implements vscode.Disposable {
 		.badge { font-size: 10px; padding: 0 5px; border-radius: 7px; margin-left: 4px; vertical-align: middle; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
 		.badge.write { background: #7a1e1e; color: #fff; } .badge.read { background: #2d6a4f; color: #fff; }
 		.badge.partial, .badge.unknown { background: #8a5a00; color: #fff; } .badge.traced { background: #2d6a4f; color: #fff; }
-		.lede { opacity: .75; margin: 0 0 8px; max-width: 70ch; line-height: 1.45; }
-		.lede b { opacity: 1; }
+		/* The standing explanation is the same on all 235 routes, so it earns an
+		   icon rather than four lines above every diagram. CSS-only reveal:
+		   the panel's script budget is for messages back to the host. */
+		.info { position: relative; cursor: help; opacity: .55; font-size: 14px; margin-left: 2px; }
+		.info:hover, .info:focus { opacity: 1; outline: none; }
+		.infopop { display: none; position: absolute; top: 20px; left: 0; z-index: 15; width: 62ch; max-width: 70vw;
+			padding: 10px 12px; border-radius: 6px; font-size: 12px; line-height: 1.5; opacity: 1; cursor: default;
+			background: var(--vscode-editorWidget-background); color: var(--vscode-foreground);
+			border: 1px solid var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground));
+			box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+		.info:hover .infopop, .info:focus .infopop, .info:focus-within .infopop { display: block; }
 		.chiprow { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 8px; flex-wrap: wrap; }
 		.chiplabel { font-size: 11px; opacity: .55; white-space: nowrap; }
 		.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; font-size: 11px; opacity: .8; }
@@ -215,6 +250,13 @@ export class DiagramPanel implements vscode.Disposable {
 		.key.query { border-left-color: var(--vscode-charts-green, #89d185); }
 		.key.table { border-left-color: var(--vscode-charts-orange, #d18616); }
 		.key.unknown { border-left-color: var(--vscode-charts-yellow, #cca700); border-left-style: dashed; }
+		/* The verbs, keyed the way they are drawn on the curves. */
+		.relkey { font-size: 10px; line-height: 15px; padding: 0 6px; border-radius: 8px; opacity: .92;
+			background: var(--vscode-editorWidget-background);
+			border: 1px solid var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground)); }
+		.relkey.reads { background: #2d6a4f; border-color: #2d6a4f; color: #fff; }
+		.relkey.writes { background: #7a1e1e; border-color: #7a1e1e; color: #fff; }
+		.relkey.unresolved { background: #8a5a00; border-color: #8a5a00; color: #fff; }
 		.helpbtn { margin-left: auto; width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
 			background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; font-weight: 700; }
 		.helpbtn:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
@@ -226,12 +268,49 @@ export class DiagramPanel implements vscode.Disposable {
 		.hlede { opacity: .8; line-height: 1.5; margin-bottom: 6px; }
 		.hrow { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; margin: 3px 0; align-items: baseline; }
 		.hk { opacity: .95; font-weight: 600; } .hv { opacity: .75; line-height: 1.45; }
+		.stale { margin: 0 0 8px; padding: 5px 9px; border-radius: 5px; max-width: 70ch; line-height: 1.45;
+			background: var(--vscode-inputValidation-warningBackground, var(--vscode-editorWidget-background));
+			border: 1px solid var(--vscode-inputValidation-warningBorder, transparent); }
 		.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+		/* The root router's stack is true on every route and so tells you nothing
+		   about the one you opened. <details> folds it with no script at all. */
+		.mwrow { margin: 2px 0 8px; }
+		.mwrow summary { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; cursor: pointer; list-style: none; }
+		.mwrow summary::-webkit-details-marker { display: none; }
+		.mwrow summary::before { content: '▸'; opacity: .55; font-size: 10px; }
+		.mwrow[open] summary::before { content: '▾'; }
+		.mwcount { font-size: 11px; padding: 1px 8px; border-radius: 9px; opacity: .7;
+			background: var(--vscode-editorWidget-background);
+			border: 1px dashed var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground)); }
+		.mwrow summary:hover .mwcount { opacity: 1; }
+		.chips.shared { margin: 5px 0 0 14px; opacity: .8; }
+		/* An arm of an if/else is a CHOICE, not a link in the chain. */
+		.chip.cond { border-style: dashed; border-color: var(--vscode-charts-yellow, #cca700); }
 		.chip { font-size: 11px; padding: 1px 8px; border-radius: 9px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border, transparent); cursor: pointer; opacity: .85; }
 		.chip:hover { opacity: 1; text-decoration: underline; }
 		.canvas { position: relative; }
 		.edges { position: absolute; inset: 0; }
-		.edges path { fill: none; stroke: var(--vscode-editorLineNumber-foreground); stroke-width: 1.4; opacity: .6; }
+		.edges path.edge { fill: none; stroke: var(--vscode-editorLineNumber-foreground); stroke-width: 1.4; opacity: .6; }
+		/* A 1.4px curve is not a click target. This one is invisible and fat, and
+		   it sits UNDER the drawn curve so the hover it reports is the right one. */
+		.edges path.edgehit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+		.edges .arrow path { fill: var(--vscode-editorLineNumber-foreground); stroke: none; opacity: .75; }
+		/* The verb on the curve. Colours are the ones already in this panel:
+		   read/write reuse the SQL badge pair, unresolved the unknown-node amber. */
+		.rel { position: absolute; transform: translate(-50%, -50%); font-size: 10px; line-height: 15px;
+			padding: 0 6px; border-radius: 8px; white-space: nowrap; cursor: pointer; letter-spacing: .2px;
+			background: var(--vscode-editorWidget-background); color: var(--vscode-foreground); opacity: .92;
+			border: 1px solid var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground)); }
+		.rel:hover { opacity: 1; border-color: var(--vscode-focusBorder); }
+		.rel.reads { background: #2d6a4f; border-color: #2d6a4f; color: #fff; }
+		.rel.writes { background: #7a1e1e; border-color: #7a1e1e; color: #fff; }
+		.rel.unresolved { background: #8a5a00; border-color: #8a5a00; color: #fff; }
+		.edge.reads { stroke: var(--vscode-charts-green, #89d185); }
+		.edge.writes { stroke: var(--vscode-charts-red, #f14c4c); }
+		.edge.unresolved { stroke: var(--vscode-charts-yellow, #cca700); stroke-dasharray: 4 3; }
+		.arrow.reads path { fill: var(--vscode-charts-green, #89d185); }
+		.arrow.writes path { fill: var(--vscode-charts-red, #f14c4c); }
+		.arrow.unresolved path { fill: var(--vscode-charts-yellow, #cca700); }
 		.node { position: absolute; box-sizing: border-box; height: 54px; padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow: hidden;
 			background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border, var(--vscode-editorLineNumber-foreground)); }
 		.node:hover { border-color: var(--vscode-focusBorder); }
@@ -248,10 +327,16 @@ export class DiagramPanel implements vscode.Disposable {
 		.act { position: absolute; top: 4px; right: 4px; font-size: 10px; padding: 0 5px; cursor: pointer;
 			background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 3px; }
 		.act:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+		/* Bottom-right: the title owns the top-left of a box and .act the top-right.
+		   Its own target, so the box body still opens the source. */
+		.chev { position: absolute; bottom: 3px; right: 4px; font-size: 10px; padding: 0 5px; cursor: pointer;
+			background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+			border: none; border-radius: 8px; font-variant-numeric: tabular-nums; }
+		.chev:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 	</style>
 </head>
 <body>
-${renderFlow(flow)}
+${renderFlow(flow, this.expanded, this.sharedMw)}
 <div id="help">
 	<div class="hh">The wire diagram</div>
 	<div class="hlede">One route, and everything the backend runs to serve it — read left to right.
@@ -259,9 +344,15 @@ ${renderFlow(flow)}
 		send a single request.</div>
 	<div class="hh">The boxes</div>
 	${LEGEND.map(item => `<div class="hrow"><span class="hk">${escapeHtml(item.label)}</span><span class="hv">${escapeHtml(item.what)}</span></div>`).join('')}
-	<div class="hrow"><span class="hk">the curves</span><span class="hv">"this calls that". A box with two curves out of it does two things; a table with two curves in is touched twice.</span></div>
+	<div class="hh">The curves</div>
+	<div class="hlede">Each one is labelled with what the left box does to the right one, and the arrow says
+		which way it runs. A box with two curves out of it does two things; a table with two curves in is
+		touched twice.</div>
+	${REL_LEGEND.map(item => `<div class="hrow"><span class="hk"><span class="relkey ${item.rel}">${escapeHtml(item.rel)}</span></span><span class="hv">${escapeHtml(item.what)}</span></div>`).join('')}
 	<div class="hh">Clicking</div>
 	<div class="hrow"><span class="hk">a box</span><span class="hv">opens its source at the exact line. A <b>table</b> has no source — it opens in the Data view instead. A faded box is one flowscan could not place, and there is nothing to open.</span></div>
+	<div class="hrow"><span class="hk">a curve</span><span class="hv">opens the line where that relation happens — the call itself, not either box's declaration. For a store hop those are different files: the handler calls an <i>interface</i> method and the box names the concrete type that implements it, so the call site is the one place both are visible.</span></div>
+	<div class="hrow"><span class="hk">▸&#8202;3</span><span class="hv">reveals the next level under that box. A route is drawn one hop deep to start with, because a busy one runs to dozens of boxes and a picture of all of them at once is not one anybody reads. The chevron counts what is still hidden.</span></div>
 	<div class="hrow"><span class="hk">break here</span><span class="hv">sets a breakpoint on the handler. Start the backend and the next request to this route stops in Go, on this line.</span></div>
 	<div class="hrow"><span class="hk">run in Data</span><span class="hv">sends that exact SQL to the Data view and runs it. Read-only unless you have turned writes on there.</span></div>
 	<div class="hrow"><span class="hk">open in Data</span><span class="hv">opens the table's rows in the Data view.</span></div>
@@ -298,9 +389,20 @@ ${renderFlow(flow)}
 		if (help.classList.contains('on')) { setHelp(false); return; }
 		vscode.postMessage({ type: 'exitFocus' });
 	});
+	// The chevron re-renders on the host, so the page reloads under the user. Put
+	// them back where they were looking — otherwise revealing a hop at the far
+	// right of a wide route throws them to the top-left of the canvas.
+	window.addEventListener('scroll', () => remember({ sx: window.scrollX, sy: window.scrollY }));
+	if (saved.sx || saved.sy) { window.scrollTo(saved.sx || 0, saved.sy || 0); }
 	document.addEventListener('click', e => {
 		if (help.contains(e.target)) { return; }
 		if (e.target.id === 'refresh') { vscode.postMessage({ type: 'refresh' }); return; }
+		const chev = e.target.closest('.chev');
+		if (chev) {
+			vscode.postMessage({ type: 'toggle', node: Number(chev.dataset.node) });
+			e.stopPropagation();
+			return;
+		}
 		const act = e.target.closest('.act');
 		if (act) {
 			const node = act.closest('.node');
@@ -314,7 +416,10 @@ ${renderFlow(flow)}
 			e.stopPropagation();
 			return;
 		}
-		const el = e.target.closest('.node, .chip, .reg');
+		// .rel and .edgehit are the two halves of a curve — the verb you can see
+		// and the fat invisible path under it. Both carry the call site, so a
+		// click on either opens the line that joins the two boxes.
+		const el = e.target.closest('.node, .chip, .reg, .rel, .edgehit');
 		if (el && el.dataset.file) {
 			vscode.postMessage({ type: 'open', file: el.dataset.file, line: Number(el.dataset.line || 0), col: Number(el.dataset.col || 0) });
 		}
