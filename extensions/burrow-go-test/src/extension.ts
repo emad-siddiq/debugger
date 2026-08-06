@@ -5,6 +5,7 @@
 
 import { ExtensionContext, commands, window, workspace } from 'vscode';
 import { GoTestController } from './controller';
+import { GoProfiler } from './profile';
 import { TestLab } from './lab';
 import { failedNames } from './labModel';
 import { TestsProvider } from './testsTree';
@@ -39,6 +40,10 @@ export function activate(context: ExtensionContext): void {
 			race: config.get<boolean>('race', false),
 		};
 	};
+
+	// The profiler shares the extension's `go` binary and race toggle, so a
+	// profile is taken of the same build the tests run against.
+	const profiler = new GoProfiler(settings);
 
 	const controller = new GoTestController(settings, (run) => {
 		treeView.setRun(run);
@@ -100,6 +105,8 @@ export function activate(context: ExtensionContext): void {
 		}),
 		commands.registerCommand('burrow.test.openLab', () => lab.open()),
 		commands.registerCommand('burrow.test.runAll', () => runTests()),
+		profiler,
+		commands.registerCommand('burrow.test.profile', () => profiler.profile()),
 	);
 }
 

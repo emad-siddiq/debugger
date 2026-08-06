@@ -1,7 +1,7 @@
 {
 	"name": "burrow-go-test",
 	"displayName": "Burrow Go Tests",
-	"description": "First-class Go tests for Burrow (architecture task 11): a native Test Explorer populated by scanning the workspace for `func Test*`/`Benchmark*`/`Fuzz*`/`Example*`, with real `go test -run <name> -json ./<pkg>` execution reporting pass/fail live into the test UI. First slice \u2014 discovery + run; coverage, bench history, fuzz corpus, watch mode and debug come later.",
+	"description": "First-class Go tests for Burrow (architecture task 11): a native Test Explorer populated by scanning the workspace for `func Test*`/`Benchmark*`/`Fuzz*`/`Example*`, with real `go test -run <name> -json ./<pkg>` execution reporting pass/fail live into the test UI. First slice — discovery + run; coverage, bench history, fuzz corpus, watch mode and debug come later.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -15,7 +15,9 @@
 		"onLanguage:go",
 		"onView:burrowTests",
 		"workspaceContains:**/*_test.go",
-		"onWebviewPanel:burrow.test.lab"
+		"onWebviewPanel:burrow.test.lab",
+		"onCommand:burrow.test.profile",
+		"onWebviewPanel:burrowGoProfile"
 	],
 	"main": "./out/extension.js",
 	"capabilities": {
@@ -27,7 +29,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-test",
 		"watch": "gulp watch-extension:burrow-go-test",
-		"test": "node test/discovery.test.js && node test/command.test.js && node test/events.test.js && node test/labModel.test.js && node test/coverage.test.js"
+		"test": "node test/discovery.test.js && node test/command.test.js && node test/events.test.js && node test/labModel.test.js && node test/coverage.test.js && node test/profileArgs.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -48,6 +50,12 @@
 				"title": "Run Go Tests",
 				"category": "Burrow",
 				"icon": "$(play)"
+			},
+			{
+				"command": "burrow.test.profile",
+				"title": "Profile Package…",
+				"category": "Burrow",
+				"icon": "$(pulse)"
 			}
 		],
 		"keybindings": [
@@ -62,6 +70,9 @@
 			"commandPalette": [
 				{
 					"command": "burrow.test.refresh"
+				},
+				{
+					"command": "burrow.test.profile"
 				}
 			],
 			"view/title": [
@@ -86,6 +97,13 @@
 					"command": "burrow.focus.toggle",
 					"when": "activeWebviewPanelId == burrow.test.lab",
 					"group": "navigation@100"
+				}
+			],
+			"editor/context": [
+				{
+					"command": "burrow.test.profile",
+					"group": "navigation@97",
+					"when": "editorLangId == go"
 				}
 			]
 		},
