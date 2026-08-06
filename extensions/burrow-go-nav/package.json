@@ -69,6 +69,24 @@
 				"win": "ctrl+shift+f",
 				"linux": "ctrl+shift+f",
 				"when": "!terminalFocus"
+			},
+			{
+				"command": "references-view.showCallHierarchy",
+				"key": "ctrl+alt+h",
+				"mac": "ctrl+alt+h",
+				"when": "editorHasCallHierarchyProvider && editorTextFocus && editorLangId == go"
+			},
+			{
+				"command": "references-view.showTypeHierarchy",
+				"key": "ctrl+h",
+				"mac": "ctrl+h",
+				"when": "editorHasTypeHierarchyProvider && editorTextFocus && editorLangId == go"
+			},
+			{
+				"command": "references-view.findReferences",
+				"key": "alt+f7",
+				"mac": "alt+f7",
+				"when": "editorHasReferenceProvider && editorTextFocus && editorLangId == go"
 			}
 		],
 		"menus": {
@@ -96,6 +114,23 @@
 					"command": "burrow.find.symbols",
 					"group": "navigation@-1",
 					"when": "view == workbench.view.search"
+				}
+			],
+			"editor/context": [
+				{
+					"command": "references-view.showCallHierarchy",
+					"group": "navigation@90",
+					"when": "editorHasCallHierarchyProvider && editorLangId == go"
+				},
+				{
+					"command": "references-view.showTypeHierarchy",
+					"group": "navigation@91",
+					"when": "editorHasTypeHierarchyProvider && editorLangId == go"
+				},
+				{
+					"command": "references-view.findReferences",
+					"group": "navigation@92",
+					"when": "editorHasReferenceProvider && editorLangId == go"
 				}
 			]
 		},
