@@ -25,6 +25,8 @@ export interface RunArgsOptions {
 	readonly json?: boolean;
 	/** Per-run `-count` override (e.g. 1 to defeat the test cache). */
 	readonly count?: number;
+	/** Where to write a cover profile; omitted for an ordinary run. */
+	readonly coverProfile?: string;
 }
 
 /**
@@ -57,6 +59,12 @@ export function buildRunArgs(opts: RunArgsOptions): string[] {
 	}
 	if (opts.count !== undefined) {
 		args.push('-count', String(opts.count));
+	}
+	if (opts.coverProfile) {
+		// `-coverprofile` implies `-cover`. The mode is left to `go`, which picks
+		// `atomic` under `-race` and `set` otherwise — pinning it here would make a
+		// race run either wrong or slow.
+		args.push('-coverprofile', opts.coverProfile);
 	}
 	const names = opts.names ?? [];
 	if (opts.kind === 'benchmark') {

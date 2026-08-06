@@ -27,7 +27,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-test",
 		"watch": "gulp watch-extension:burrow-go-test",
-		"test": "node test/discovery.test.js && node test/command.test.js && node test/events.test.js && node test/labModel.test.js"
+		"test": "node test/discovery.test.js && node test/command.test.js && node test/events.test.js && node test/labModel.test.js && node test/coverage.test.js"
 	},
 	"contributes": {
 		"commands": [

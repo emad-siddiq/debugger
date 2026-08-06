@@ -13,14 +13,19 @@
 // only bridges them to the API.
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
 	CancellationToken,
 	CancellationTokenSource,
 	Disposable,
 	EventEmitter,
+	FileCoverage,
+	FileCoverageDetail,
 	Range,
+	StatementCoverage,
 	TestController,
+	TestCoverageCount,
 	TestItem,
 	TestMessage,
 	TestRun,
@@ -31,6 +36,7 @@ import {
 	workspace,
 } from 'vscode';
 import { buildRunArgs } from './command';
+import { CoverageBlock, coverageTotals, parseCoverProfile, parseModulePath, relativeToModule } from './coverage';
 import { GoTestKind, parseTestFunctions } from './discovery';
 import { GoTestEvent, TestResult, summarizeEvents } from './events';
 import { LabRun, buildRun, buildSuite } from './labModel';
@@ -96,6 +102,8 @@ export class GoTestController implements Disposable {
 	private readonly meta = new Map<string, TestMeta>();
 	private readonly disposables: Disposable[] = [];
 	private readonly discovered = new EventEmitter<void>();
+	/** Per-file statement detail from the last coverage run, keyed by fsPath. */
+	private readonly coverageDetails = new Map<string, FileCoverageDetail[]>();
 
 	/**
 	 * Fires when a discovery pass finishes. The constructor's pass is
@@ -121,6 +129,23 @@ export class GoTestController implements Disposable {
 		this.disposables.push(this.controller, this.discovered);
 		this.controller.refreshHandler = () => this.discover();
 		this.controller.createRunProfile('Go Test', TestRunProfileKind.Run, (request, token) => this.run(request, token), true);
+
+		// The coverage profile. `11-first-class-tests.md` specified painted gutters
+		// and this was left unbuilt because painting a gutter used to mean a core
+		// patch; the workbench now owns the painting, so all that is left is
+		// running `go test -coverprofile` and handing over what it wrote.
+		const coverage = this.controller.createRunProfile(
+			'Go Test with Coverage',
+			TestRunProfileKind.Coverage,
+			(request, token) => this.run(request, token, true),
+			true,
+		);
+		// Detail is served from what the run already parsed. Recomputing here would
+		// re-read a profile that has been deleted, so the gutters would come back
+		// empty on the second look at the same file.
+		coverage.loadDetailedCoverage = async (_run, file) =>
+			this.coverageDetails.get(file.uri.fsPath) ?? [];
+
 		void this.discover();
 	}
 
@@ -236,10 +261,17 @@ export class GoTestController implements Disposable {
 	 * package (benchmarks separated from name-selected tests), and executes each
 	 * group with real `go test`, streaming results into the run.
 	 */
-	private async run(request: TestRunRequest, token: CancellationToken): Promise<void> {
+	private async run(request: TestRunRequest, token: CancellationToken, coverage = false): Promise<void> {
 		const run = this.controller.createTestRun(request);
 		const leaves = this.gather(request);
 		const { goExecutable, race } = this.settings();
+		// Blocks accumulate across every group in this run, keyed by the file on
+		// disk: two packages can report the same file when `-coverpkg` widens the
+		// set, and the workbench wants one FileCoverage per file, not per package.
+		const blocksByFile = new Map<string, CoverageBlock[]>();
+		if (coverage) {
+			this.coverageDetails.clear();
+		}
 		// Results roll up per PACKAGE, not per group: a package whose tests and
 		// benchmarks run as two groups is still one suite in the lab.
 		const byPackage = new Map<string, { label: string; results: TestResult[] }>();
@@ -264,16 +296,27 @@ export class GoTestController implements Disposable {
 				run.started(leaf.item);
 			}
 			const { cwd, packagePath, kind } = group[0].meta;
+			// One profile file per group, under the OS temp dir rather than in the
+			// project: a coverage run must not leave a `coverage.out` behind in a
+			// tree the reader is about to commit.
+			const profilePath = coverage
+				? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-cover-')), 'profile.out')
+				: undefined;
 			const args = buildRunArgs({
 				packagePath,
 				kind: kind === 'benchmark' ? 'benchmark' : 'test',
 				names: group.map(l => l.meta.name),
 				race,
 				count: 1,
+				...(profilePath ? { coverProfile: profilePath } : {}),
 			});
 			run.appendOutput(`\u001b[2m$ ${goExecutable} ${args.join(' ')}\u001b[0m\r\n`);
 
 			const outcome = await runGoTest(goExecutable, args, cwd, token, event => this.onEvent(run, byName, event));
+
+			if (profilePath) {
+				this.collectCoverage(profilePath, cwd, blocksByFile);
+			}
 
 			const summary = summarizeEvents(outcome.events);
 			const bucket = byPackage.get(packagePath)
@@ -292,12 +335,80 @@ export class GoTestController implements Disposable {
 				run.errored(leaf.item, new TestMessage(detail));
 			}
 		}
+		if (coverage) {
+			this.reportCoverage(run, blocksByFile);
+		}
 		run.end();
 		this.onRun(buildRun(
 			[...byPackage.entries()].map(([packagePath, { label, results }]) => buildSuite(packagePath, label, results)),
 			race,
 			buildError || undefined,
 		));
+	}
+
+	/**
+	 * Reads one group's cover profile and folds its blocks into `blocksByFile`,
+	 * keyed by the file's path on disk.
+	 *
+	 * A cover profile names files by IMPORT PATH, so the module path from the
+	 * running package's `go.mod` is what turns `github.com/org/mod/pkg/x.go` back
+	 * into a file the workbench can paint. Without a `go.mod` there is no prefix
+	 * to strip and no honest mapping, so the profile is dropped rather than
+	 * guessed at — a gutter painted on the wrong file is worse than no gutter.
+	 *
+	 * The profile and its temp directory are removed either way: they are this
+	 * run's scratch, and `loadDetailedCoverage` is served from memory precisely so
+	 * nothing needs them again.
+	 */
+	private collectCoverage(profilePath: string, cwd: string, blocksByFile: Map<string, CoverageBlock[]>): void {
+		try {
+			if (!fs.existsSync(profilePath)) {
+				return; // the run failed to build, or matched no tests
+			}
+			const goMod = path.join(cwd, 'go.mod');
+			const modulePath = fs.existsSync(goMod)
+				? parseModulePath(fs.readFileSync(goMod, 'utf8'))
+				: undefined;
+			if (!modulePath) {
+				return;
+			}
+			const profile = parseCoverProfile(fs.readFileSync(profilePath, 'utf8'));
+			for (const [name, blocks] of profile.files) {
+				const rel = relativeToModule(name, modulePath);
+				if (!rel) {
+					continue; // a dependency's file: its coverage is not this project's
+				}
+				const fsPath = path.join(cwd, ...rel.split('/'));
+				const list = blocksByFile.get(fsPath) ?? blocksByFile.set(fsPath, []).get(fsPath)!;
+				list.push(...blocks);
+			}
+		} catch {
+			// A profile is a report. Losing one costs gutters, not the test run.
+		} finally {
+			fs.rmSync(path.dirname(profilePath), { recursive: true, force: true });
+		}
+	}
+
+	/**
+	 * Hands the run's accumulated blocks to the workbench: one FileCoverage per
+	 * file for the percentages, and one StatementCoverage per block for the
+	 * gutters.
+	 *
+	 * The totals are computed over STATEMENTS rather than blocks, because that is
+	 * the unit `go tool cover` counts — a percentage that disagrees with the one
+	 * `go test -cover` prints in the same terminal is a percentage nobody trusts.
+	 */
+	private reportCoverage(run: TestRun, blocksByFile: Map<string, CoverageBlock[]>): void {
+		for (const [fsPath, blocks] of blocksByFile) {
+			const details: FileCoverageDetail[] = blocks.map(block => new StatementCoverage(
+				block.count,
+				// Go's profile is 1-based in both axes; the workbench is 0-based.
+				new Range(block.startLine - 1, block.startCol - 1, block.endLine - 1, block.endCol - 1),
+			));
+			this.coverageDetails.set(fsPath, details);
+			const { covered, total } = coverageTotals(blocks);
+			run.addCoverage(new FileCoverage(Uri.file(fsPath), new TestCoverageCount(covered, total)));
+		}
 	}
 
 	/**
