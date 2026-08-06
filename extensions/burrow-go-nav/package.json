@@ -26,7 +26,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-nav",
 		"watch": "gulp watch-extension:burrow-go-nav",
-		"test": "node test/query.test.js && node test/packageindex.test.js && node test/seed.test.js"
+		"test": "node test/query.test.js && node test/packageindex.test.js && node test/seed.test.js && node test/refactorKinds.test.js"
 	},
 	"contributes": {
 		"commands": [
@@ -52,6 +52,12 @@
 				"title": "Find: Symbols",
 				"category": "Burrow",
 				"icon": "$(symbol-method)"
+			},
+			{
+				"command": "burrow.refactor.here",
+				"title": "Refactor…",
+				"category": "Go",
+				"icon": "$(lightbulb)"
 			}
 		],
 		"keybindings": [
@@ -87,6 +93,12 @@
 				"key": "alt+f7",
 				"mac": "alt+f7",
 				"when": "editorHasReferenceProvider && editorTextFocus && editorLangId == go"
+			},
+			{
+				"command": "burrow.refactor.here",
+				"key": "ctrl+t",
+				"mac": "ctrl+t",
+				"when": "editorTextFocus && !editorReadonly"
 			}
 		],
 		"menus": {
@@ -117,6 +129,11 @@
 				}
 			],
 			"editor/context": [
+				{
+					"command": "burrow.refactor.here",
+					"group": "navigation@89",
+					"when": "editorTextFocus && !editorReadonly"
+				},
 				{
 					"command": "references-view.showCallHierarchy",
 					"group": "navigation@90",

@@ -13,6 +13,7 @@ import { GoCli } from './golist';
 import { PackageIndex, parseGoList } from './packageindex';
 import { registerGoToSymbolCommand } from './nav';
 import { registerFindCommands } from './findEverywhere';
+import { registerRefactorCommand } from './refactor';
 
 // burrow-go-nav — qualified-symbol navigation (architecture task 16). The slice:
 //   WO-1  query grammar (query.ts) + `go list -json` package index (packageindex.ts,
@@ -77,6 +78,7 @@ export function activate(context: ExtensionContext): void {
 		watcher.onDidChange(invalidate),
 		watcher.onDidDelete(invalidate),
 		registerGoToSymbolCommand(() => index.get()),
+		registerRefactorCommand(),
 		...registerFindCommands(),
 	);
 
