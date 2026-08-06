@@ -3,19 +3,39 @@
  *  Fork of Code - OSS (Copyright (c) Microsoft Corporation). See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 
-import { ExtensionContext, commands, window } from 'vscode';
-import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
+import { ExtensionContext, Uri, commands, window, workspace } from 'vscode';
+import {
+	DidChangeConfigurationNotification,
+	LanguageClient,
+	LanguageClientOptions,
+	ServerOptions,
+} from 'vscode-languageclient/node';
 import { resolveGopls } from './gopls';
+import { buildGoplsSettings } from './settings';
 
-// burrow-go-base is the first slice of architecture task 03: a minimal, from-scratch
-// gopls language client — deliberately NOT a vendored golang/vscode-go — so it stays
-// cheap to re-pin against each 1.128-era API. It has one job: start the host `gopls`
-// as an LSP server over stdio so hover, go-to-definition, find-references and
-// goimports format-on-save work in-tree, and so burrow-go-nav's
-// `executeWorkspaceSymbolProvider` calls actually resolve. Tool management (a pinned
-// gopls installed by Burrow) is slice 2; here gopls is resolved from the host.
+// burrow-go-base is architecture task 03's language-client slice: a minimal,
+// from-scratch gopls client — deliberately NOT a vendored golang/vscode-go — so it
+// stays cheap to re-pin against each 1.128-era API. It starts the host `gopls` as an
+// LSP server over stdio so hover, go-to-definition, find-references and goimports
+// format-on-save work in-tree, and so burrow-go-nav's
+// `executeWorkspaceSymbolProvider` calls actually resolve.
+//
+// It also carries gopls' settings, which is the second half of the same job and was
+// missing until `settings.ts` existed: gopls' analysers, code lenses and inlay hints
+// are all configuration, so a client that passes no configuration ships a language
+// server with most of itself switched off. See `settings.ts` for what is passed and
+// why, and the `middleware.workspace.configuration` hook below for how gopls asks.
+//
+// Tool management (a pinned gopls installed by Burrow rather than resolved from the
+// host) is still a later slice.
 
 const RESTART_COMMAND = 'burrow.go.restartLanguageServer';
+
+/** The workbench section every gopls setting is read from. */
+const CONFIG_SECTION = 'burrow.go';
+
+/** The section name gopls asks for in its `workspace/configuration` pulls. */
+const GOPLS_SECTION = 'gopls';
 
 // Module-scoped so the restart command and deactivate() can reach the running
 // client. Single window, single client — no need for a per-workspace map.
@@ -43,8 +63,34 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
 	context.subscriptions.push(commands.registerCommand(RESTART_COMMAND, restart));
 	await start(goplsPath);
+
+	// gopls caches the answer to each `workspace/configuration` pull, so editing a
+	// `burrow.go.*` setting changes nothing until the server is told the cache is
+	// stale. The LSP way to say that is an empty didChangeConfiguration, after
+	// which gopls re-pulls and the middleware below answers with the new values —
+	// which is why a setting takes effect without "Restart Go Language Server".
+	context.subscriptions.push(
+		workspace.onDidChangeConfiguration(event => {
+			if (!event.affectsConfiguration(CONFIG_SECTION)) {
+				return;
+			}
+			void client?.sendNotification(DidChangeConfigurationNotification.type, { settings: {} });
+		}),
+	);
+
 	// Stop the client when the extension is deactivated / subscriptions dispose.
 	context.subscriptions.push({ dispose: () => void stop() });
+}
+
+/**
+ * Reads the `burrow.go` settings for one scope and maps them to what gopls
+ * understands. `scopeUri` is gopls' own per-folder scope, so a multi-root
+ * workspace gets each folder's settings rather than the first folder's twice.
+ */
+function goplsSettingsFor(scopeUri: string | undefined): Record<string, unknown> {
+	const resource = scopeUri ? Uri.parse(scopeUri) : undefined;
+	const config = workspace.getConfiguration(CONFIG_SECTION, resource);
+	return buildGoplsSettings(key => config.get(key));
 }
 
 /**
@@ -72,6 +118,34 @@ async function start(goplsPath: string): Promise<void> {
 			{ scheme: 'file', pattern: '**/go.sum' },
 			{ scheme: 'file', pattern: '**/go.work' },
 		],
+		// What gopls reads at `initialize`, before it can pull anything. It has no
+		// scope yet, so this is the workspace-wide answer; the middleware below
+		// refines it per folder once gopls starts asking.
+		initializationOptions: goplsSettingsFor(undefined),
+		middleware: {
+			workspace: {
+				// gopls does not read `initializationOptions` and stop there — it pulls
+				// `workspace/configuration` for the section "gopls" whenever its cache
+				// is cold. The default handler would answer from
+				// `workspace.getConfiguration('gopls')`, a section Burrow does not
+				// contribute, so gopls would be told "{}" and every setting below
+				// would be silently ignored. This is the seam that carries them.
+				configuration: async (params, token, next) => {
+					if (params.items.every(item => item.section === GOPLS_SECTION)) {
+						return params.items.map(item => goplsSettingsFor(item.scopeUri));
+					}
+					// A mixed batch is not ours to answer wholesale: let the default
+					// handler resolve the rest, then overwrite only our own entries.
+					// `next` may hand back a ResponseError instead of an array, in
+					// which case there is nothing to fall back to but null.
+					const answered = await next(params, token);
+					const fallback = Array.isArray(answered) ? answered : [];
+					return params.items.map((item, index) =>
+						item.section === GOPLS_SECTION ? goplsSettingsFor(item.scopeUri) : fallback[index] ?? null,
+					);
+				},
+			},
+		},
 	};
 
 	client = new LanguageClient('burrowGo', 'Burrow Go Language Server', serverOptions, clientOptions);

@@ -24,7 +24,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-base",
 		"watch": "gulp watch-extension:burrow-go-base",
-		"test": "node test/gopls.test.js"
+		"test": "node test/gopls.test.js && node test/settings.test.js"
 	},
 	"dependencies": {
 		"vscode-languageclient": "^8.0.2"
@@ -36,6 +36,263 @@
 				"title": "Restart Go Language Server",
 				"category": "Burrow"
 			}
-		]
+		],
+		"configuration": {
+			"title": "Burrow Go Language",
+			"properties": {
+				"burrow.go.inlayHints.assignVariableTypes": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show the inferred type after a `:=`. Go's short declaration is the one place the language hides a type that matters, so this is the hint that pays for itself most often.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.parameterNames": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show parameter names at call sites, so `copy(dst, src)` reads as `copy(dst: …, src: …)` without opening the callee.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.compositeLiteralFields": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show field names in positional struct literals — the form where a reordered field compiles and means something else.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.constantValues": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show the value of each constant in a `const` block. Under `iota` the values are the whole point and none of them are written down.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.ignoredError": {
+					"type": "boolean",
+					"default": true,
+					"description": "Mark calls whose error result is discarded. Silent error-dropping is a Go bug class the compiler permits.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.functionTypeParameters": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show inferred type arguments on generic calls, which are otherwise invisible at the call site.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.compositeLiteralTypes": {
+					"type": "boolean",
+					"default": false,
+					"description": "Show the element type of a composite literal. Off by default: in nested literals it repeats a type the enclosing declaration already states.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.inlayHints.rangeVariableTypes": {
+					"type": "boolean",
+					"default": false,
+					"description": "Show the types of the variables in a `range` clause. Off by default: `for i, v := range xs` is the most-read line in most Go files, and two hints on it earn less than they cost.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.semanticTokens": {
+					"type": "boolean",
+					"default": true,
+					"description": "Let gopls colour Go by what a name means rather than by what it looks like. gopls ships this off; the workbench and Burrow's themes are already opted in, so with it off Go falls back to TextMate-only colouring.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.staticcheck": {
+					"type": "string",
+					"enum": [
+						"all",
+						"default",
+						"off"
+					],
+					"enumDescriptions": [
+						"Every staticcheck analyser. Whether the ST1xxx style family comes with them is `burrow.go.styleChecks`.",
+						"The subset gopls' maintainers curate for precision and runtime cost — gopls' own behaviour when a client says nothing.",
+						"No staticcheck analysers at all; only the vet-class checks gopls always runs."
+					],
+					"default": "all",
+					"description": "How much of staticcheck runs as you type. gopls ships the curated subset; Burrow asks for all of it, because a check that only runs in CI is a check you read a diff to find.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.styleChecks": {
+					"type": "boolean",
+					"default": false,
+					"description": "Include staticcheck's ST1xxx style and naming family — package comments, receiver naming, error-string capitalisation. Off by default because every one of them fires across a codebase that was not written against them, on code that is correct. Only applies when `burrow.go.staticcheck` is `all`.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.analyses": {
+					"type": "object",
+					"default": {},
+					"additionalProperties": {
+						"type": "boolean"
+					},
+					"markdownDescription": "Turn individual analysers on or off by name, e.g. `{ \"shadow\": true, \"ST1003\": true }`. Named analysers win over `#burrow.go.staticcheck#` and `#burrow.go.styleChecks#` — asking for one by name is more specific than asking for a family.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.vulncheck": {
+					"type": "string",
+					"enum": [
+						"Off",
+						"Imports"
+					],
+					"enumDescriptions": [
+						"No vulnerability analysis.",
+						"Report known vulnerabilities affecting packages this module imports, directly or indirectly."
+					],
+					"default": "Off",
+					"description": "Scan dependencies against the Go vulnerability database as you work, rather than at release time. Off by default because turning it on makes the editor fetch from vuln.go.dev, and nothing else in Burrow reaches the network unasked.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.codeLenses": {
+					"type": "object",
+					"default": {},
+					"additionalProperties": {
+						"type": "boolean"
+					},
+					"markdownDescription": "Override gopls' code lenses by name: `generate`, `regenerate_cgo`, `tidy`, `upgrade_dependency`, `vendor`, `test`, `vulncheck`. Empty means gopls' own defaults, under which the first five are on. `test` is best left off — Burrow's Test Explorer already puts run and debug in the gutter, and the lens repeats it in words.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.usePlaceholders": {
+					"type": "boolean",
+					"default": true,
+					"description": "Fill in parameter placeholders when a function completion is accepted, so tab moves through the arguments instead of leaving empty parentheses.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.completeFunctionCalls": {
+					"type": "boolean",
+					"default": true,
+					"description": "Complete a function name to a call with its parentheses, rather than to the bare identifier.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.gofumpt": {
+					"type": "boolean",
+					"default": false,
+					"description": "Format with gofumpt's stricter rules instead of plain gofmt. Off by default: it reformats files a `gofmt` gate elsewhere considers already formatted.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.local": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "A module path prefix — usually your own — whose imports are grouped after third-party ones by `goimports`. Example: `github.com/merk7e-labs`.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.hoverKind": {
+					"type": "string",
+					"enum": [
+						"FullDocumentation",
+						"SynopsisDocumentation",
+						"NoDocumentation",
+						"SingleLine"
+					],
+					"default": "FullDocumentation",
+					"description": "How much documentation a hover carries.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.linksInHover": {
+					"type": "string",
+					"enum": [
+						"web",
+						"gopls",
+						"off"
+					],
+					"enumDescriptions": [
+						"Link to pkg.go.dev, which opens outside the IDE and needs a network.",
+						"Link to gopls' own documentation viewer.",
+						"No documentation links in hovers."
+					],
+					"default": "web",
+					"description": "Where a hover's documentation links point.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.buildFlags": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"markdownDescription": "Flags passed to the build system, e.g. `[\"-tags=integration\"]`. Without this, files behind a build tag are analysed as if they were not in the project — no completion, no diagnostics, definitions that do not resolve.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.directoryFilters": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"markdownDescription": "Directories to exclude from the workspace scan, e.g. `[\"-node_modules\", \"-**/testdata\"]`. Worth setting in a repository that carries a large non-Go tree beside the Go one.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.standaloneTags": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"markdownDescription": "Build constraints that mark a file as its own main package, e.g. `[\"ignore\"]` for the `//go:build ignore` scripts that live beside a package.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.env": {
+					"type": "object",
+					"default": {},
+					"additionalProperties": {
+						"type": "string"
+					},
+					"markdownDescription": "Environment variables for gopls and the Go commands it runs, e.g. `{ \"GOFLAGS\": \"-mod=mod\" }`.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.go.gopls": {
+					"type": "object",
+					"default": {},
+					"markdownDescription": "Raw gopls settings, merged last and winning over every setting above. gopls has options Burrow has no opinion about, and gains more with each re-pin — this is here so none of them is ever unreachable while waiting for Burrow to name it. Use gopls' short setting names, e.g. `{ \"diagnosticsDelay\": \"500ms\" }`.",
+					"tags": [
+						"burrow"
+					]
+				}
+			}
+		}
 	}
 }
