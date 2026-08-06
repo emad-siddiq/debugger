@@ -18,6 +18,8 @@ import * as path from 'path';
 import {
 	CancellationToken,
 	CancellationTokenSource,
+	DebugConfiguration,
+	DebugSession,
 	Disposable,
 	EventEmitter,
 	FileCoverage,
@@ -32,10 +34,11 @@ import {
 	TestRunProfileKind,
 	TestRunRequest,
 	Uri,
+	debug,
 	tests,
 	workspace,
 } from 'vscode';
-import { buildRunArgs } from './command';
+import { buildRunArgs, buildTestBinaryArgs } from './command';
 import { CoverageBlock, coverageTotals, parseCoverProfile, parseModulePath, relativeToModule } from './coverage';
 import { GoTestKind, parseTestFunctions } from './discovery';
 import { GoTestEvent, TestResult, summarizeEvents } from './events';
@@ -145,6 +148,16 @@ export class GoTestController implements Disposable {
 		// empty on the second look at the same file.
 		coverage.loadDetailedCoverage = async (_run, file) =>
 			this.coverageDetails.get(file.uri.fsPath) ?? [];
+
+		// Debugging a test was the one thing the explorer could not do: the tree
+		// listed every test and offered only Run, so reaching a breakpoint inside
+		// one meant hand-writing a launch.json entry with the right -test.run.
+		this.controller.createRunProfile(
+			'Debug Go Test',
+			TestRunProfileKind.Debug,
+			(request, token) => this.debug(request, token),
+			true,
+		);
 
 		void this.discover();
 	}
@@ -344,6 +357,111 @@ export class GoTestController implements Disposable {
 			race,
 			buildError || undefined,
 		));
+	}
+
+	/**
+	 * Debug profile handler: starts one `dlv` session per package, selecting the
+	 * requested tests on the compiled test binary.
+	 *
+	 * No verdict is recorded. A debug session's outcome is whatever the reader
+	 * steps to — they can change a variable at a breakpoint and turn a failure
+	 * into a pass — so reporting pass/fail here would be reporting on something
+	 * that did not happen. The run says so in its output rather than leaving the
+	 * empty result unexplained.
+	 */
+	private async debug(request: TestRunRequest, token: CancellationToken): Promise<void> {
+		const run = this.controller.createTestRun(request);
+		const leaves = this.gather(request);
+		const { race } = this.settings();
+
+		const groups = new Map<string, Leaf[]>();
+		for (const leaf of leaves) {
+			const isBench = leaf.meta.kind === 'benchmark';
+			const key = `${leaf.meta.cwd}${ID_SEP}${leaf.meta.packagePath}${ID_SEP}${isBench ? 'b' : 't'}`;
+			(groups.get(key) ?? groups.set(key, []).get(key)!).push(leaf);
+		}
+
+		for (const group of groups.values()) {
+			if (token.isCancellationRequested) {
+				break;
+			}
+			const { cwd, packagePath, kind } = group[0].meta;
+			// dlv's `mode: "test"` builds the package at `program`, so this is the
+			// package's own directory — not the module root the runner uses as cwd.
+			const programDir = path.resolve(cwd, packagePath);
+			const names = group.map(l => l.meta.name);
+			const args = buildTestBinaryArgs({
+				kind: kind === 'benchmark' ? 'benchmark' : 'test',
+				names,
+			});
+			const config: DebugConfiguration = {
+				type: 'go',
+				request: 'launch',
+				name: `Debug ${names.join(', ')}`,
+				mode: 'test',
+				program: programDir,
+				args,
+				...(race ? { buildFlags: '-race' } : {}),
+			};
+
+			for (const leaf of group) {
+				run.enqueued(leaf.item);
+				run.started(leaf.item);
+			}
+			run.appendOutput(`[2m$ dlv test ${packagePath} -- ${args.join(' ')}[0m\r\n`);
+
+			const folder = workspace.getWorkspaceFolder(Uri.file(programDir));
+			const ended = this.awaitSession(config.name);
+			const started = await debug.startDebugging(folder, config);
+			if (!started) {
+				ended.cancel();
+				for (const leaf of group) {
+					run.errored(leaf.item, new TestMessage(
+						'The debug session did not start. Check that dlv is installed, and on macOS that Developer Mode is enabled: sudo DevToolsSecurity -enable',
+					));
+				}
+				continue;
+			}
+			await ended.done;
+			run.appendOutput(
+				'[2mDebug session ended. No verdict is recorded for a debug run — ' +
+				'what a test does under a debugger is whatever you stepped it to.[0m\r\n',
+			);
+		}
+		run.end();
+	}
+
+	/**
+	 * Resolves when the debug session with this name terminates.
+	 *
+	 * `startDebugging` answers a boolean rather than the session, so the session
+	 * is matched by the name this handler just generated. Both listeners are
+	 * disposed on every exit path, including `cancel()` for a session that never
+	 * started — a leaked onDidTerminate listener would end a later run early.
+	 */
+	private awaitSession(name: string): { done: Promise<void>; cancel: () => void } {
+		const disposables: Disposable[] = [];
+		let settle: () => void = () => undefined;
+		const done = new Promise<void>(resolve => {
+			settle = () => {
+				for (const d of disposables) {
+					d.dispose();
+				}
+				resolve();
+			};
+		});
+		let session: DebugSession | undefined;
+		disposables.push(debug.onDidStartDebugSession(s => {
+			if (s.name === name) {
+				session = s;
+			}
+		}));
+		disposables.push(debug.onDidTerminateDebugSession(s => {
+			if (s === session || s.name === name) {
+				settle();
+			}
+		}));
+		return { done, cancel: () => settle() };
 	}
 
 	/**

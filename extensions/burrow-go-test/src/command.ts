@@ -79,6 +79,38 @@ export function buildRunArgs(opts: RunArgsOptions): string[] {
 }
 
 /**
+ * Composes the flags for the COMPILED TEST BINARY, which is what dlv runs under
+ * `mode: "test"` — not the flags for `go test`.
+ *
+ * The two vectors look alike and are not: `go test` takes `-run`, the binary it
+ * builds takes `-test.run`. A test binary given `-run` exits immediately with
+ * "flag provided but not defined: -run" — measured, not assumed — so under dlv
+ * the session starts and vanishes before any breakpoint, which reads to the
+ * user as "the debugger did nothing" rather than as a flag mistake. Hence a
+ * separate function with its own tests, rather than a flag on the other.
+ *
+ * `-test.v` is always present: a debug session shows its output in the debug
+ * console, and a silent one gives no way to tell "not reached yet" from "did not
+ * run".
+ *
+ * @param opts The run description; `packagePath` and `json` are not used here,
+ * because the package is chosen by dlv's `program` and there is no JSON stream.
+ * @returns The `args` array for a `go` debug configuration.
+ */
+export function buildTestBinaryArgs(opts: Pick<RunArgsOptions, 'kind' | 'names'>): string[] {
+	const names = opts.names ?? [];
+	if (opts.kind === 'benchmark') {
+		return [
+			'-test.run', '^$',
+			'-test.bench', names.length ? selectorRegex(names) : '.',
+			'-test.benchmem',
+			'-test.v',
+		];
+	}
+	return names.length ? ['-test.run', selectorRegex(names), '-test.v'] : ['-test.v'];
+}
+
+/**
  * Composes `go test -list <pattern> <pkg>` argv for name discovery.
  *
  * @param packagePath The package spec, e.g. `./internal/ingest`.

@@ -10,7 +10,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { buildRunArgs, buildListArgs, selectorRegex } = require('../out/command');
+const { buildRunArgs, buildListArgs, buildTestBinaryArgs, selectorRegex } = require('../out/command');
 
 const cases = {
 	'selectorRegex anchors an exact-match alternation': () => {
@@ -46,6 +46,42 @@ const cases = {
 	},
 	'buildListArgs targets a package with a default pattern': () => {
 		assert.deepStrictEqual(buildListArgs('./internal/ingest'), ['test', '-list', '.*', './internal/ingest']);
+	},
+
+	// -- the compiled test binary's flags, which are NOT `go test`'s -----------
+	'the test binary selects with -test.run, not -run': () => {
+		const args = buildTestBinaryArgs({ kind: 'test', names: ['TestIngest'] });
+		assert.deepStrictEqual(args, ['-test.run', '^(TestIngest)$', '-test.v']);
+		// The bug this exists to prevent: a test binary given `-run` exits with
+		// "flag provided but not defined: -run", so under dlv the session starts
+		// and vanishes before any breakpoint — which reads as a broken debugger
+		// rather than as a wrong flag.
+		assert.ok(!args.includes('-run'), '-run is go test\'s flag; the test binary refuses it');
+	},
+
+	'a benchmark neutralises -test.run and selects with -test.bench': () => {
+		assert.deepStrictEqual(
+			buildTestBinaryArgs({ kind: 'benchmark', names: ['BenchmarkIngest'] }),
+			['-test.run', '^$', '-test.bench', '^(BenchmarkIngest)$', '-test.benchmem', '-test.v'],
+		);
+	},
+
+	'a whole-package debug run still asks for verbose output': () => {
+		// Without -test.v a debug session's console is empty, and "not reached
+		// yet" looks exactly like "did not run".
+		assert.deepStrictEqual(buildTestBinaryArgs({ kind: 'test' }), ['-test.v']);
+		assert.deepStrictEqual(
+			buildTestBinaryArgs({ kind: 'benchmark' }),
+			['-test.run', '^$', '-test.bench', '.', '-test.benchmem', '-test.v'],
+		);
+	},
+
+	'the two argv builders never produce each other\'s flags': () => {
+		const goTest = buildRunArgs({ packagePath: './pkg', kind: 'test', names: ['TestA'] });
+		const binary = buildTestBinaryArgs({ kind: 'test', names: ['TestA'] });
+		assert.ok(goTest.includes('-run') && !goTest.some(a => a.startsWith('-test.')));
+		assert.ok(binary.includes('-test.run') && !binary.includes('-run'));
+		assert.ok(!binary.includes('./pkg'), 'the package is chosen by dlv\'s program, not by an argument');
 	},
 };
 
