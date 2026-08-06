@@ -30,16 +30,30 @@ import {
 	window,
 	workspace,
 } from 'vscode';
+import { AdapterCapabilities } from './capabilities';
 
 interface BreakpointItem extends QuickPickItem {
 	readonly bp: Breakpoint;
 }
 
+const EDIT = { iconPath: new ThemeIcon('edit'), tooltip: 'Condition, hit count, log message' };
 const TOGGLE = { iconPath: new ThemeIcon('circle-slash'), tooltip: 'Enable / disable' };
 const REMOVE = { iconPath: new ThemeIcon('trash'), tooltip: 'Remove' };
+const ADD_FUNCTION = { iconPath: new ThemeIcon('symbol-function'), tooltip: 'Break on a function by name' };
+const CLEAR_ALL = { iconPath: new ThemeIcon('clear-all'), tooltip: 'Remove all breakpoints' };
+
+/**
+ * What the adapter said it can do. Set by the caller from the debug tracker, so
+ * the edit sheet greys a field with a measured reason instead of offering one
+ * the adapter will drop in silence.
+ */
+let capabilities = new AdapterCapabilities();
 
 /** Register the command; returns the disposable for the caller to track. */
-export function registerBreakpointsCommand() {
+export function registerBreakpointsCommand(observed?: AdapterCapabilities) {
+	if (observed) {
+		capabilities = observed;
+	}
 	return commands.registerCommand('burrow.breakpoints.manage', manageBreakpoints);
 }
 
@@ -54,11 +68,9 @@ async function manageBreakpoints(): Promise<void> {
 	const populate = () => {
 		const items = debug.breakpoints.map(toItem).sort(byLocation);
 		pick.items = items;
-		pick.buttons = items.length
-			? [{ iconPath: new ThemeIcon('clear-all'), tooltip: 'Remove all breakpoints' }]
-			: [];
+		pick.buttons = items.length ? [ADD_FUNCTION, CLEAR_ALL] : [ADD_FUNCTION];
 		if (items.length === 0) {
-			pick.placeholder = 'No breakpoints set.';
+			pick.placeholder = 'No breakpoints set. Use the ƒ button to break on a function by name.';
 		}
 	};
 	populate();
@@ -70,12 +82,20 @@ async function manageBreakpoints(): Promise<void> {
 			toggleEnabled(e.item.bp);
 		} else if (e.button === REMOVE) {
 			debug.removeBreakpoints([e.item.bp]);
+		} else if (e.button === EDIT) {
+			// The sheet takes over the screen, so this picker steps aside and comes
+			// back — two stacked QuickPicks lose keyboard focus to each other.
+			pick.hide();
+			void editBreakpoint(e.item.bp).then(() => manageBreakpoints());
 		}
 		// onDidChangeBreakpoints repopulates; no manual refresh needed.
 	});
 
-	pick.onDidTriggerButton(() => {
-		if (debug.breakpoints.length) {
+	pick.onDidTriggerButton(button => {
+		if (button === ADD_FUNCTION) {
+			pick.hide();
+			void addFunctionBreakpoint().then(() => manageBreakpoints());
+		} else if (button === CLEAR_ALL && debug.breakpoints.length) {
 			debug.removeBreakpoints(debug.breakpoints);
 		}
 	});
@@ -96,18 +116,152 @@ async function manageBreakpoints(): Promise<void> {
 	pick.show();
 }
 
-/** Flip a breakpoint's enabled flag. `enabled` is readonly, so replace in place. */
-function toggleEnabled(bp: Breakpoint): void {
+/** One editable field of a breakpoint, as a row in the edit sheet. */
+interface FieldItem extends QuickPickItem {
+	readonly field: 'condition' | 'hitCondition' | 'logMessage';
+}
+
+const FIELD_PROMPT: Record<FieldItem['field'], { label: string; prompt: string; placeholder: string }> = {
+	condition: {
+		label: '$(symbol-boolean) Condition',
+		prompt: 'Break only when this Go expression is true. Empty clears it.',
+		placeholder: 'i > 10 && err != nil',
+	},
+	hitCondition: {
+		label: '$(symbol-numeric) Hit count',
+		prompt: 'Break only after this many hits. Empty clears it.',
+		placeholder: '5',
+	},
+	logMessage: {
+		label: '$(output) Log message',
+		prompt: 'Log this instead of breaking. {expressions} are interpolated. Empty clears it.',
+		placeholder: 'reached with n={n}',
+	},
+};
+
+/**
+ * The edit sheet: condition, hit count and log message for one breakpoint.
+ *
+ * This is what patch 0009 left without a door. Retiring the stock Breakpoints
+ * pane moved management into this popover, but the popover could only reveal,
+ * toggle and remove — so the three fields it *displayed* could not be set from
+ * anywhere in Burrow at all.
+ *
+ * A field the adapter cannot drive is listed and disabled with the reason on the
+ * row, never hidden and never silently accepted: the workbench takes an
+ * unsupported hit count without complaint and the adapter drops it, which is the
+ * worst of both.
+ */
+async function editBreakpoint(bp: Breakpoint): Promise<void> {
+	const rows: FieldItem[] = (['condition', 'hitCondition', 'logMessage'] as const).map(field => {
+		const { label } = FIELD_PROMPT[field];
+		const current = bp[field];
+		const support = capabilities.support(field);
+		return {
+			field,
+			label,
+			description: current || undefined,
+			detail: support.supported
+				? (support.reason ? `— ${support.reason}` : undefined)
+				: `$(circle-slash) ${support.reason}`,
+		};
+	});
+
+	const chosen = await window.showQuickPick(rows, {
+		title: describe(bp),
+		placeHolder: 'Which field?',
+	});
+	if (!chosen) {
+		return;
+	}
+
+	const support = capabilities.support(chosen.field);
+	if (!support.supported) {
+		void window.showInformationMessage(
+			`${support.reason}. The field is left alone rather than set to something that would be dropped.`,
+		);
+		return;
+	}
+
+	const { prompt, placeholder } = FIELD_PROMPT[chosen.field];
+	const value = await window.showInputBox({
+		title: describe(bp),
+		prompt,
+		placeHolder: placeholder,
+		value: bp[chosen.field] ?? '',
+	});
+	if (value === undefined) {
+		return; // dismissed; an empty string is a deliberate clear
+	}
+	replace(bp, { [chosen.field]: value.trim() || undefined });
+}
+
+/**
+ * Adds a breakpoint on a function by name — `main.run`, `(*Server).Handle`.
+ *
+ * Specified in 04-delve-debugging-engine.md as "function-by-symbol" and never
+ * built. Delve advertises `supportsFunctionBreakpoints`, so this is a name and
+ * a request; the value is stopping in a function you have not opened, which is
+ * the whole point of not having to find the file first.
+ */
+async function addFunctionBreakpoint(): Promise<void> {
+	const support = capabilities.support('functionBreakpoint');
+	if (!support.supported) {
+		void window.showInformationMessage(`${support.reason}.`);
+		return;
+	}
+	const name = await window.showInputBox({
+		title: 'Break on function',
+		prompt: 'A Go function name as Delve spells it — package-qualified, methods on the receiver type.',
+		placeHolder: 'main.run  ·  (*Server).Handle  ·  net/http.ListenAndServe',
+	});
+	const trimmed = name?.trim();
+	if (!trimmed) {
+		return;
+	}
+	debug.addBreakpoints([new FunctionBreakpoint(trimmed)]);
+}
+
+/** A one-line name for a breakpoint, for a sheet title. */
+function describe(bp: Breakpoint): string {
+	if (bp instanceof SourceBreakpoint) {
+		return `${labelFor(bp.location.uri)}:${bp.location.range.start.line + 1}`;
+	}
+	if (bp instanceof FunctionBreakpoint) {
+		return bp.functionName;
+	}
+	return 'Breakpoint';
+}
+
+/**
+ * Replaces a breakpoint with a copy carrying `changes`.
+ *
+ * Every field on a Breakpoint is readonly, so there is no in-place edit: the old
+ * one is removed and a new one added. Everything not named in `changes` is
+ * carried across, which is why this takes a patch rather than a whole
+ * breakpoint — a field dropped here reads to the user as the debugger forgetting
+ * their condition.
+ */
+function replace(bp: Breakpoint, changes: Partial<Pick<Breakpoint, 'condition' | 'hitCondition' | 'logMessage'>> & { enabled?: boolean }): void {
+	const enabled = changes.enabled ?? bp.enabled;
+	const condition = 'condition' in changes ? changes.condition : bp.condition;
+	const hitCondition = 'hitCondition' in changes ? changes.hitCondition : bp.hitCondition;
+	const logMessage = 'logMessage' in changes ? changes.logMessage : bp.logMessage;
+
 	const replacement = bp instanceof SourceBreakpoint
-		? new SourceBreakpoint(bp.location, !bp.enabled, bp.condition, bp.hitCondition, bp.logMessage)
+		? new SourceBreakpoint(bp.location, enabled, condition, hitCondition, logMessage)
 		: bp instanceof FunctionBreakpoint
-			? new FunctionBreakpoint(bp.functionName, !bp.enabled, bp.condition, bp.hitCondition, bp.logMessage)
+			? new FunctionBreakpoint(bp.functionName, enabled, condition, hitCondition, logMessage)
 			: undefined;
 	if (replacement) {
-		// Remove-then-add so the new one keeps everything but the enabled flag.
 		debug.removeBreakpoints([bp]);
 		debug.addBreakpoints([replacement]);
 	}
+}
+
+/** Flip a breakpoint's enabled flag, keeping everything else. */
+function toggleEnabled(bp: Breakpoint): void {
+	replace(bp, { enabled: !bp.enabled });
 }
 
 function toItem(bp: Breakpoint): BreakpointItem {
@@ -123,7 +277,7 @@ function toItem(bp: Breakpoint): BreakpointItem {
 		bp.logMessage && `log "${bp.logMessage}"`,
 		!enabled && 'disabled',
 	].filter(Boolean).join(' · ');
-	return { label, description: conditions || undefined, bp, buttons: [TOGGLE, REMOVE] };
+	return { label, description: conditions || undefined, bp, buttons: [EDIT, TOGGLE, REMOVE] };
 }
 
 /** A workspace-relative path when we can, the basename otherwise. */

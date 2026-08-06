@@ -20,6 +20,7 @@ import { MillerInspectorProvider } from './miller';
 import { WatchProvider } from './watch';
 import { FramesProvider } from './frames';
 import { registerBreakpointsCommand } from './breakpoints';
+import { AdapterCapabilities, adapterNameFrom } from './capabilities';
 
 // burrow-go-inspect — the IX inspector (architecture task 05). The slices:
 //   WO-3  path-addressed DAP value model + per-Go-type summary renderer (model.ts, summary.ts)
@@ -52,10 +53,28 @@ export function activate(context: ExtensionContext): void {
 		void commands.executeCommand(`${WatchProvider.viewId}.focus`);
 	};
 
+	// What the adapter says it can do, read off its own `initialize` response as it
+	// goes past. The breakpoint sheet uses it to grey a field with a reason rather
+	// than offer one Delve will accept and drop — see capabilities.ts.
+	const capabilities = new AdapterCapabilities();
+
 	const trackerFactory: DebugAdapterTrackerFactory = {
 		createDebugAdapterTracker(session: DebugSession): ProviderResult<DebugAdapterTracker> {
 			return {
 				onDidSendMessage(message): void {
+					const response = message as { type?: string; command?: string; body?: unknown };
+					if (response.type === 'response' && response.command === 'initialize') {
+						capabilities.record(response.body);
+					}
+					// Delve announces its version in an early output event, which is the
+					// only place it appears; used to name the adapter in a reason string.
+					const output = message as { type?: string; event?: string; body?: { output?: string } };
+					if (output.type === 'event' && output.event === 'output') {
+						const name = adapterNameFrom(output.body?.output);
+						if (name) {
+							capabilities.nameAdapter(name);
+						}
+					}
 					// A `stopped` event is a new inspection point: roll the model's change-diff
 					// snapshot (via onStopped) and refresh both views. The model is looked up
 					// per-message — the tracker can be created before onDidStartDebugSession
@@ -78,7 +97,7 @@ export function activate(context: ExtensionContext): void {
 		miller,
 		watch,
 		frames,
-		registerBreakpointsCommand(),
+		registerBreakpointsCommand(capabilities),
 		window.registerWebviewViewProvider(FramesProvider.viewId, frames),
 		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
 		window.registerWebviewViewProvider(WatchProvider.viewId, watch),
