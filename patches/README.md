@@ -69,6 +69,13 @@ Each patch is `NNNN-short-slug.md`:
 | [0011](0011-native-title-bar-default.md) | Default window.titleBarStyle to native (chrome removal) | — (WO-01) | workbench/electron-browser/desktop.contribution.ts | 1 line | active |
 | [0012](0012-workspace-trust-off-by-default.md) | Workspace Trust off by default (single-project IDE) | — (WO-19) | workbench/contrib/workspace/browser/workspace.contribution.ts | 1 line | active |
 | [0013](0013-rail-order-and-testing-location.md) | Declared rail order; Testing to the panel; Extensions after the seven | — (WO-28) | api/browser/viewsExtensionPoint.ts, testing.contribution.ts, extensions.contribution.ts | ~12 lines | active |
+| [0016](0016-floating-window-surfaces.md) | Floating-window support for Burrow surfaces (`moveEditorToMainWindow`) | — | editorCommands.ts, editorActions.ts, editor.contribution.ts, extHost.protocol.ts, mainThreadEditorTabs.ts, extHostEditorTabs.ts, vscode.d.ts | ~55 lines | active |
+| [0017](0017-burrow-chat-control-chips.md) | Extension-published control chips for the local chat input | chat | burrowControlsChips.ts (new), chatInputPart.ts | ~250 lines | active |
+| [0018](0018-package-into-build-dir.md) | Package the app into `.build/packaged/` instead of beside the repo | — | gulpfile.vscode.ts | 4 lines | active |
+
+The table above is missing rows for 0006–0009, 0014 and 0015, which exist on
+disk. `check-ledger.js` matches prose in any `NNNN-*.md`, not this table, so the
+gate never noticed; the table is the human index and is stale.
 
 Task 02 (strip to Go-only) deletes 64 built-in extension dirs (layer 2, no
 ledger entry each) and drops the js-debug `builtInExtensions` from `product.json`

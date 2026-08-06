@@ -235,7 +235,7 @@ function computeChecksum(filename: string): string {
 }
 
 function packageTask(platform: string, arch: string, sourceFolderName: string, destinationFolderName: string, _opts?: { stats?: boolean }) {
-	const destination = path.join(path.dirname(root), destinationFolderName);
+	const destination = path.join(buildRoot, destinationFolderName);
 	platform = platform || process.platform;
 
 	const task = () => {
@@ -564,7 +564,7 @@ async function stripAuthenticodeSignature(filePath: string): Promise<void> {
 }
 
 function patchWin32DependenciesTask(destinationFolderName: string) {
-	const cwd = path.join(path.dirname(root), destinationFolderName);
+	const cwd = path.join(buildRoot, destinationFolderName);
 
 	return async () => {
 		const versionedResourcesFolder = util.getVersionedResourcesFolder('win32', commit!);
@@ -603,7 +603,7 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 }
 
 function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinationFolderName: string) {
-	const outputDir = path.join(path.dirname(root), destinationFolderName);
+	const outputDir = path.join(buildRoot, destinationFolderName);
 
 	return async () => {
 		// On Windows with win32VersionedUpdate, app resources live under a
@@ -625,7 +625,20 @@ function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinati
 	};
 }
 
-const buildRoot = path.dirname(root);
+// BURROW: package INSIDE the repo, not beside it.
+//
+// Upstream writes `VSCode-<platform>-<arch>` to `path.dirname(root)`, which
+// assumes the checkout sits in a throwaway build directory — on CI it does.
+// On a developer's machine it means a ~1 GB app appears next to the repo,
+// outside every .gitignore because it is outside every repo. `.build/` is
+// already ignored, so putting it there makes the artefact both contained and
+// permanently invisible to git.
+//
+// CI is unaffected: the pipelines address the app through
+// $(agent.builddirectory) and the artifact-staging paths, never through this
+// constant. build/gulpfile.vscode.linux.ts keeps its own `../VSCode-linux-*`
+// literals — a different file, and not a path anything on this fork builds.
+const buildRoot = path.join(root, '.build', 'packaged');
 
 const BUILD_TARGETS = [
 	{ platform: 'win32', arch: 'x64' },
