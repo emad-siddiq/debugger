@@ -18,6 +18,8 @@ import {
 } from 'vscode';
 import { DocViewer } from './viewer';
 import { parseDocTarget } from './godoc';
+import { GoplsWebPage, GoplsWebPanel } from './webPanel';
+import { registerBrowseCommand } from './browse';
 
 // burrow-go-docs — offline Go docs + hover → fullscreen viewer (architecture
 // task 07). This FIRST SLICE ships the core deliverable: the `burrow.goDocs.open`
@@ -42,8 +44,18 @@ const IDENTIFIER = /[A-Za-z_][A-Za-z0-9_./]*/;
  */
 export function activate(context: ExtensionContext): void {
 	const viewer = new DocViewer();
+	// gopls' own web views (webPanel.ts) sit beside the offline reader rather than
+	// replacing it: this one is prettier and cross-linked, that one works with no
+	// server running and renders in Burrow's own type. Neither subsumes the other.
+	const web = new GoplsWebPanel();
 	context.subscriptions.push(
 		viewer,
+		web,
+		// Called by burrow-go-base when gopls asks the editor to open one of its
+		// pages. Not in the palette — its argument is a parsed page object, so a
+		// reader invoking it by hand has nothing useful to pass.
+		commands.registerCommand('burrow.goDocs.openWeb', (page: GoplsWebPage) => web.show(page)),
+		registerBrowseCommand(),
 		// NO `claimSurface` here, and the claim it used to make was `files`.
 		//
 		// The claim predates patch 0014. Its job — tidy this tab when another tool

@@ -1,7 +1,7 @@
 {
 	"name": "burrow-go-docs",
 	"displayName": "Burrow Go Docs",
-	"description": "Offline Go documentation for Burrow (architecture task 07): a command + hover affordance that shells the workspace Go toolchain (go doc <pkg>/<pkg>.<sym>) and renders version-true docs in a maximized, Esc/\u2715-dismissable fullscreen webview viewer.",
+	"description": "Offline Go documentation for Burrow (architecture task 07): a command + hover affordance that shells the workspace Go toolchain (go doc <pkg>/<pkg>.<sym>) and renders version-true docs in a maximized, Esc/✕-dismissable fullscreen webview viewer.",
 	"version": "0.1.0",
 	"publisher": "burrow",
 	"license": "MIT",
@@ -14,6 +14,8 @@
 	"activationEvents": [
 		"onLanguage:go",
 		"onCommand:burrow.goDocs.open",
+		"onCommand:burrow.goDocs.browse",
+		"onCommand:burrow.goDocs.openWeb",
 		"onWebviewPanel:burrowGoDocs"
 	],
 	"main": "./out/extension.js",
@@ -26,15 +28,26 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-go-docs",
 		"watch": "gulp watch-extension:burrow-go-docs",
-		"test": "node test/godoc.test.js && node test/runner.test.js"
+		"test": "node test/godoc.test.js && node test/runner.test.js && node test/webActions.test.js"
 	},
 	"contributes": {
 		"commands": [
 			{
 				"command": "burrow.goDocs.open",
-				"title": "Open Go Docs\u2026",
+				"title": "Open Go Docs…",
 				"category": "Burrow",
 				"icon": "$(book)"
+			},
+			{
+				"command": "burrow.goDocs.browse",
+				"title": "Browse Documentation, Assembly or Free Symbols…",
+				"category": "Burrow",
+				"icon": "$(globe)"
+			},
+			{
+				"command": "burrow.goDocs.openWeb",
+				"title": "Show a gopls Web Page",
+				"category": "Burrow"
 			}
 		],
 		"keybindings": [
@@ -43,6 +56,12 @@
 				"key": "shift+ctrl+0",
 				"mac": "shift+cmd+0",
 				"when": "editorLangId == go"
+			},
+			{
+				"command": "burrow.goDocs.browse",
+				"key": "shift+f1",
+				"mac": "shift+f1",
+				"when": "editorTextFocus && editorLangId == go"
 			}
 		],
 		"menus": {
@@ -51,11 +70,23 @@
 					"command": "burrow.goDocs.open",
 					"group": "navigation@99",
 					"when": "editorLangId == go"
+				},
+				{
+					"command": "burrow.goDocs.browse",
+					"group": "navigation@98",
+					"when": "editorLangId == go"
 				}
 			],
 			"commandPalette": [
 				{
 					"command": "burrow.goDocs.open"
+				},
+				{
+					"command": "burrow.goDocs.browse"
+				},
+				{
+					"command": "burrow.goDocs.openWeb",
+					"when": "false"
 				}
 			]
 		},
