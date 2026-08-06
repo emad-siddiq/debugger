@@ -41,15 +41,24 @@
 // ▸ nothing. The top-bar CHIP names the winner (live / sample:<name> /
 // SAMPLE_PROPS / synth / empty) so a synthesized "Example Title" is never
 // mistaken for what prod shows.
-// Where a component mounts is data too: a `sampleRoute` export (module or
-// samples file) or a per-sample `$route` feeds the MemoryRouter's
-// initialEntries, so a route-dependent component (useParams) renders.
+// Where a component mounts is data too: a `route` on the isolate URL, a
+// `sampleRoute` export (module or samples file), or a per-sample `$route` says
+// where, so a route-dependent component (useParams) renders its real branch
+// instead of its not-found one.
+// TWO ways of getting there, because there are two kinds of target. With no
+// providers shell the harness owns the Router and simply mounts it at that
+// route. With a shell (the shell owns its own Router — nesting two is worse)
+// the harness cannot choose the initial entry, so `RouteSeed` navigates from
+// INSIDE the shell on mount. Before this the shell path silently ignored every
+// route it was given: merkle declares `sampleRoute = '/node/<id>'` for
+// NodeDashboard and has a shell, so that component mounted at '/' with an
+// empty `useParams()` and rendered its empty branch.
 // Live edits re-render immediately. rawProps stays JSON-safe ('ƒ' markers);
 // materialize() converts per-kind at render time: ƒ→no-op stub (returns null,
 // so it also works as a component type), element strings→<span>, set→Set;
 // $-prefixed keys are metadata and never reach the component.
-// Envelopes up: ready | renderError | samples | props | saveSample | reveal |
-// revealCss | isolate.
+// Envelopes up: ready | renderError | samples | props | route | saveSample |
+// reveal | revealCss | isolate.
 // Commands down: props | sample | reload | schema.
 
 function esc(json) {
@@ -57,8 +66,14 @@ function esc(json) {
 }
 
 export function buildIsolateHtml(cfg) {
-  const routerImport = cfg.router
-    ? "import { MemoryRouter as __BurrowMemoryRouter } from 'react-router-dom'"
+  // Imported whenever the target HAS react-router — not only when the harness
+  // owns the Router. The shell path needs the hooks (RouteSeed) even though it
+  // never constructs a MemoryRouter, and `transformIndexHtml` rewrites this
+  // bare specifier to the same optimized dep the component itself imports, so
+  // the hooks talk to the shell's Router rather than a second copy of the
+  // library that would see no context at all.
+  const routerImport = cfg.routerDep
+    ? "import { MemoryRouter as __BurrowMemoryRouter, Routes as __BurrowRoutes, Route as __BurrowRoute, useNavigate as __burrowUseNavigate, useLocation as __burrowUseLocation } from 'react-router-dom'"
     : ''
   // `isoRoute` is read at RENDER time, not at setup time: the route a component
   // wants (`sampleRoute` / a sample's `$route`) is only known after the module
@@ -66,6 +81,40 @@ export function buildIsolateHtml(cfg) {
   // props change, so a sample that carries a different route re-navigates.
   const routerSetup = cfg.router
     ? "Router = (props) => h(__BurrowMemoryRouter, { initialEntries: [isoRoute] }, props.children)"
+    : ''
+  // The shell path's equivalent, and a no-op on the own-router path (the
+  // MemoryRouter already started at `isoRoute`, so the first location matches
+  // and nothing navigates).
+  //
+  // Children are withheld until the location matches, because rendering once at
+  // '/' is not free: a component that fetches from `useParams()` would fire a
+  // request for `undefined` and paint an error branch before the real route
+  // arrives. But withholding forever is worse than one wrong render — if the
+  // navigation does not land (a shell whose Router cannot navigate, a route the
+  // shell redirects away from) the canvas would just be blank with nothing said.
+  // So the gate gives up after 400 ms and renders anyway.
+  const routeSeedSetup = cfg.routerDep
+    ? `RouteSeed = (props) => {
+      const nav = __burrowUseNavigate()
+      const loc = __burrowUseLocation()
+      const [gaveUp, setGaveUp] = __burrowUseState(false)
+      const want = isoRoute || '/'
+      const at = loc.pathname + loc.search
+      __burrowUseEffect(() => {
+        if (at === want) return
+        try { nav(want, { replace: true }) } catch (e) { setGaveUp(true); return }
+        const t = setTimeout(() => setGaveUp(true), 400)
+        return () => clearTimeout(t)
+      }, [at, want])
+      if (at !== want && !gaveUp) return null
+      // Being AT /node/n1 is not enough: useParams() reads what a matched
+      // <Route path> captured, and a component mounted bare captures nothing.
+      // So when the app declares a pattern this route fits, mount it through
+      // that pattern and the params arrive as they do in the app.
+      const pattern = patternFor(want)
+      if (!pattern) return props.children
+      return h(__BurrowRoutes, null, h(__BurrowRoute, { path: pattern, element: props.children }))
+    }`
     : ''
   return `<!doctype html>
 <html>
@@ -337,7 +386,7 @@ export function buildIsolateHtml(cfg) {
   <aside id="iso-panel" class="hidden"></aside>
 </div>
 <script type="module">
-import { createElement as h, Component } from 'react'
+import { createElement as h, Component, useEffect as __burrowUseEffect, useState as __burrowUseState } from 'react'
 import { createRoot } from 'react-dom/client'
 ${routerImport}
 
@@ -367,8 +416,47 @@ let renderFn = () => {}
 // Where the props on screen came from — rendered as the top-bar chip so a
 // preview never quietly passes synthesized values off as the real thing.
 let provenance = 'empty'
-// The route the component is mounted at (see routerSetup above).
+// The route the component is mounted at (see routerSetup above). The extension
+// shows it on the stage's seam bar, and it has three possible sources it cannot
+// see (a typed route on the URL, an author's sampleRoute, the default), so the
+// harness reports the one that actually won rather than let the bar guess.
 let isoRoute = '/'
+// The <Route path> patterns the app declares, so a concrete route can be
+// mounted through the pattern that captures its params (see RouteSeed).
+const ROUTE_PATTERNS = Array.isArray(CFG.routePatterns) ? CFG.routePatterns : []
+// The pattern this concrete path fits: same shape, every literal segment equal,
+// and among those the most literal one wins (/watch/alerts/node/:id beats
+// /watch/:a/:b/:c for /watch/alerts/node/7). Null when the app declares nothing
+// that fits, in which case the component mounts bare and useParams() is empty —
+// which is exactly what it was before, so nothing regresses.
+function patternFor(concrete) {
+  const want = String(concrete || '/').split('?')[0].split('/').filter(Boolean)
+  let best = null
+  let bestScore = -1
+  for (const pattern of ROUTE_PATTERNS) {
+    const segs = pattern.split('/').filter(Boolean)
+    if (segs.length !== want.length) continue
+    let score = 0
+    let ok = true
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i].charAt(0) === ':' || segs[i] === '*') continue
+      if (segs[i] !== want[i]) { ok = false; break }
+      score++
+    }
+    if (ok && score > bestScore) { best = pattern; bestScore = score }
+  }
+  return best
+}
+
+// The force flag is for the boot report: the extension needs the patterns (its route
+// picker offers them) and the effective route even when nothing changed, and at
+// boot nothing usually has.
+const syncRoute = (force) => {
+  const next = routeOf(rawProps)
+  if (next === isoRoute && !force) return
+  isoRoute = next
+  report('route', { route: isoRoute, pattern: patternFor(isoRoute), patterns: ROUTE_PATTERNS })
+}
 let sampleRoute = null
 // Shallow, so a sample can carry REAL functions (a DataTable column's
 // render, an onSelect) — a JSON round-trip would silently drop them and the
@@ -385,10 +473,50 @@ const jsonSafe = (p) => {
 }
 // A sample's $route says WHERE the component should mount; it is metadata,
 // never a prop.
-const routeOf = (props) => (props && typeof props.$route === 'string') ? props.$route : (sampleRoute || '/')
+// CFG.route outranks both author-declared sources because the extension only
+// ever sets it when a person typed it into the seam bar. An author's
+// sampleRoute is a default; a typed route is an instruction, and it should not
+// be quietly undone by picking a sample. (No backticks in this comment: it is
+// inside the template literal, and one would end the string.)
+const routeOf = (props) =>
+  (typeof CFG.route === 'string' && CFG.route)
+    ? CFG.route
+    : ((props && typeof props.$route === 'string') ? props.$route : (sampleRoute || '/'))
 
 const isFnMarker = (v) => typeof v === 'string' && /^ƒ( |$)/.test(v)
 const stubFor = (name) => (...a) => { try { console.log('[burrow-iso] ' + name, ...a) } catch (e) {} return null }
+// Only containers the skeleton itself could have built are rebuilt. A sample can
+// carry a Date, a Map or a class instance, and rewriting one of those into a
+// plain object is a worse bug than the marker this is here to find.
+// One hop from the prototype root, rather than an identity test against this
+// realm's Object.prototype: a plain object reaches null in one hop wherever it
+// was made, a Date or a class instance takes two.
+const isPlain = (v) => {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const proto = Object.getPrototypeOf(v)
+  return proto === null || Object.getPrototypeOf(proto) === null
+}
+
+// A function marker BELOW the top level, replaced in place.
+//
+// materialize() reads the schema, and the schema only describes props — so a
+// DataTable column's render, or a FilterPopover group's onToggle, arrived as the
+// literal string that stands for a function and the component died the moment it
+// called it. Measured over merkle: 10 such markers in 3 components. Nothing else
+// is converted down here; a nested element marker is indistinguishable from a
+// string the author really wanted, and a string renders as text anyway.
+const deepStub = (v, name, depth) => {
+  if (depth > 6) return v
+  if (isFnMarker(v)) return stubFor(name)
+  if (isPlain(v) && Array.isArray(v.$set) && Object.keys(v).length === 1) return new Set(v.$set)
+  if (Array.isArray(v)) return v.map((x, i) => deepStub(x, name + '[' + i + ']', depth + 1))
+  if (isPlain(v)) {
+    const out = {}
+    for (const k of Object.keys(v)) out[k] = deepStub(v[k], name + '.' + k, depth + 1)
+    return out
+  }
+  return v
+}
 
 // JSON-safe rawProps → runtime props, per schema kind (fallback: markers only).
 const materialize = (p) => {
@@ -402,7 +530,7 @@ const materialize = (p) => {
     else if (isFnMarker(v) || kind === 'function' || kind === 'component') out[k] = stubFor(k)
     else if ((kind === 'element' || k === 'children') && typeof v === 'string') out[k] = h('span', null, v)
     else if (kind === 'set') out[k] = new Set(Array.isArray(v) ? v : [])
-    else out[k] = v
+    else out[k] = deepStub(v, k, 1)
   }
   return out
 }
@@ -993,7 +1121,7 @@ function applyState(index) {
   }
   rawProps = next
   activeState = index
-  isoRoute = routeOf(rawProps)
+  syncRoute()
   buildPanel()
   renderFn()
 }
@@ -1001,7 +1129,7 @@ function applyState(index) {
 function clearState() {
   rawProps = clone(seedProps)
   activeState = null
-  isoRoute = routeOf(rawProps)
+  syncRoute()
   buildPanel()
   renderFn()
 }
@@ -1494,7 +1622,7 @@ function propRow(spec) {
 /** Load a named sample: its props, its route, and the chip that names it. */
 function applySample(name, sample) {
   rawProps = clone(sample)
-  isoRoute = routeOf(rawProps)
+  syncRoute()
   setProvenance('sample:' + name)
   buildPanel()
   renderFn()
@@ -1625,6 +1753,11 @@ function buildPropsTab(body) {
     let Router = (props) => props.children
     ${routerSetup}
 
+    // Inside the Router — whichever Router that turns out to be, this
+    // harness's or the shell's. See routeSeedSetup.
+    let RouteSeed = (props) => props.children
+    ${routeSeedSetup}
+
     let Providers = (props) => props.children
     if (CFG.providers) {
       const pm = await loadOptional(BASE + CFG.providers)
@@ -1671,7 +1804,7 @@ function buildPropsTab(body) {
       rawProps = {}
       provenance = 'empty'
     }
-    isoRoute = routeOf(rawProps)
+    syncRoute(true)
     seedProps = clone(rawProps)
 
     const label = CFG.export || (CFG.module.split('/').pop() || '').replace(/\\.[jt]sx?$/, '')
@@ -1692,7 +1825,7 @@ function buildPropsTab(body) {
 
     const root = createRoot(document.getElementById('burrow-iso-root'))
     renderFn = () => {
-      root.render(h(Boundary, { key: JSON.stringify(jsonSafe(rawProps)) }, h(Router, null, h(Providers, null, h(Comp, materialize(rawProps))))))
+      root.render(h(Boundary, { key: JSON.stringify(jsonSafe(rawProps)) }, h(Router, null, h(Providers, null, h(RouteSeed, null, h(Comp, materialize(rawProps)))))))
       report('props', jsonSafe(rawProps))
     }
     renderFn()
@@ -1701,7 +1834,7 @@ function buildPropsTab(body) {
     window.addEventListener('message', (e) => {
       const d = e.data
       if (!d || d.__burrowIsoCmd !== 1) return
-      if (d.type === 'props') { rawProps = (d.props && typeof d.props === 'object') ? d.props : {}; isoRoute = routeOf(rawProps); setProvenance('live'); buildPanel(); renderFn() }
+      if (d.type === 'props') { rawProps = (d.props && typeof d.props === 'object') ? d.props : {}; syncRoute(); setProvenance('live'); buildPanel(); renderFn() }
       else if (d.type === 'sample') { const s = sampleMap[d.name]; if (s && typeof s === 'object') { applySample(d.name, s) } }
       else if (d.type === 'schema') { if (Array.isArray(d.schema)) { schema = d.schema; buildPanel() } }
       else if (d.type === 'reload') location.reload()

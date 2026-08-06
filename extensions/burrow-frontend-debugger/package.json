@@ -25,6 +25,7 @@
 	},
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-frontend-debugger",
+		"test": "node test/propsSkeleton.test.js",
 		"watch": "gulp watch-extension:burrow-frontend-debugger"
 	},
 	"contributes": {
@@ -94,6 +95,23 @@
 			{
 				"command": "burrow.frontendDebugger.showLogs",
 				"title": "Frontend Debugger: Show Logs",
+				"category": "Burrow"
+			},
+			{
+				"command": "burrow.frontendDebugger.enterStage",
+				"title": "Enter Miniature-Artist Mode",
+				"category": "Burrow",
+				"icon": "$(device-camera)"
+			},
+			{
+				"command": "burrow.frontendDebugger.exitStage",
+				"title": "Leave Miniature-Artist Mode",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
+			},
+			{
+				"command": "burrow.frontendDebugger.toggleStage",
+				"title": "Toggle Miniature-Artist Mode",
 				"category": "Burrow"
 			}
 		],
@@ -167,6 +185,16 @@
 					"command": "burrow.frontendDebugger.showInApp",
 					"when": "activeWebviewPanelId == burrow.frontendIsolation",
 					"group": "navigation@3"
+				},
+				{
+					"command": "burrow.frontendDebugger.enterStage",
+					"when": "activeWebviewPanelId == burrow.frontendIsolation && !burrow.frontendDebugger.stage",
+					"group": "navigation@0"
+				},
+				{
+					"command": "burrow.frontendDebugger.exitStage",
+					"when": "activeWebviewPanelId == burrow.frontendIsolation && burrow.frontendDebugger.stage",
+					"group": "navigation@0"
 				}
 			]
 		},
@@ -273,6 +301,22 @@
 					"type": "boolean",
 					"default": true,
 					"markdownDescription": "Keep the isolation workbench to one component's tabs: open the source and stylesheet as preview tabs (self-replacing; your first edit pins them) and close the previous component's when you isolate another. The source, stylesheet and live canvas are one workbench \u2014 closing any of the three closes the other two. Tabs with unsaved changes and pinned tabs always survive. Set to `false` to leave every isolated component's tabs open.",
+					"tags": [
+						"burrow"
+					]
+				},
+				"burrow.frontendDebugger.sourceSplit": {
+					"type": "string",
+					"enum": [
+						"stacked",
+						"sideBySide"
+					],
+					"enumDescriptions": [
+						"Source above stylesheet, one on top of the other (a horizontal divider between them).",
+						"Source beside stylesheet, in two columns (a vertical divider between them)."
+					],
+					"default": "stacked",
+					"markdownDescription": "How the isolated component's source (`.tsx`) and its colocated stylesheet (`.css`) share the editor half of the isolation workbench. `stacked` (the default) puts the source above the stylesheet; `sideBySide` stands them next to each other as two columns, with the live canvas keeping its half of the window either way. Only applies to components that HAVE a colocated stylesheet. Changing this re-lays out the component currently on the canvas.",
 					"tags": [
 						"burrow"
 					]

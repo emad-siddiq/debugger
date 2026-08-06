@@ -104,6 +104,58 @@ function safeSrcRel(rel) {
   return norm
 }
 
+// The `route` isolate param: an in-app path the harness may hand to the target's
+// own router. One leading slash and nothing that leaves the origin — `//evil.com`
+// and `https://…` are both valid arguments to `navigate()` and both would take
+// the canvas somewhere else entirely. Length-capped for the same reason every
+// other seed here is: a hand-edited URL should only ever give itself a strange
+// canvas, never a stuck one.
+export function safeRoute(raw) {
+  if (!raw || typeof raw !== 'string') return null
+  if (raw.length > 512) return null
+  if (!raw.startsWith('/') || raw.startsWith('//')) return null
+  // Reject whitespace and control bytes, and a backslash: `/\evil.com`
+  // reaches anything that normalises separators as `//evil.com`.
+  if (/[\s\\]/.test(raw) || /[\u0000-\u001f\u007f]/.test(raw)) return null
+  return raw
+}
+
+// Every `<Route path="…">` the target declares, so the harness can mount a
+// component THROUGH the pattern that captures its params — being at /node/n1 is
+// not enough for `useParams()`, which reads what a matched Route captured.
+//
+// Scanned rather than asked of `GET /api/routes`: that endpoint answers with
+// merkle's NAV_DESTINATIONS, which is the nav menu and contains no
+// parameterised route at all — i.e. exactly the ones this exists for. Cached
+// per frontendDir; a router changes far less often than a canvas.
+const routePatternCache = new Map()
+function declaredRoutePatterns(frontendDir) {
+  const hit = routePatternCache.get(frontendDir)
+  if (hit) return hit
+  const found = new Set()
+  const walk = (dir, depth) => {
+    if (depth > 8) return
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'dist') walk(path.join(dir, e.name), depth + 1)
+      } else if (e.name.endsWith('.tsx') || e.name.endsWith('.jsx')) {
+        let text
+        try { text = fs.readFileSync(path.join(dir, e.name), 'utf8') } catch { continue }
+        if (!text.includes('path=')) continue
+        for (const m of text.matchAll(/<Route[^>]*\spath="([^"]+)"/g)) {
+          if (m[1].startsWith('/')) found.add(m[1])
+        }
+      }
+    }
+  }
+  walk(path.join(frontendDir, 'src'), 0)
+  const list = [...found].sort()
+  routePatternCache.set(frontendDir, list)
+  return list
+}
+
 // The first project stylesheet / providers module that exists, as a src-rel
 // path the harness can `import(BASE + rel)`. Returns null when none is present.
 function firstExisting(frontendDir, candidates) {
@@ -254,6 +306,16 @@ export function inspectorPlugin({
           // Emit the harness's own MemoryRouter only for a router app with no
           // providers shell — a shell owns its Router (avoid nesting two).
           router: !providers && targetHasDep(frontendDir, 'react-router-dom'),
+          // Whether react-router is available AT ALL. The shell path owns the
+          // Router but still needs the hooks, so that it can navigate to the
+          // requested route from inside the shell (harness RouteSeed).
+          routerDep: targetHasDep(frontendDir, 'react-router-dom'),
+          // Where to mount the component. Only a same-origin path is accepted:
+          // this string is handed to the app's own router, and an absolute URL
+          // or a `//host` would be a navigation out of the harness.
+          route: safeRoute(q.get('route')),
+          // …and the patterns to mount it through.
+          routePatterns: targetHasDep(frontendDir, 'react-router-dom') ? declaredRoutePatterns(frontendDir) : [],
           // Colocated `<Component>.samples.*` (Framer-mode T4): named prop-sets
           // the native picker applies, and — with no seeded props — the first
           // one is the default render.

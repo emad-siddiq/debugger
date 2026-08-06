@@ -10,6 +10,18 @@ import * as vscode from 'vscode';
 // the target Vite in-process, hence the long timeout). Runtime flips are
 // ephemeral by design — the durable boot default is the
 // burrow.frontendDebugger.mode setting.
+//
+// This class is also the ONE place that knows the mode. The stage's seam bar
+// shows it too, and rather than give the seam its own poller against the same
+// endpoint — two clocks that disagree for up to ten seconds — this one
+// announces every answer it gets through `onMode`.
+
+/** What the target's data mode is right now. `flipping` is its own value rather
+ *  than a gap because the flip restarts Vite and can take tens of seconds —
+ *  long enough that "unknown" would read as a fault. `null` means the sidecar
+ *  did not answer. */
+export type DataMode = 'mock' | 'live' | 'flipping' | null;
+export type ModeListener = (mode: DataMode) => void;
 
 export class ModeStatus implements vscode.Disposable {
 
@@ -17,10 +29,37 @@ export class ModeStatus implements vscode.Disposable {
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private uiPort = 0;
 	private flipping = false;
+	private readonly listeners: ModeListener[] = [];
 
 	constructor() {
 		this.item.command = 'burrow.frontendDebugger.toggleMode';
 		this.item.tooltip = 'Frontend Debugger target data mode — click to flip mock ↔ live';
+	}
+
+	/** Be told the target's data mode on every poll and every flip. Fires with
+	 *  the CURRENT value immediately, so a late subscriber (the seam bar, which
+	 *  only exists once someone enters stage mode) is never blank waiting for
+	 *  the next tick. */
+	onMode(listener: ModeListener): vscode.Disposable {
+		this.listeners.push(listener);
+		listener(this.last);
+		return new vscode.Disposable(() => {
+			const i = this.listeners.indexOf(listener);
+			if (i >= 0) { this.listeners.splice(i, 1); }
+		});
+	}
+
+	private last: DataMode = null;
+
+	private announce(mode: DataMode): void {
+		this.last = mode;
+		for (const l of this.listeners) {
+			try {
+				l(mode);
+			} catch {
+				// a listener that throws must not stop the pill from painting
+			}
+		}
 	}
 
 	show(uiPort: number): void {
@@ -36,6 +75,10 @@ export class ModeStatus implements vscode.Disposable {
 		clearInterval(this.timer);
 		this.timer = undefined;
 		this.item.hide();
+		// The sidecar is gone, so the mode is not "mock" — it is unknown. Saying
+		// so lets the seam bar drop to `data: ?` instead of showing the last
+		// value it heard as if it were still true.
+		this.announce(null);
 	}
 
 	dispose(): void {
@@ -55,6 +98,7 @@ export class ModeStatus implements vscode.Disposable {
 		const next = mode === 'live' ? 'mock' : 'live';
 		this.flipping = true;
 		this.item.text = '$(sync~spin) FE: flipping…';
+		this.announce('flipping');
 		try {
 			const res = await fetch(`http://127.0.0.1:${this.uiPort}/api/mode`, {
 				method: 'POST',
@@ -85,9 +129,10 @@ export class ModeStatus implements vscode.Disposable {
 		}
 		const mode = await this.mode();
 		this.item.text = `$(beaker) FE: ${mode ? mode.toUpperCase() : '—'}`;
+		this.announce(mode);
 	}
 
-	private async mode(): Promise<string | null> {
+	private async mode(): Promise<'mock' | 'live' | null> {
 		if (!this.uiPort) {
 			return null;
 		}
@@ -97,7 +142,7 @@ export class ModeStatus implements vscode.Disposable {
 				return null;
 			}
 			const body = (await res.json()) as { mode?: string };
-			return body.mode ?? null;
+			return body.mode === 'live' || body.mode === 'mock' ? body.mode : null;
 		} catch {
 			return null;
 		}

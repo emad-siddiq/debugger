@@ -5,6 +5,7 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { stageActive } from './stage';
 
 // The panel iframes the sidecar SPA by its full loopback origin (never
 // asExternalUri — a code-server-era rewrite that targets the wrong host). The
@@ -66,7 +67,14 @@ export function openPanel(context: vscode.ExtensionContext, uiPort: number, dir:
 	panel.webview.html = buildHtml(uiPort);
 	// Option A (recon §8): the whole-app panel reads as "just another tab" at
 	// default size — fill the window on open unless the user opts out.
-	if (vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('openMaximized', true)) {
+	//
+	// Never in miniature-artist mode. That mode's whole content is an arrangement
+	// of the workbench around one component, and maximizing a group collapses the
+	// other two to zero width — measured 2026-08-06: reaching the app through the
+	// stage's seam left `0x0[Preview]  0x0[Badge.css]  792x878[Badge.tsx,Frontend
+	// Debugger]`. On the stage the app opens as a sibling tab of the canvas, so
+	// isolation and composition are one tab-flip apart and the frame survives.
+	if (!stageActive() && vscode.workspace.getConfiguration('burrow.frontendDebugger').get<boolean>('openMaximized', true)) {
 		void setEditorFullScreen(true);
 	}
 	adopt(context, panel);

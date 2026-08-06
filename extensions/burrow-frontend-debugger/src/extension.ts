@@ -6,11 +6,12 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveConfig } from './config';
-import { openPanel, refreshPanel, postToApp, registerAppPanel, setIsolationHandler, setRouteChoicesHandler } from './panel';
-import { openIsolation, IsolateArgs, registerIsolationPanel, registerIsolationTabs, reloadPreview, saveSample, currentIsolation, currentIsolationFile } from './isolation';
+import { APP_PANEL_VIEW_TYPE, openPanel, refreshPanel, postToApp, registerAppPanel, setIsolationHandler, setRouteChoicesHandler } from './panel';
+import { ISOLATION_VIEW_TYPE, openIsolation, IsolateArgs, registerIsolationPanel, registerIsolationTabs, reloadPreview, saveSample, currentIsolation, currentIsolationFile, closeIsolation, setSeamDataMode } from './isolation';
 import { ComponentsProvider } from './gallery';
+import { refreshStagePill, registerStage } from './stage';
 import { Sidecar, sidecarPhase } from './sidecar';
-import { announceOnVisible, claimSurface } from './toolSurface';
+import { announceOnVisible, claimSurface, detachable } from './toolSurface';
 import { ModeStatus } from './status';
 import { RevealBridge, RevealPayload } from './bridge';
 import { runOpenInBrowser, maybeSeedRunCommand } from './launch';
@@ -42,6 +43,10 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 	sidecar = new Sidecar();
 	const status = new ModeStatus();
 	context.subscriptions.push(sidecar, status);
+
+	// The stage's seam bar shows the same mock/live fact as the pill. One poller,
+	// two surfaces — see status.ts.
+	context.subscriptions.push(status.onMode((mode) => setSeamDataMode(mode)));
 
 	// Component gallery (T5): a native sidebar tree of the target's components,
 	// grouped by folder; clicking one isolates it. srcRoot follows config, so it
@@ -78,6 +83,12 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		// closed by closing it, which isolation.ts handles.
 		announceOnVisible('components', componentsView),
 		claimSurface('components', { viewType: 'burrow.frontendDebugger' }),
+		// Pop out / dock (patches/0016). The app panel goes to a second monitor
+		// happily. The isolation preview is registered too, but note it is one
+		// member of the trio above: closing the floating window closes the two
+		// editors that came with it, exactly as closing the tab in place does.
+		detachable(APP_PANEL_VIEW_TYPE),
+		detachable(ISOLATION_VIEW_TYPE),
 		registerIsolationTabs(),
 		// Panel persistence (WO-60). Both Components surfaces come back with the
 		// rail, a reload and a relaunch — and neither wakes the dev server on the
@@ -184,7 +195,15 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 	const isolate = async (source?: IsolateArgs | vscode.Uri): Promise<void> => {
 		const cfg = resolveConfig(context);
 		try {
-			await sidecar!.start(cfg);
+			// `status.show` starts the mock/live poll, and every OTHER path that
+			// starts the sidecar already calls it. Isolating did not, so the pill
+			// was absent — and with it the one thing that knows the target's data
+			// mode — on the entire isolate/stage route, which is the route the
+			// stage is made of. Measured 2026-08-06: after Isolate Component the
+			// status bar had no `FE:` item, so the seam bar could only ever read
+			// `data: ?`. The sidecar is running either way; this is the pill
+			// catching up with it.
+			status.show(await sidecar!.start(cfg));
 		} catch (err) {
 			sidecar!.out.show(true);
 			void vscode.window.showErrorMessage(`Frontend Debugger: ${err instanceof Error ? err.message : String(err)}`);
@@ -207,8 +226,41 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 		// targetBase comes from the sidecar, not settings — an attached sidecar may
 		// serve the target under a different base than this window's config.
 		await openIsolation(context, { targetOrigin, targetBase: sidecar!.targetBase, targetDir: cfg.targetDir, uiPort: sidecar!.uiPort }, args);
+		// The stage pill names the component on the canvas; there is no workbench
+		// event for "the canvas changed", so the isolate path says so itself.
+		refreshStagePill();
 	};
 	setIsolationHandler((a) => void isolate(a));
+
+	// Miniature-artist mode. Entering transposes the isolation trio so the canvas
+	// leads and stacks the source over its stylesheet on the right; leaving puts
+	// the editor grid back exactly as `vscode.getEditorLayout` found it.
+	//
+	// The rearrange closes the trio and re-isolates rather than moving the three
+	// surfaces between columns — see `closeIsolation` for why moving them in
+	// place destroys the canvas.
+	const rearrangeTrio = async (file: string): Promise<void> => {
+		await closeIsolation();
+		await isolate(vscode.Uri.file(file));
+	};
+	context.subscriptions.push(registerStage({
+		currentFile: () => currentIsolationFile(),
+		rearrange: rearrangeTrio,
+	}));
+
+	// Flipping the source/stylesheet split is a request about the workbench in
+	// front of you, not just the next one — so the component on the canvas is
+	// re-laid out through the same rearrange the stage mode uses. Nothing to do
+	// when nothing is isolated: the new geometry is picked up on the next open.
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+		if (!e.affectsConfiguration('burrow.frontendDebugger.sourceSplit')) {
+			return;
+		}
+		const file = currentIsolationFile();
+		if (file) {
+			void rearrangeTrio(file);
+		}
+	}));
 
 	// "Show in App": reveal a component in the LIVE app — from the Components
 	// tree (inline eye, passes the tree node), the isolation preview's title bar
@@ -305,7 +357,10 @@ export function activate(context: vscode.ExtensionContext): FrontendDebuggerApi 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('burrow.frontendDebugger.open', open),
 		vscode.commands.registerCommand('burrow.frontendDebugger.openInBrowser', openInBrowser),
-		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (uri?: vscode.Uri) => isolate(uri)),
+		// Takes an `IsolateArgs` as well as a Uri: the seam bar's route chip
+		// re-isolates the same file at a different route, and that route has
+		// nowhere to travel on a Uri.
+		vscode.commands.registerCommand('burrow.frontendDebugger.isolate', (source?: IsolateArgs | vscode.Uri) => isolate(source)),
 		vscode.commands.registerCommand('burrow.frontendDebugger.showInApp', (source?: vscode.Uri | { kind?: string; abs?: string }) => showInApp(source)),
 		// Search: the gallery tree is for browsing 60-odd directories; this is for
 		// when you already know the name. Isolating is what a click in the tree
