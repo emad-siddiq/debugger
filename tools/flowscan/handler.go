@@ -5,6 +5,7 @@ package main
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/packages"
@@ -36,13 +37,25 @@ func buildFlow(a *analyzer, term *terminal) *Flow {
 	return flow
 }
 
-func (b *flowBuilder) addNode(n *Node, parent int) int {
+// addNode appends a node and, when it has a parent, the edge that reaches it.
+//
+// `rel` and `at` are what the parent DOES to the child and WHERE it does it —
+// both known at every call site here, and both dropped on the floor until now.
+// `at` is the call site rather than the child's declaration: they are usually
+// in different files, and it is the call site a reader is looking for.
+// A root node (parent < 0) has no edge, so rel and at are ignored.
+func (b *flowBuilder) addNode(n *Node, parent int, rel string, at token.Pos) int {
 	b.flow.Nodes = append(b.flow.Nodes, n)
 	idx := len(b.flow.Nodes) - 1
 	if parent >= 0 {
-		b.flow.Edges = append(b.flow.Edges, [2]int{parent, idx})
+		b.flow.Edges = append(b.flow.Edges, b.edge(parent, idx, rel, at))
 	}
 	return idx
+}
+
+func (b *flowBuilder) edge(from, to int, rel string, at token.Pos) Edge {
+	file, line, col := b.a.relPos(at)
+	return Edge{From: from, To: to, Rel: rel, File: file, Line: line, Col: col}
 }
 
 // resolveHandler turns the registration's handler expression into the flow's
@@ -53,12 +66,12 @@ func (b *flowBuilder) resolveHandler(expr ast.Expr, pkg *packages.Package, unwra
 	case *ast.CallExpr:
 		fn := funcFor(e.Fun, pkg.TypesInfo)
 		if fn == nil {
-			b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "handler expression did not resolve to a function"}, -1)
+			b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "handler expression did not resolve to a function"}, -1, "", token.NoPos)
 			return
 		}
 		site, ok := b.a.decls[fn]
 		if !ok {
-			b.addNode(&Node{Kind: "unknown", Label: funcLabel(fn), Reason: "handler declared outside the analyzed module"}, -1)
+			b.addNode(&Node{Kind: "unknown", Label: funcLabel(fn), Reason: "handler declared outside the analyzed module"}, -1, "", token.NoPos)
 			return
 		}
 		if lit := returnedFuncLit(site.decl); lit != nil {
@@ -93,12 +106,12 @@ func (b *flowBuilder) resolveHandler(expr ast.Expr, pkg *packages.Package, unwra
 			// Method value like a.CapacityChecker.DebugDiskPressure resolves
 			// through Selections; funcFor covers it — reaching here means an
 			// http.Handler var or similar.
-			b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "handler is not a statically resolvable function"}, -1)
+			b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "handler is not a statically resolvable function"}, -1, "", token.NoPos)
 			return
 		}
 		site, ok := b.a.decls[fn]
 		if !ok {
-			b.addNode(&Node{Kind: "unknown", Label: funcLabel(fn), Reason: "handler declared outside the analyzed module"}, -1)
+			b.addNode(&Node{Kind: "unknown", Label: funcLabel(fn), Reason: "handler declared outside the analyzed module"}, -1, "", token.NoPos)
 			return
 		}
 		hIdx := b.handlerNode(fn, site)
@@ -106,19 +119,19 @@ func (b *flowBuilder) resolveHandler(expr ast.Expr, pkg *packages.Package, unwra
 			b.analyzeBody(site.decl.Body, site.pkg, map[types.Object]types.Type{}, hIdx, 1)
 		}
 	case *ast.FuncLit:
-		hIdx := b.addNode(&Node{Kind: "handler", Label: "inline handler"}, -1)
+		hIdx := b.addNode(&Node{Kind: "handler", Label: "inline handler"}, -1, "", token.NoPos)
 		if file, line, col := b.a.relPos(e.Pos()); file != "" {
 			b.flow.Nodes[hIdx].File, b.flow.Nodes[hIdx].Line, b.flow.Nodes[hIdx].Col = file, line, col
 		}
 		b.analyzeBody(e, pkg, map[types.Object]types.Type{}, hIdx, 1)
 	default:
-		b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "unrecognized handler expression shape"}, -1)
+		b.addNode(&Node{Kind: "unknown", Label: exprLabel(expr), Reason: "unrecognized handler expression shape"}, -1, "", token.NoPos)
 	}
 }
 
 func (b *flowBuilder) handlerNode(fn *types.Func, site declSite) int {
 	file, line, col := b.a.relPos(site.decl.Name.Pos())
-	return b.addNode(&Node{Kind: "handler", Label: funcLabel(fn), File: file, Line: line, Col: col}, -1)
+	return b.addNode(&Node{Kind: "handler", Label: funcLabel(fn), File: file, Line: line, Col: col}, -1, "", token.NoPos)
 }
 
 // bindArgs maps the callee's interface-typed parameters to the concrete types
@@ -166,7 +179,7 @@ func (b *flowBuilder) analyzeBody(body ast.Node, pkg *packages.Package, bindings
 				SQL: sql, SQLKind: sqlKind(sql),
 				Tables:  extractTables(sql, b.a.knownTables),
 				Partial: !complete,
-			}, parentIdx)
+			}, parentIdx, RelExecutes, call.Pos())
 			return true
 		}
 		b.followCall(call, pkg, bindings, parentIdx, depth)
@@ -204,7 +217,7 @@ func (b *flowBuilder) followCall(call *ast.CallExpr, pkg *packages.Package, bind
 	if isSel && fn.Signature().Recv() != nil {
 		// Method on a concrete type (store method called directly): visible hop.
 		file, line, col := b.a.relPos(site.decl.Name.Pos())
-		idx := b.addNode(&Node{Kind: "store", Label: funcLabel(fn), File: file, Line: line, Col: col}, parentIdx)
+		idx := b.addNode(&Node{Kind: "store", Label: funcLabel(fn), File: file, Line: line, Col: col}, parentIdx, RelCalls, call.Pos())
 		b.analyzeBody(site.decl.Body, site.pkg, childBindings, idx, depth+1)
 	} else {
 		// Plain helper: flatten — its queries attach to the current parent.
@@ -239,13 +252,13 @@ func (b *flowBuilder) followInterfaceCall(call *ast.CallExpr, sel *ast.SelectorE
 		b.addNode(&Node{
 			Kind: "unknown", Label: exprLabel(sel),
 			Reason: "interface " + ifaceType.String() + ": implementation not statically resolvable",
-		}, parentIdx)
+		}, parentIdx, RelUnresolved, sel.Pos())
 		return
 	}
 	obj, _, _ := types.LookupFieldOrMethod(concrete, true, pkg.Types, sel.Sel.Name)
 	method, _ := obj.(*types.Func)
 	if method == nil {
-		b.addNode(&Node{Kind: "unknown", Label: exprLabel(sel), Reason: "method " + sel.Sel.Name + " not found on " + concrete.String()}, parentIdx)
+		b.addNode(&Node{Kind: "unknown", Label: exprLabel(sel), Reason: "method " + sel.Sel.Name + " not found on " + concrete.String()}, parentIdx, RelUnresolved, sel.Pos())
 		return
 	}
 	site, ok := b.a.decls[method]
@@ -253,7 +266,7 @@ func (b *flowBuilder) followInterfaceCall(call *ast.CallExpr, sel *ast.SelectorE
 		return
 	}
 	file, line, col := b.a.relPos(site.decl.Name.Pos())
-	idx := b.addNode(&Node{Kind: "store", Label: funcLabel(method), File: file, Line: line, Col: col}, parentIdx)
+	idx := b.addNode(&Node{Kind: "store", Label: funcLabel(method), File: file, Line: line, Col: col}, parentIdx, RelCalls, call.Pos())
 	childBindings := mergeBindings(bindings, bindArgs(site.decl, call, pkg, site.pkg))
 	b.visitStack[method] = true
 	b.analyzeBody(site.decl.Body, site.pkg, childBindings, idx, depth+1)
@@ -343,7 +356,7 @@ func (b *flowBuilder) prune() {
 	nodes, edges := b.flow.Nodes, b.flow.Edges
 	children := map[int][]int{}
 	for _, e := range edges {
-		children[e[0]] = append(children[e[0]], e[1])
+		children[e.From] = append(children[e.From], e.To)
 	}
 	keep := make([]bool, len(nodes))
 	var mark func(i int) bool
@@ -372,18 +385,19 @@ func (b *flowBuilder) prune() {
 			remap[i] = -1
 		}
 	}
-	var outEdges [][2]int
+	var outEdges []Edge
 	for _, e := range edges {
-		if remap[e[0]] >= 0 && remap[e[1]] >= 0 {
-			outEdges = append(outEdges, [2]int{remap[e[0]], remap[e[1]]})
+		if remap[e.From] >= 0 && remap[e.To] >= 0 {
+			e.From, e.To = remap[e.From], remap[e.To]
+			outEdges = append(outEdges, e)
 		}
 	}
 	b.flow.Nodes, b.flow.Edges = outNodes, outEdges
 }
 
-func hasParent(edges [][2]int, i int) bool {
+func hasParent(edges []Edge, i int) bool {
 	for _, e := range edges {
-		if e[1] == i {
+		if e.To == i {
 			return true
 		}
 	}
@@ -392,12 +406,23 @@ func hasParent(edges [][2]int, i int) bool {
 
 // attachTables adds one table node per distinct table, linked from each query
 // node that touches it, and fills Flow.Tables.
+//
+// The edge verb is PER TABLE, re-derived from the statement rather than taken
+// from Node.SQLKind, which is one verdict for the whole statement:
+// `INSERT INTO audit SELECT … FROM users` writes one table and reads the other,
+// and drawing both edges the same way is simply wrong. SQLKind stays as the
+// box's badge — it describes the statement, this describes one table.
 func (b *flowBuilder) attachTables() {
 	tableIdx := map[string]int{}
 	for i, n := range b.flow.Nodes {
 		if n.Kind != "query" {
 			continue
 		}
+		writes := map[string]bool{}
+		for _, ref := range tableRefs(n.SQL, b.a.knownTables) {
+			writes[ref.Name] = ref.Write
+		}
+		// n.Tables is the sorted, deduplicated list, so edge order is stable.
 		for _, table := range n.Tables {
 			idx, ok := tableIdx[table]
 			if !ok {
@@ -406,11 +431,17 @@ func (b *flowBuilder) attachTables() {
 					file = "migrations/" + mig
 					line = b.a.tableLine(file, table)
 				}
-				idx = b.addNode(&Node{Kind: "table", Label: table, File: file, Line: line}, -1)
+				idx = b.addNode(&Node{Kind: "table", Label: table, File: file, Line: line}, -1, "", token.NoPos)
 				tableIdx[table] = idx
 				b.flow.Tables = append(b.flow.Tables, table)
 			}
-			b.flow.Edges = append(b.flow.Edges, [2]int{i, idx})
+			rel := RelReads
+			if writes[table] {
+				rel = RelWrites
+			}
+			// The statement is what touches the table, so its position is the
+			// line this edge is about.
+			b.flow.Edges = append(b.flow.Edges, Edge{From: i, To: idx, Rel: rel, File: n.File, Line: n.Line, Col: n.Col})
 		}
 	}
 }

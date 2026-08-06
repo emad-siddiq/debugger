@@ -9,7 +9,9 @@ import (
 
 // tableRefRe matches identifiers in table position. Quoted identifiers and
 // schema-qualified names are rare in nodewatch-shaped SQL; plain idents cover it.
-var tableRefRe = regexp.MustCompile(`(?is)\b(?:from|join|insert\s+into|update|delete\s+from|truncate(?:\s+table)?)\s+([a-z_][a-z0-9_]*)`)
+// The KEYWORD is captured too: it is what says whether the statement reads the
+// table or writes it, and it was being matched and thrown away.
+var tableRefRe = regexp.MustCompile(`(?is)\b(from|join|insert\s+into|update|delete\s+from|truncate(?:\s+table)?)\s+([a-z_][a-z0-9_]*)`)
 
 // nonTables are idents that appear in table position but are not tables.
 var nonTables = map[string]bool{
@@ -17,14 +19,25 @@ var nonTables = map[string]bool{
 	"jsonb_array_elements": true, "lateral": true, "only": true, "values": true,
 }
 
-// extractTables returns the distinct table names referenced by sql, sorted.
+// tableRef is one table the statement touches, and what it does to it.
+type tableRef struct {
+	Name  string
+	Write bool
+}
+
+// tableRefs returns the distinct tables sql references, sorted by name, each
+// marked read or write by the keyword that introduced it. FROM and JOIN read;
+// INSERT INTO, UPDATE, DELETE FROM and TRUNCATE write. A table in both
+// positions in one statement (`UPDATE x … FROM x`) counts as a write — the
+// stronger claim is the one worth showing.
+//
 // When known is non-empty, only names present in it are kept (CTE names and
 // set-returning functions drop out for free).
-func extractTables(sql string, known map[string]string) []string {
+func tableRefs(sql string, known map[string]string) []tableRef {
 	cteNames := cteNamesIn(sql)
-	seen := map[string]bool{}
+	writes := map[string]bool{}
 	for _, m := range tableRefRe.FindAllStringSubmatch(sql, -1) {
-		name := strings.ToLower(m[1])
+		name := strings.ToLower(m[2])
 		if nonTables[name] || cteNames[name] {
 			continue
 		}
@@ -33,13 +46,32 @@ func extractTables(sql string, known map[string]string) []string {
 				continue
 			}
 		}
-		seen[name] = true
+		switch strings.ToLower(firstWord(strings.TrimSpace(m[1]))) {
+		case "from", "join":
+			// A read never downgrades a write recorded elsewhere in the same
+			// statement, so only set when absent.
+			if _, seen := writes[name]; !seen {
+				writes[name] = false
+			}
+		default:
+			writes[name] = true
+		}
 	}
-	out := make([]string, 0, len(seen))
-	for name := range seen {
-		out = append(out, name)
+	out := make([]tableRef, 0, len(writes))
+	for name, write := range writes {
+		out = append(out, tableRef{Name: name, Write: write})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// extractTables returns the distinct table names referenced by sql, sorted.
+func extractTables(sql string, known map[string]string) []string {
+	refs := tableRefs(sql, known)
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.Name)
+	}
 	return out
 }
 

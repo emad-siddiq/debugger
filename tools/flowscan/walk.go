@@ -40,6 +40,9 @@ type routerWalker struct {
 	visiting   map[*types.Func]bool
 	unfollowed []Unfollowed
 	noted      map[string]bool
+	// Hands out one id per conditional encountered, so alternatives can be told
+	// apart from a chain. Never reset — ids only need to be unique.
+	branchSeq int
 }
 
 type walkScope struct {
@@ -47,7 +50,11 @@ type walkScope struct {
 	routers map[types.Object]bool
 	prefix  string
 	mw      []MW
-	consts  map[types.Object]string
+	// The conditional this scope is inside, if any: which if/switch (0 = none)
+	// and which arm of it. Stamped onto every Use registered in here — see MW.
+	branch int
+	arm    int
+	consts map[types.Object]string
 	// Which router library this scope's registrations belong to. It decides
 	// whether the HTTP method comes from the call or from inside the pattern —
 	// see routers.go.
@@ -402,25 +409,40 @@ func (w *routerWalker) walkStmts(stmts []ast.Stmt, sc *walkScope) {
 				w.handleCall(call, sc)
 			}
 		case *ast.IfStmt:
-			w.walkStmts(s.Body.List, sc)
-			switch e := s.Else.(type) {
-			case *ast.BlockStmt:
-				w.walkStmts(e.List, sc)
-			case *ast.IfStmt:
-				w.walkStmts([]ast.Stmt{e}, sc)
-			}
+			// The WHOLE if/else-if/else chain is one branch group, walked with the
+			// same scope so a `Use` still reaches the routes after it — that is what
+			// chi does. What changes is that everything registered in here is marked
+			// with the arm it came from, so mutually exclusive middleware stops
+			// reading as a chain.
+			w.walkArms(sc, func(arm func([]ast.Stmt)) {
+				for cur := s; cur != nil; {
+					arm(cur.Body.List)
+					switch e := cur.Else.(type) {
+					case *ast.BlockStmt:
+						arm(e.List)
+						cur = nil
+					case *ast.IfStmt:
+						cur = e
+					default:
+						cur = nil
+					}
+				}
+			})
 		case *ast.BlockStmt:
 			w.walkStmts(s.List, sc)
 		case *ast.ForStmt:
+			// A loop body is not an alternative — it runs, possibly many times.
 			w.walkStmts(s.Body.List, sc)
 		case *ast.RangeStmt:
 			w.walkStmts(s.Body.List, sc)
 		case *ast.SwitchStmt:
-			for _, c := range s.Body.List {
-				if cc, ok := c.(*ast.CaseClause); ok {
-					w.walkStmts(cc.Body, sc)
+			w.walkArms(sc, func(arm func([]ast.Stmt)) {
+				for _, c := range s.Body.List {
+					if cc, ok := c.(*ast.CaseClause); ok {
+						arm(cc.Body)
+					}
 				}
-			}
+			})
 		}
 	}
 }
@@ -486,6 +508,25 @@ func opaqueReason(method string) string {
 		"right when the prefix is empty, short by it when it is not."
 }
 
+// walkArms walks the arms of one conditional as a single branch group.
+//
+// `emit` is handed a callback and calls it once per arm, in source order. The
+// scope is the SAME one throughout — appends inside an arm must still reach the
+// routes registered after the conditional — so the group and arm are saved and
+// restored around it rather than forked.
+func (w *routerWalker) walkArms(sc *walkScope, emit func(arm func([]ast.Stmt))) {
+	outerBranch, outerArm := sc.branch, sc.arm
+	w.branchSeq++
+	sc.branch = w.branchSeq
+	arm := 0
+	emit(func(stmts []ast.Stmt) {
+		arm++
+		sc.arm = arm
+		w.walkStmts(stmts, sc)
+	})
+	sc.branch, sc.arm = outerBranch, outerArm
+}
+
 func (w *routerWalker) handleRouterMethod(name string, call *ast.CallExpr, sc *walkScope) {
 	switch {
 	case verbMethods[name] != "" && len(call.Args) >= 2:
@@ -494,7 +535,10 @@ func (w *routerWalker) handleRouterMethod(name string, call *ast.CallExpr, sc *w
 		method, _ := foldString(call.Args[0], sc.pkg.TypesInfo, sc.consts)
 		w.record(strings.ToUpper(method), call.Args[1], call.Args[2], sc, call.Pos())
 	case name == "Use":
-		sc.mw = append(sc.mw, w.mwLabels(call.Args, sc)...)
+		for _, mw := range w.mwLabels(call.Args, sc) {
+			mw.Branch, mw.Arm = sc.branch, sc.arm
+			sc.mw = append(sc.mw, mw)
+		}
 	case name == "Route" && len(call.Args) >= 2:
 		prefix, ok := foldString(call.Args[0], sc.pkg.TypesInfo, sc.consts)
 		if !ok {
@@ -574,6 +618,10 @@ func (w *routerWalker) walkClosure(lit *ast.FuncLit, prefix string, sc *walkScop
 		routers: map[types.Object]bool{},
 		prefix:  prefix,
 		mw:      append([]MW{}, sc.mw...),
+		// A closure or register func called INSIDE a conditional is itself
+		// conditional, and so is every Use in it.
+		branch:  sc.branch,
+		arm:     sc.arm,
 		consts:  sc.consts,
 		dialect: sc.dialect,
 	}
@@ -633,7 +681,11 @@ func (w *routerWalker) maybeRecurse(call *ast.CallExpr, sc *walkScope) {
 		routers: map[types.Object]bool{},
 		prefix:  sc.prefix,
 		mw:      append([]MW{}, sc.mw...),
-		consts:  map[types.Object]string{},
+		// A closure or register func called INSIDE a conditional is itself
+		// conditional, and so is every Use in it.
+		branch: sc.branch,
+		arm:    sc.arm,
+		consts: map[types.Object]string{},
 		// The dialect travels with the ROUTER, not with the function. A register
 		// func that takes a *http.ServeMux is registering stdlib patterns even
 		// though nothing in its own body constructs anything — and without this

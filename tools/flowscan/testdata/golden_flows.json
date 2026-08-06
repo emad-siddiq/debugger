@@ -1,17 +1,17 @@
 {
- "schema": 1,
+ "schema": 2,
  "backend": "",
  "rev": "",
  "generatedAt": "",
  "coverage": {
-  "routes": 10,
-  "traced": 8,
+  "routes": 11,
+  "traced": 9,
   "partial": 2,
   "unknown": 0,
   "unfollowed": [
    {
     "file": "app.go",
-    "line": 74,
+    "line": 88,
     "reason": "the router passes through .WithPrefix(…), which takes a string and may prefix every path behind it. Those routes are listed at their UNPREFIXED paths — right when the prefix is empty, short by it when it is not."
    }
   ]
@@ -21,17 +21,31 @@
    "method": "DELETE",
    "path": "/api/widgets/{id}",
    "file": "app.go",
-   "line": 45,
+   "line": 58,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -60,14 +74,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 25,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "widgets/widgets.go",
+     "line": 25,
+     "col": 7
+    }
    ],
    "tables": [
     "widgets"
@@ -78,7 +100,7 @@
    "method": "GET",
    "path": "/after-prefix",
    "file": "app.go",
-   "line": 75,
+   "line": 89,
    "nodes": [
     {
      "kind": "handler",
@@ -105,14 +127,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    }
    ],
    "tables": [
     "widgets"
@@ -123,17 +153,31 @@
    "method": "GET",
    "path": "/api/gadgets/{id}",
    "file": "app.go",
-   "line": 50,
+   "line": 63,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -174,22 +218,38 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ],
-    [
-     2,
-     3
-    ],
-    [
-     2,
-     4
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "calls",
+     "file": "gadgets/gadgets.go",
+     "line": 37,
+     "col": 10
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "executes",
+     "file": "gadgets/gadgets.go",
+     "line": 23,
+     "col": 9
+    },
+    {
+     "from": 2,
+     "to": 3,
+     "rel": "reads",
+     "file": "gadgets/gadgets.go",
+     "line": 23,
+     "col": 9
+    },
+    {
+     "from": 2,
+     "to": 4,
+     "rel": "reads",
+     "file": "gadgets/gadgets.go",
+     "line": 23,
+     "col": 9
+    }
    ],
    "tables": [
     "gadgets",
@@ -201,17 +261,31 @@
    "method": "GET",
    "path": "/api/v1/sub/things",
    "file": "app.go",
-   "line": 57,
+   "line": 71,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -240,14 +314,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    }
    ],
    "tables": [
     "widgets"
@@ -258,17 +340,31 @@
    "method": "GET",
    "path": "/api/widgets",
    "file": "app.go",
-   "line": 44,
+   "line": 57,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -297,14 +393,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    }
    ],
    "tables": [
     "widgets"
@@ -315,17 +419,31 @@
    "method": "GET",
    "path": "/api/widgets/search",
    "file": "app.go",
-   "line": 46,
+   "line": 59,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -348,10 +466,14 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 33,
+     "col": 10
+    }
    ],
    "status": "partial"
   },
@@ -359,12 +481,26 @@
    "method": "GET",
    "path": "/healthz",
    "file": "app.go",
-   "line": 32,
+   "line": 45,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     }
    ],
    "nodes": [
@@ -372,24 +508,28 @@
      "kind": "handler",
      "label": "fixtureapp.Health",
      "file": "app.go",
-     "line": 22,
+     "line": 29,
      "col": 6
     },
     {
      "kind": "query",
      "label": "SELECT",
      "file": "app.go",
-     "line": 24,
+     "line": 31,
      "col": 7,
      "sql": "SELECT 1",
      "sqlKind": "read"
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 31,
+     "col": 7
+    }
    ],
    "status": "traced"
   },
@@ -397,7 +537,7 @@
    "method": "GET",
    "path": "/instrumented",
    "file": "app.go",
-   "line": 73,
+   "line": 87,
    "nodes": [
     {
      "kind": "handler",
@@ -424,14 +564,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "widgets/widgets.go",
+     "line": 15,
+     "col": 16
+    }
    ],
    "tables": [
     "widgets"
@@ -442,17 +590,31 @@
    "method": "POST",
    "path": "/api/gadgets",
    "file": "app.go",
-   "line": 51,
+   "line": 64,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
     }
    ],
    "nodes": [
@@ -488,18 +650,30 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ],
-    [
-     2,
-     3
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "calls",
+     "file": "gadgets/gadgets.go",
+     "line": 43,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "executes",
+     "file": "gadgets/gadgets.go",
+     "line": 32,
+     "col": 9
+    },
+    {
+     "from": 2,
+     "to": 3,
+     "rel": "writes",
+     "file": "gadgets/gadgets.go",
+     "line": 32,
+     "col": 9
+    }
    ],
    "tables": [
     "gadgets"
@@ -508,19 +682,126 @@
   },
   {
    "method": "POST",
-   "path": "/api/gadgets/{id}/notify",
+   "path": "/api/gadgets/audit",
    "file": "app.go",
-   "line": 52,
+   "line": 66,
    "middleware": [
     {
      "label": "reqID(…)",
      "file": "app.go",
-     "line": 30
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
     },
     {
      "label": "orgCtx(…)",
      "file": "app.go",
-     "line": 35
+     "line": 48
+    }
+   ],
+   "nodes": [
+    {
+     "kind": "handler",
+     "label": "gadgets.AuditGadgets",
+     "file": "gadgets/gadgets.go",
+     "line": 50,
+     "col": 6
+    },
+    {
+     "kind": "query",
+     "label": "INSERT",
+     "file": "gadgets/gadgets.go",
+     "line": 52,
+     "col": 7,
+     "sql": "INSERT INTO gadget_audit (gadget_id, name) SELECT id, name FROM gadgets",
+     "sqlKind": "write",
+     "tables": [
+      "gadget_audit",
+      "gadgets"
+     ]
+    },
+    {
+     "kind": "table",
+     "label": "gadget_audit"
+    },
+    {
+     "kind": "table",
+     "label": "gadgets"
+    }
+   ],
+   "edges": [
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "gadgets/gadgets.go",
+     "line": 52,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "gadgets/gadgets.go",
+     "line": 52,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 3,
+     "rel": "reads",
+     "file": "gadgets/gadgets.go",
+     "line": 52,
+     "col": 7
+    }
+   ],
+   "tables": [
+    "gadget_audit",
+    "gadgets"
+   ],
+   "status": "traced"
+  },
+  {
+   "method": "POST",
+   "path": "/api/gadgets/{id}/notify",
+   "file": "app.go",
+   "line": 65,
+   "middleware": [
+    {
+     "label": "reqID(…)",
+     "file": "app.go",
+     "line": 37
+    },
+    {
+     "label": "devCORS(…)",
+     "file": "app.go",
+     "line": 40,
+     "branch": 1,
+     "arm": 1
+    },
+    {
+     "label": "prodCORS(…)",
+     "file": "app.go",
+     "line": 42,
+     "branch": 1,
+     "arm": 2
+    },
+    {
+     "label": "orgCtx(…)",
+     "file": "app.go",
+     "line": 48
     }
    ],
    "nodes": [
@@ -528,7 +809,7 @@
      "kind": "handler",
      "label": "gadgets.NotifyGadget",
      "file": "gadgets/gadgets.go",
-     "line": 67,
+     "line": 76,
      "col": 6
     },
     {
@@ -538,10 +819,14 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "unresolved",
+     "file": "gadgets/gadgets.go",
+     "line": 78,
+     "col": 7
+    }
    ],
    "status": "partial"
   }

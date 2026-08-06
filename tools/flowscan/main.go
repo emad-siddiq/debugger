@@ -67,7 +67,7 @@ func main() {
 	// Emit the empty list the schema promises.
 	for _, f := range doc.Flows {
 		if f.Edges == nil {
-			f.Edges = [][2]int{}
+			f.Edges = []Edge{}
 		}
 		if f.Nodes == nil {
 			f.Nodes = []*Node{}
@@ -106,7 +106,9 @@ func assemble(a *analyzer, terminals []*terminal, digest *Digest, filter string)
 // assembleWith is `assemble` plus the routers the walk could not follow. They are
 // carried on Coverage rather than folded into a route bucket — see Unfollowed.
 func assembleWith(a *analyzer, terminals []*terminal, unfollowed []Unfollowed, digest *Digest, filter string) *Output {
-	doc := &Output{Schema: 1, Tables: a.knownTables}
+	// Schema 2: edges carry the relation and the call site. Consumers read
+	// the old two-integer shape too, so an older cached flows.json still draws.
+	doc := &Output{Schema: 2, Tables: a.knownTables}
 	doc.Coverage.Unfollowed = unfollowed
 
 	byKey := map[string]*terminal{}

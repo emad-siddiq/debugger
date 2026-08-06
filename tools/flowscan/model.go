@@ -42,16 +42,56 @@ type Flow struct {
 	Line       int      `json:"line"`
 	Middleware []MW     `json:"middleware,omitempty"`
 	Nodes      []*Node  `json:"nodes"`
-	Edges      [][2]int `json:"edges"` // indexes into Nodes
+	Edges      []Edge   `json:"edges"`
 	Tables     []string `json:"tables,omitempty"`
 	Status     string   `json:"status"` // traced | partial | unknown
 }
 
+// Edge kinds — what one box does to the next. The relation is known exactly
+// where the edge is built and used to be discarded: an edge was two integers,
+// so every curve in the diagram meant the same unfalsifiable "this leads to
+// that" and a reader had to open the code to find out which.
+const (
+	RelCalls      = "calls"      // a Go call: handler -> store method, store -> store
+	RelExecutes   = "executes"   // this function runs this SQL statement
+	RelReads      = "reads"      // the statement selects from / joins this table
+	RelWrites     = "writes"     // the statement inserts, updates, deletes or truncates it
+	RelUnresolved = "unresolved" // the hop was recognised and could not be followed
+)
+
+// Edge is one link in the wire, indexes into Nodes.
+//
+// File/Line/Col are the CALL SITE — the line in the parent that reaches the
+// child — not either box's declaration. For a store hop those are different
+// files: the box shows where the method is declared, the edge where it is
+// called, and the second is the one that answers "why are these two joined".
+type Edge struct {
+	From int    `json:"from"`
+	To   int    `json:"to"`
+	Rel  string `json:"rel"`
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
+	Col  int    `json:"col,omitempty"`
+}
+
 // MW is one middleware chip on the route's chain, in order.
+//
+// Branch/Arm are how a CONDITIONAL registration says so. The walk takes every
+// arm of an if/else or switch, because a route registered in one arm is still a
+// real route. Middleware is not like that: it is an ordered chain, and arms are
+// mutually exclusive, so listing all of them flat claims a chain that can never
+// run. merkle picks one of three CORS middlewares in an if/else-if/else
+// (`app.go:398`) and all three were shown as if they stacked.
+//
+// Branch is 0 for an unconditional Use. Otherwise it identifies the if/switch,
+// and entries sharing a Branch with DIFFERENT Arms are alternatives of which at
+// most one runs.
 type MW struct {
-	Label string `json:"label"`
-	File  string `json:"file,omitempty"`
-	Line  int    `json:"line,omitempty"`
+	Label  string `json:"label"`
+	File   string `json:"file,omitempty"`
+	Line   int    `json:"line,omitempty"`
+	Branch int    `json:"branch,omitempty"`
+	Arm    int    `json:"arm,omitempty"`
 }
 
 // Node kinds: handler | store | query | table | unknown.

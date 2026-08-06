@@ -14,10 +14,17 @@ import (
 
 type App struct {
 	Pool *pg.Pool
+	Dev  bool
 }
 
 func reqID() Middleware  { return nil }
 func orgCtx() Middleware { return nil }
+
+// Two middlewares chosen by an if/else — at most one of them ever runs. The
+// walk takes both arms (a route registered in one arm is still a real route),
+// so without the branch marking they come out looking like a chain of two.
+func devCORS() Middleware  { return nil }
+func prodCORS() Middleware { return nil }
 
 func Health(db *pg.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +35,12 @@ func Health(db *pg.Pool) http.HandlerFunc {
 func (a *App) setupRouter() Router {
 	r := NewRouter()
 	r.Use(reqID())
+
+	if a.Dev {
+		r.Use(devCORS())
+	} else {
+		r.Use(prodCORS())
+	}
 
 	r.Get("/healthz", Health(a.Pool))
 
@@ -50,6 +63,7 @@ func registerGadgetRoutes(r Router, s *gadgets.PgxGadgetStore) {
 	r.Get("/gadgets/{id}", gadgets.GetGadget(s))
 	r.Post("/gadgets", gadgets.CreateGadget(s))
 	r.Post("/gadgets/{id}/notify", gadgets.NotifyGadget(gadgets.PickNotifier()))
+	r.Post("/gadgets/audit", gadgets.AuditGadgets(s.Pool))
 }
 
 func (a *App) registerSubRoutes(r Router, base string) {

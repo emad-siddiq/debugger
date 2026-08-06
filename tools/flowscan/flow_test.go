@@ -51,6 +51,9 @@ func TestFixtureFlows(t *testing.T) {
 		t.Error("the note contradicts the behaviour: those routes ARE traced")
 	}
 
+	assertEdgeRelations(t, byKey)
+	assertConditionalMiddleware(t, byKey)
+
 	got, err := json.MarshalIndent(doc, "", " ")
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +165,216 @@ func TestStdlibFixtureFlows(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("stdlib flows drifted from golden.\n--- got ---\n%s", got)
+	}
+}
+
+// assertEdgeRelations pins what each curve in the wire diagram MEANS.
+//
+// An edge used to be two integers, so every curve in the diagram claimed the
+// same unfalsifiable "this leads to that" and a reader had to open the code to
+// find out which. These assertions are by hand, ahead of the golden compare, so
+// a careless `go test -update` cannot quietly take the meaning away again.
+func assertEdgeRelations(t *testing.T, byKey map[string]*Flow) {
+	t.Helper()
+
+	// Every edge says something. A blank verb is the old behaviour returning.
+	for key, f := range byKey {
+		for _, e := range f.Edges {
+			if e.Rel == "" {
+				t.Errorf("%s: edge %d→%d carries no relation", key, e.From, e.To)
+			}
+		}
+	}
+
+	// The store hop, which is the case that started this: the handler takes a
+	// `gadgetStore` INTERFACE and the box shows `PgxGadgetStore.Fetch`, so
+	// nothing in the handler names what the box names.
+	f := byKey["GET /api/gadgets/{id}"]
+	if f == nil {
+		t.Fatal("GET /api/gadgets/{id} not traced")
+	}
+	call := edgeBetween(t, f, "handler", "store")
+	if call.Rel != RelCalls {
+		t.Errorf("handler→store rel = %q, want %q", call.Rel, RelCalls)
+	}
+	// The edge points at the CALL, the box at the DECLARATION. That difference
+	// is the whole feature: the line the edge names is the line that joins them.
+	if src := lineAt(t, call.File, call.Line); !strings.Contains(src, "s.Fetch(") {
+		t.Errorf("handler→store edge points at %s:%d = %q, want the line calling s.Fetch",
+			call.File, call.Line, strings.TrimSpace(src))
+	}
+	if store := nodeOfKind(f, "store"); store != nil && store.Line == call.Line {
+		t.Error("the edge's line equals the store method's declaration — it must be the call site")
+	}
+	if exec := edgeBetween(t, f, "store", "query"); exec.Rel != RelExecutes {
+		t.Errorf("store→query rel = %q, want %q", exec.Rel, RelExecutes)
+	}
+	for _, e := range edgesOfKind(f, "query", "table") {
+		if e.Rel != RelReads {
+			t.Errorf("SELECT…JOIN → %s rel = %q, want %q", f.Nodes[e.To].Label, e.Rel, RelReads)
+		}
+	}
+
+	// A DELETE writes the table it names.
+	if f := byKey["DELETE /api/widgets/{id}"]; f != nil {
+		for _, e := range edgesOfKind(f, "query", "table") {
+			if e.Rel != RelWrites {
+				t.Errorf("DELETE → %s rel = %q, want %q", f.Nodes[e.To].Label, e.Rel, RelWrites)
+			}
+		}
+	} else {
+		t.Error("DELETE /api/widgets/{id} not traced")
+	}
+
+	// One statement, two tables, two different verbs. Node.SQLKind is a single
+	// verdict for the whole statement and cannot express this, which is why the
+	// table edges are classified one at a time.
+	if f := byKey["POST /api/gadgets/audit"]; f != nil {
+		want := map[string]string{"gadget_audit": RelWrites, "gadgets": RelReads}
+		got := map[string]string{}
+		for _, e := range edgesOfKind(f, "query", "table") {
+			got[f.Nodes[e.To].Label] = e.Rel
+		}
+		for table, rel := range want {
+			if got[table] != rel {
+				t.Errorf("INSERT INTO gadget_audit … SELECT FROM gadgets: %s rel = %q, want %q", table, got[table], rel)
+			}
+		}
+	} else {
+		t.Error("POST /api/gadgets/audit not traced")
+	}
+
+	// Two implementations of Notifier, so the hop cannot be resolved. The curve
+	// into that box must not read like a confident call.
+	if f := byKey["POST /api/gadgets/{id}/notify"]; f != nil {
+		edges := edgesOfKind(f, "handler", "unknown")
+		if len(edges) == 0 {
+			t.Fatal("the unresolvable Notifier hop produced no unknown node")
+		}
+		for _, e := range edges {
+			if e.Rel != RelUnresolved {
+				t.Errorf("handler→unknown rel = %q, want %q", e.Rel, RelUnresolved)
+			}
+		}
+	} else {
+		t.Error("POST /api/gadgets/{id}/notify not traced")
+	}
+}
+
+// assertConditionalMiddleware pins the difference between a chain and a choice.
+//
+// The walk takes every arm of an if/else, which is right for routes and wrong
+// for middleware: arms are mutually exclusive, so listing them flat claims a
+// chain that can never run. merkle picks one of three CORS middlewares in an
+// if/else-if/else and all three were shown as if they stacked.
+func assertConditionalMiddleware(t *testing.T, byKey map[string]*Flow) {
+	t.Helper()
+	f := byKey["GET /healthz"]
+	if f == nil {
+		t.Fatal("GET /healthz not traced")
+	}
+	byLabel := map[string]MW{}
+	for _, mw := range f.Middleware {
+		byLabel[mw.Label] = mw
+	}
+
+	// The unconditional one stays unmarked — a Use outside a branch always runs.
+	if mw, ok := byLabel["reqID(…)"]; !ok {
+		t.Error("the unconditional middleware is missing")
+	} else if mw.Branch != 0 {
+		t.Errorf("reqID branch = %d, want 0 — it is not inside a conditional", mw.Branch)
+	}
+
+	dev, okDev := byLabel["devCORS(…)"]
+	prod, okProd := byLabel["prodCORS(…)"]
+	if !okDev || !okProd {
+		t.Fatalf("both arms should still be listed, got %+v", byLabel)
+	}
+	if dev.Branch == 0 || prod.Branch == 0 {
+		t.Errorf("an arm of an if/else is not marked conditional: dev=%d prod=%d", dev.Branch, prod.Branch)
+	}
+	if dev.Branch != prod.Branch {
+		t.Errorf("the two arms are the SAME choice and must share a branch id, got %d and %d", dev.Branch, prod.Branch)
+	}
+	if dev.Arm == prod.Arm {
+		t.Errorf("the two arms must differ, both are %d — that is what makes them exclusive", dev.Arm)
+	}
+}
+
+func nodeOfKind(f *Flow, kind string) *Node {
+	for _, n := range f.Nodes {
+		if n.Kind == kind {
+			return n
+		}
+	}
+	return nil
+}
+
+func edgesOfKind(f *Flow, from, to string) []Edge {
+	var out []Edge
+	for _, e := range f.Edges {
+		if f.Nodes[e.From].Kind == from && f.Nodes[e.To].Kind == to {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func edgeBetween(t *testing.T, f *Flow, from, to string) Edge {
+	t.Helper()
+	edges := edgesOfKind(f, from, to)
+	if len(edges) != 1 {
+		t.Fatalf("%s %s: want exactly one %s→%s edge, got %d", f.Method, f.Path, from, to, len(edges))
+	}
+	return edges[0]
+}
+
+// lineAt reads one backend-relative line of the fixture, so an assertion about
+// a call site is checked against the source rather than against a number that
+// silently rots when the fixture moves.
+func lineAt(t *testing.T, file string, line int) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata/fixtureapp", file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	lines := strings.Split(string(body), "\n")
+	if line < 1 || line > len(lines) {
+		t.Fatalf("%s has no line %d", file, line)
+	}
+	return lines[line-1]
+}
+
+func TestTableRefs(t *testing.T) {
+	cases := []struct {
+		sql  string
+		want []tableRef
+	}{
+		{"SELECT * FROM nodes", []tableRef{{"nodes", false}}},
+		{"SELECT a FROM nodes n JOIN orgs o ON o.id=n.org_id", []tableRef{{"nodes", false}, {"orgs", false}}},
+		{"DELETE FROM nodes WHERE id=$1", []tableRef{{"nodes", true}}},
+		{"TRUNCATE TABLE nodes", []tableRef{{"nodes", true}}},
+		// The case the statement-level verdict cannot express.
+		{"INSERT INTO orgs (id) SELECT org_id FROM nodes", []tableRef{{"nodes", false}, {"orgs", true}}},
+		// Written and read in one statement: the write is the stronger claim.
+		{"UPDATE nodes SET n=x FROM nodes s WHERE s.id=nodes.id", []tableRef{{"nodes", true}}},
+		{"WITH d AS (DELETE FROM nodes RETURNING id) INSERT INTO orgs SELECT id FROM d", []tableRef{{"nodes", true}, {"orgs", true}}},
+		// A CTE name is not a table, whichever side of the statement it is on.
+		{"WITH recent AS (SELECT * FROM nodes) SELECT * FROM recent", []tableRef{{"nodes", false}}},
+	}
+	known := map[string]string{"nodes": "001.sql", "orgs": "002.sql"}
+	for _, c := range cases {
+		got := tableRefs(c.sql, known)
+		if len(got) != len(c.want) {
+			t.Errorf("tableRefs(%q) = %+v, want %+v", c.sql, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("tableRefs(%q) = %+v, want %+v", c.sql, got, c.want)
+				break
+			}
+		}
 	}
 }
 

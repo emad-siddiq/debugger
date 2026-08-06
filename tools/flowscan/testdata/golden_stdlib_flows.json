@@ -1,5 +1,5 @@
 {
- "schema": 1,
+ "schema": 2,
  "backend": "",
  "rev": "",
  "generatedAt": "",
@@ -103,14 +103,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 74,
+     "col": 6
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "app.go",
+     "line": 74,
+     "col": 6
+    }
    ],
    "tables": [
     "widgets"
@@ -148,14 +156,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 62,
+     "col": 9
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "app.go",
+     "line": 62,
+     "col": 9
+    }
    ],
    "tables": [
     "widgets"
@@ -193,14 +209,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 70,
+     "col": 6
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "reads",
+     "file": "app.go",
+     "line": 70,
+     "col": 6
+    }
    ],
    "tables": [
     "widgets"
@@ -323,14 +347,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 55,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "app.go",
+     "line": 55,
+     "col": 7
+    }
    ],
    "tables": [
     "settings"
@@ -368,14 +400,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "default.go",
+     "line": 18,
+     "col": 7
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "default.go",
+     "line": 18,
+     "col": 7
+    }
    ],
    "tables": [
     "events"
@@ -413,14 +453,22 @@
     }
    ],
    "edges": [
-    [
-     0,
-     1
-    ],
-    [
-     1,
-     2
-    ]
+    {
+     "from": 0,
+     "to": 1,
+     "rel": "executes",
+     "file": "app.go",
+     "line": 66,
+     "col": 6
+    },
+    {
+     "from": 1,
+     "to": 2,
+     "rel": "writes",
+     "file": "app.go",
+     "line": 66,
+     "col": 6
+    }
    ],
    "tables": [
     "widgets"

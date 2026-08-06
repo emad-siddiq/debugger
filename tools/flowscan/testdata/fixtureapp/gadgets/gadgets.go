@@ -44,6 +44,15 @@ func CreateGadget(s gadgetStore) http.HandlerFunc {
 	}
 }
 
+// AuditGadgets runs one statement that WRITES one table and READS another.
+// The statement-level read/write verdict cannot describe it, so this is the
+// case that forces the table edges to be classified one at a time.
+func AuditGadgets(db *pg.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = db.Exec(r.Context(), `INSERT INTO gadget_audit (gadget_id, name) SELECT id, name FROM gadgets`)
+	}
+}
+
 // Notifier has two implementations — flowscan must report the hop as
 // unresolvable instead of guessing.
 type Notifier interface {
