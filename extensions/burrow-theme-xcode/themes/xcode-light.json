@@ -240,6 +240,41 @@
 		{
 			"scope": ["invalid", "invalid.illegal"],
 			"settings": { "foreground": "#D12F1B" }
+		},
+		{
+			"name": "CSS selectors (source.css). The generic rules above leave a stylesheet nearly monochrome — property names and colors both land on plain-identifier black — so the isolation workbench's stylesheet column gets its own mapping: selector = tag magenta, property = type slate, value = system blue, function = call teal, custom property = attribute brown.",
+			"scope": ["entity.name.tag.css", "entity.name.tag.custom.css", "entity.name.tag.wildcard.css"],
+			"settings": { "foreground": "#AD3DA4" }
+		},
+		{
+			"scope": ["entity.other.attribute-name.class.css", "entity.other.attribute-name.id.css", "entity.other.attribute-name.css"],
+			"settings": { "foreground": "#815F00" }
+		},
+		{
+			"scope": ["entity.other.attribute-name.pseudo-class.css", "entity.other.attribute-name.pseudo-element.css"],
+			"settings": { "foreground": "#272AD8" }
+		},
+		{
+			"scope": ["support.type.property-name.css", "support.type.vendored.property-name.css", "support.type.property-name.media.css", "support.type.vendored.property-name.media.css"],
+			"settings": { "foreground": "#3F6E75" }
+		},
+		{
+			"scope": ["support.constant.property-value.css", "support.constant.vendored.property-value.css", "support.constant.color.w3c-standard-color-name.css", "support.constant.color.w3c-extended-color-name.css", "support.constant.color.current.css", "support.constant.font-name.css", "support.constant.media.css", "constant.other.color.rgb-value.hex.css", "entity.other.keyframe-offset.css", "entity.other.keyframe-offset.percentage.css"],
+			"settings": { "foreground": "#272AD8" }
+		},
+		{
+			"scope": ["support.function.calc.css", "support.function.misc.css", "support.function.url.css", "support.function.gradient.css", "support.function.transform.css", "support.function.timing-function.css", "support.function.shape.css"],
+			"settings": { "foreground": "#3E828A" }
+		},
+		{
+			"name": "Custom properties: --brand where it is declared and inside var().",
+			"scope": ["variable.css", "variable.argument.css"],
+			"settings": { "foreground": "#815F00" }
+		},
+		{
+			"name": "The @ of an at-rule, so @media reads as one word.",
+			"scope": ["punctuation.definition.keyword.css"],
+			"settings": { "foreground": "#AD3DA4" }
 		}
 	]
 }

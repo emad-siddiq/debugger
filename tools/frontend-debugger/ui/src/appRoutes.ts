@@ -42,8 +42,11 @@ export const APP_BASE = '/watch/app'
 //   "/validators"    → "/watch/app/validators"
 //   "/watch/alerts"  → "/watch/app/watch/alerts"
 export function routePathname(path: string, base = APP_BASE): string {
-  if (path === '/') return base + '/'
-  return base + path
+  // A root basename ('/') must contribute nothing — '/' + '/fleet' would make
+  // '//fleet', which react-router does not match (bit Show in App on merkle).
+  const b = base === '/' ? '' : base
+  if (path === '/') return b + '/'
+  return b + path
 }
 
 // Absolute iframe URL for a route, anchored on the current target's origin.

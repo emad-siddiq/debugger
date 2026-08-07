@@ -19386,6 +19386,13 @@ declare module 'vscode' {
 		readonly viewColumn: ViewColumn;
 
 		/**
+		 * Whether this tab group lives in an auxiliary (floating) window rather than
+		 * the main window. `viewColumn` cannot answer this: columns are a grid index
+		 * across every editor part, so a floating group looks like an ordinary split.
+		 */
+		readonly isAuxiliaryWindow: boolean;
+
+		/**
 		 * The active {@link Tab tab} in the group. This is the tab whose contents are currently
 		 * being rendered.
 		 *

@@ -12,6 +12,8 @@ export interface TabFacts {
 	readonly key: string | undefined; // markerKey-shaped, or undefined for tab kinds we never touch
 	readonly isDirty: boolean;
 	readonly isPinned: boolean;
+	/** The tab lives in an auxiliary (floating) window — patches/0016. */
+	readonly isAuxiliaryWindow?: boolean;
 }
 
 /**
@@ -19,8 +21,18 @@ export interface TabFacts {
  * open tabs, pick the indices of tabs to close. A tab closes iff some
  * NON-active tool claimed it and the user has not made it dirty or pinned it.
  * (Claims of the active tool survive; unclaimed tabs always survive.)
+ *
+ * A fourth way a tab survives: it is in a floating window (patches/0016).
+ * `window.tabGroups.all` includes auxiliary-window groups, so without this a
+ * rail switch closes a popped-out tab and — it being that window's only one —
+ * the window with it. `isAuxiliaryWindow` is the exact signal and covers every
+ * route out, including a tab the user dragged into a window by hand.
  */
-export function selectTabsToClose(claims: ReadonlyMap<string, ReadonlySet<string>>, activeToolId: string, tabs: readonly TabFacts[]): number[] {
+export function selectTabsToClose(
+	claims: ReadonlyMap<string, ReadonlySet<string>>,
+	activeToolId: string,
+	tabs: readonly TabFacts[],
+): number[] {
 	const closable = new Set<string>();
 	for (const [toolId, keys] of claims) {
 		if (toolId === activeToolId) {
@@ -37,7 +49,7 @@ export function selectTabsToClose(claims: ReadonlyMap<string, ReadonlySet<string
 	const out: number[] = [];
 	for (let i = 0; i < tabs.length; i++) {
 		const t = tabs[i];
-		if (t.key !== undefined && closable.has(t.key) && !t.isDirty && !t.isPinned) {
+		if (t.key !== undefined && closable.has(t.key) && !t.isAuxiliaryWindow && !t.isDirty && !t.isPinned) {
 			out.push(i);
 		}
 	}

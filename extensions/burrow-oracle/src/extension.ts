@@ -23,6 +23,7 @@ import { buildPackageTree, parseGoList } from './golist';
 import { Note, NoteStore, toExcerpt } from './notes';
 import { SymbolNode, enclosingSymbolChain, symbolPath, symbolPathCandidates } from './symbols';
 import { OracleWalkProvider } from './walkView';
+import { DetachableView } from './detachableView';
 
 // burrow-oracle — Codebase Oracle: first-run agent walk + notes-on-highlight
 // (architecture task 08). This first slice ships the two load-bearing halves for real:
@@ -44,9 +45,23 @@ const GO_LANGUAGE = 'go';
 export function activate(context: ExtensionContext): void {
 	const walk = new OracleWalkProvider();
 	const notes = new NoteStore(context.workspaceState);
+	// Pop out / dock (patches/0016): the package walk is a map, and a map is
+	// worth more open beside the code than collapsed at the foot of Explorer.
+	const walkDetachable = new DetachableView({
+		viewId: OracleWalkProvider.viewId,
+		viewType: 'burrow.detached.oracleWalk',
+		title: 'Oracle Notes',
+		placeholderLabel: 'The package walk',
+		attach: (host) => walk.attach(host),
+	}, context.workspaceState);
+	walk.detachable = walkDetachable;
 
 	context.subscriptions.push(
 		window.registerWebviewViewProvider(OracleWalkProvider.viewId, walk),
+		walkDetachable,
+		walkDetachable.register(),
+		commands.registerCommand('burrow.oracle.popOutWalk', () => walkDetachable.popOut()),
+		commands.registerCommand('burrow.oracle.dockWalk', () => walkDetachable.dock()),
 		commands.registerCommand('burrow.oracle.walkPackages', () => walkPackages(walk)),
 		commands.registerCommand('burrow.oracle.noteOnHighlight', () => noteOnHighlight(notes)),
 		commands.registerCommand('burrow.oracle.showNotes', () => showNotes(notes)),

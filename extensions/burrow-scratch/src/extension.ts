@@ -34,7 +34,7 @@ import { PageMessage, StepPage, rememberedRun } from './page';
 import { Progress, isSettled, nextStep, order, overallTally, recordCheck, recordConsulted, resumeAt, setCurrent, setState, stateOf } from './progressModel';
 import { scanProject } from './scan';
 import { StepsProvider } from './stepsTree';
-import { announceOnVisible } from './toolSurface';
+import { announceOnVisible, detachable } from './toolSurface';
 import { copyReference, ensureFile, isScratch, materialize, materializeCopies, readPlan, readProgress, writeIndex, writeProgress } from './workspace';
 
 const TOOL_ID = 'burrow-scratch';
@@ -56,6 +56,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	const log = vscode.window.createOutputChannel('Burrow Scratch');
 	context.subscriptions.push(log);
+	// Pop out / dock (patches/0016): the step page is a reading surface, and
+	// reading it beside the terminal it tells you to type into is the point.
+	context.subscriptions.push(detachable(StepPage.viewType));
 
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.start', () => startScratch(context, log)));
 	context.subscriptions.push(vscode.commands.registerCommand('burrow.scratch.openBuild', () => openScratchBuild(context)));
@@ -491,8 +494,23 @@ function activateScratch(context: vscode.ExtensionContext, root: string, log: vs
 					return undefined;
 				}
 				const doc = ghostLines(document.getText());
-				const suggestion = ghostSuggestion(referenceFor(rel), doc, position.line, position.character);
-				return suggestion ? [new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))] : undefined;
+				const guide = ghostSuggestion(referenceFor(rel), doc, position.line, position.character);
+				if (!guide) {
+					return undefined;
+				}
+				const item = new vscode.InlineCompletionItem(
+					guide.text,
+					new vscode.Range(position.line, guide.start, position.line, guide.end),
+				);
+				// A correction rewrites characters the learner already typed, and the
+				// editor refuses to render that as ghost text — it drops any inline
+				// completion whose text disagrees with the document before the cursor.
+				// Inline edits are the surface that CAN show a replacement, so that is
+				// what a diverged line gets: the corrected line, Tab to take it.
+				if (guide.correction) {
+					item.isInlineEdit = true;
+				}
+				return [item];
 			},
 		},
 	));

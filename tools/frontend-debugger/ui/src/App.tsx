@@ -12,7 +12,10 @@ import { Gallery } from './components/Gallery'
 import { A11yPanel } from './components/A11yPanel'
 import { TokensPanel } from './components/TokensPanel'
 import type { Detail, RelativeDir, RoutesInfo } from './protocol'
+import { provKey, type ProvMap } from './styleModel'
 import { APP_ROUTES } from './appRoutes'
+import { onHostCommand } from './host'
+import { beginShowInApp, onLocated, onTreeAfterNavigate } from './showInApp'
 
 export function App() {
   const panelOpen = useStore((s) => s.panelOpen)
@@ -41,7 +44,42 @@ export function App() {
             .setAppRoutes([...r.routes, ...APP_ROUTES.filter((x) => x.group === 'Secondary')])
       })
       .catch(() => {})
+    // Theme catalog scanned from the target's stylesheets ([data-theme=…]).
+    apiGet('/themes')
+      .then((t) => useStore.getState().setThemes(t.themes || []))
+      .catch(() => {})
   }, [])
+
+  // Rule → file:line:origin provenance for the current selection. Keyed by the
+  // selection's identity + rule shape so live inspectUpdate ticks (which
+  // re-send the same rules every commit) don't refetch.
+  const selection = useStore((s) => s.selection)
+  const provSig = selection
+    ? selection.id + '§' + selection.css.map((r) => provKey(r.selectorText, r.media)).join('¶')
+    : ''
+  useEffect(() => {
+    if (!selection) {
+      useStore.getState().setProvenance({})
+      return
+    }
+    let stale = false
+    const rules = [
+      ...selection.css.map((r) => ({ selector: r.selectorText, media: r.media })),
+      ...selection.inherited.flatMap((g) => g.rules.map((r) => ({ selector: r.selectorText, media: r.media }))),
+    ]
+    apiPost('/css/provenance', { componentFile: selection.source?.file || null, rules })
+      .then((res) => {
+        if (stale) return
+        const map: ProvMap = {}
+        for (const r of res.results || []) map[provKey(r.selector, r.media)] = r
+        useStore.getState().setProvenance(map)
+      })
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provSig])
 
   // In LIVE mode, poll preflight so a dead backend shows on the mode pill
   // (red "backend down") instead of every click 502ing mysteriously.
@@ -90,9 +128,19 @@ export function App() {
           ipc.send('setPager', { on: s().pager })
           ipc.send('getTree', { max: 6000 })
           ipc.send('getRoutes', {})
+          ipc.send('getTokens', {})
           break
         case 'tree':
           s().setTree(msg.nodes || [])
+          // A fresh tree after a Show-in-App navigation → locate the component
+          // on the destination route (no-op otherwise).
+          onTreeAfterNavigate()
+          break
+        case 'located':
+          // Show-in-App probe result: select the instance (the central
+          // `selected` reveal below scrolls + flashes it) or fall through to
+          // route resolution / a not-rendered toast — all in showInApp.ts.
+          onLocated(msg)
           break
         case 'hover':
           if (s().mode !== 'theater') s().setHover(msg.box ? msg : null)
@@ -115,9 +163,12 @@ export function App() {
           // Live re-render of the WATCHED component (agent fires this on each
           // React commit): refresh its props/hooks/value pane as state changes,
           // without re-triggering the scroll-reveal that user selection does.
+          // prevId covers live re-renders that shifted the component's path id —
+          // the update carries the FRESH id, keeping the selection resolvable.
           const d = msg.detail as Detail
           const cur = s()
-          if (cur.selection && cur.selection.id === d.id) cur.setSelection(d)
+          if (cur.selection && (cur.selection.id === d.id || cur.selection.id === msg.prevId))
+            cur.setSelection(d)
           break
         }
         case 'theater': {
@@ -183,6 +234,15 @@ export function App() {
         case 'tokens':
           s().setTokens(msg.result || { tokens: 0, offenders: [] })
           break
+        case 'tokenList':
+          s().setTokenList(msg.tokens || [])
+          break
+        case 'themeSet':
+          s().setThemeName(msg.name || null)
+          // Theme swap changes resolved token values and matched rules — refresh both.
+          ipc.send('getTokens', {})
+          if (s().selection) ipc.send('select', { id: s().selection!.id })
+          break
         case 'error':
           s().toast('error', `${msg.cmd || ''}: ${msg.error}`)
           break
@@ -190,6 +250,16 @@ export function App() {
     })
     return off
   }, [])
+
+  // Host → SPA commands (embedded only): the extension's "Show in App" posts a
+  // __fedbgCmd envelope through the panel shim; standalone this never fires.
+  useEffect(
+    () =>
+      onHostCommand((m) => {
+        if (m.type === 'showInApp') beginShowInApp(m)
+      }),
+    [],
+  )
 
   // Parent-side two-finger swipe (fires when over the styles window / controls;
   // the preview iframe is handled by the agent).

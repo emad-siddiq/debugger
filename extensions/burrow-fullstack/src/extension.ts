@@ -24,6 +24,7 @@ import { composeUpArgs, resolveComposeFile } from './db';
 import { describeListener, foreignPortMessage, hostPortOfUrl, listenerOn, noListenerMessage, ownershipOf, sameOrigin } from './ownership';
 import { SeedRunner } from './seed';
 import { DEFAULT_MANIFEST, ToggleManifest, activeProcesses, effectiveState, envPatch, parseManifest } from './toggles';
+import { DetachableView } from './detachableView';
 
 const CONFIG_SECTION = 'burrow.fullstack';
 const TOGGLES_SECTION = 'burrow.debugConfig';
@@ -177,6 +178,15 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	};
 
+	const configDetachable = new DetachableView({
+		viewId: DebugConfigProvider.viewId,
+		viewType: 'burrow.detached.debugConfig',
+		title: 'Debug Config',
+		placeholderLabel: 'Debug Config',
+		attach: (host) => view.attach(host),
+	}, context.workspaceState);
+	view.detachable = configDetachable;
+
 	context.subscriptions.push(
 		out,
 		status,
@@ -189,6 +199,12 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.debug.onDidChangeActiveDebugSession(() => void tiersView.refresh()),
 		vscode.debug.onDidChangeActiveStackItem(() => void tiersView.refresh()),
 		vscode.window.registerWebviewViewProvider(DebugConfigProvider.viewId, view),
+		// Pop out / dock (patches/0016): the toggle panel is what you reach for
+		// while reading the run it configures, and it ships collapsed in a rail.
+		configDetachable,
+		configDetachable.register(),
+		vscode.commands.registerCommand('burrow.fullstack.popOutConfig', () => configDetachable.popOut()),
+		vscode.commands.registerCommand('burrow.fullstack.dockConfig', () => configDetachable.dock()),
 		vscode.commands.registerCommand('burrow.fullstack.debug', () => debugFullStack(out, syncSeeds)),
 		vscode.commands.registerCommand('burrow.fullstack.stop', () => stopFullStack(out, seeds)),
 

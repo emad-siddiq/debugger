@@ -12,7 +12,7 @@ import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser
 import { GoFilter, IHistoryService } from '../../../services/history/common/history.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { CLOSE_EDITOR_COMMAND_ID, MOVE_ACTIVE_EDITOR_COMMAND_ID, SelectedEditorsMoveCopyArguments, SPLIT_EDITOR_LEFT, SPLIT_EDITOR_RIGHT, SPLIT_EDITOR_UP, SPLIT_EDITOR_DOWN, splitEditor, LAYOUT_EDITOR_GROUPS_COMMAND_ID, UNPIN_EDITOR_COMMAND_ID, COPY_ACTIVE_EDITOR_COMMAND_ID, SPLIT_EDITOR, TOGGLE_MAXIMIZE_EDITOR_GROUP, MOVE_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, MOVE_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, NEW_EMPTY_EDITOR_WINDOW_COMMAND_ID, MOVE_EDITOR_INTO_RIGHT_GROUP, MOVE_EDITOR_INTO_LEFT_GROUP, MOVE_EDITOR_INTO_ABOVE_GROUP, MOVE_EDITOR_INTO_BELOW_GROUP, REOPEN_ACTIVE_EDITOR_WITH_COMMAND_ID } from './editorCommands.js';
+import { CLOSE_EDITOR_COMMAND_ID, MOVE_ACTIVE_EDITOR_COMMAND_ID, SelectedEditorsMoveCopyArguments, SPLIT_EDITOR_LEFT, SPLIT_EDITOR_RIGHT, SPLIT_EDITOR_UP, SPLIT_EDITOR_DOWN, splitEditor, LAYOUT_EDITOR_GROUPS_COMMAND_ID, UNPIN_EDITOR_COMMAND_ID, COPY_ACTIVE_EDITOR_COMMAND_ID, SPLIT_EDITOR, TOGGLE_MAXIMIZE_EDITOR_GROUP, MOVE_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, MOVE_EDITOR_INTO_MAIN_WINDOW_COMMAND_ID, MOVE_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, NEW_EMPTY_EDITOR_WINDOW_COMMAND_ID, MOVE_EDITOR_INTO_RIGHT_GROUP, MOVE_EDITOR_INTO_LEFT_GROUP, MOVE_EDITOR_INTO_ABOVE_GROUP, MOVE_EDITOR_INTO_BELOW_GROUP, REOPEN_ACTIVE_EDITOR_WITH_COMMAND_ID } from './editorCommands.js';
 import { IEditorGroupsService, IEditorGroup, GroupsArrangement, GroupLocation, GroupDirection, preferredSideBySideGroupDirection, IFindGroupScope, GroupOrientation, EditorGroupLayout, GroupsOrder, MergeGroupMode } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -32,7 +32,7 @@ import { KeyChord, KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { IKeybindingRule, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
-import { ActiveEditorAvailableEditorIdsContext, ActiveEditorContext, ActiveEditorGroupEmptyContext, AuxiliaryBarVisibleContext, EditorPartMaximizedEditorGroupContext, EditorPartMultipleEditorGroupsContext, InAutomationContext, IsAuxiliaryWindowFocusedContext, MultipleEditorGroupsContext, SideBarVisibleContext } from '../../../common/contextkeys.js';
+import { ActiveEditorAvailableEditorIdsContext, ActiveEditorContext, ActiveEditorGroupEmptyContext, AuxiliaryBarVisibleContext, EditorPartMaximizedEditorGroupContext, EditorPartMultipleEditorGroupsContext, InAutomationContext, IsAuxiliaryWindowContext, IsAuxiliaryWindowFocusedContext, MultipleEditorGroupsContext, SideBarVisibleContext } from '../../../common/contextkeys.js';
 import { getActiveDocument } from '../../../../base/browser/dom.js';
 import { ICommandActionTitle } from '../../../../platform/action/common/action.js';
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
@@ -2627,6 +2627,92 @@ export class CopyEditorToNewindowAction extends BaseMoveCopyEditorToNewWindowAct
 			{ primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KeyK, KeyCode.KeyO), weight: KeybindingWeight.WorkbenchContrib },
 			false
 		);
+	}
+}
+
+export class MoveEditorToMainWindowAction extends Action2 {
+
+	constructor() {
+		super({
+			id: MOVE_EDITOR_INTO_MAIN_WINDOW_COMMAND_ID,
+			title: {
+				...localize2('moveEditorToMainWindow', "Move Editor into Main Window"),
+				mnemonicTitle: localize({ key: 'miMoveEditorToMainWindow', comment: ['&& denotes a mnemonic'] }, "Move Editor into &&Main Window"),
+			},
+			shortTitle: localize('dock', "Dock"),
+			category: Categories.View,
+			precondition: ContextKeyExpr.and(ActiveEditorContext, IsAuxiliaryWindowContext),
+			icon: Codicon.screenNormal,
+			// Burrow (patches/0016). This menu item CANNOT be contributed from the
+			// extension that owns the surface, which is where it belongs on paper.
+			// Measured 2026-08-06 in a real auxiliary window: a stock workbench
+			// action in that title bar runs (Lock Group flips to Unlock Group), an
+			// extension-contributed one does nothing at all — the pre-existing
+			// `burrow.focus.toggle` button is inert there too, so this is not about
+			// this feature. A core action is the only kind that fires from a
+			// floating window, so Dock is one.
+			//
+			// The `when` is the window, and ONLY the window. It used to also require
+			// the editor to be one of the viewTypes in `burrow.window.detachable`,
+			// mirroring Pop Out — and that left every editor a user dragged out by
+			// hand (any file tab can be dragged into a new window; that path asks
+			// nobody's permission) with no way back but
+			// `workbench.action.restoreEditorsToMainWindow`, which merges the whole
+			// window at once. Reported 2026-08-06 as "no redock button". Pop Out is
+			// scoped to Burrow surfaces because it costs a permanent icon in the
+			// main window's title bar; Dock costs nothing, because a floating window
+			// is the only place it ever appears — and there it is the way home.
+			menu: {
+				id: MenuId.EditorTitle,
+				group: 'navigation',
+				order: 99,
+				when: IsAuxiliaryWindowContext,
+			},
+			f1: true
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, ...args: unknown[]): Promise<void> {
+		const editorGroupsService = accessor.get(IEditorGroupsService);
+		const editorService = accessor.get(IEditorService);
+		const listService = accessor.get(IListService);
+
+		const resolvedContext = resolveCommandsContext(args, editorService, editorGroupsService, listService);
+
+		// Prefer the resolved context — with an `IEditorCommandsContext` argument,
+		// or with the auxiliary window focused, it names exactly the editor whose
+		// title bar was clicked.
+		let source = resolvedContext.groupedEditors[0]; // only single group, mirroring the new-window action
+		let preserveFocus = resolvedContext.preserveFocus;
+
+		// Fall back when it does not. With no argument, `resolveCommandsContext`
+		// resolves the GLOBAL active group, which for Dock is routinely the wrong
+		// one: the main window can hold focus while the click lands in the
+		// floating window, and the main group is then empty or holds an editor the
+		// user never asked to move. An empty or non-auxiliary source means the
+		// context told us nothing, so ask the question Dock is actually asking —
+		// "which editor is floating?" — of the parts themselves.
+		if (!source?.editors.length || editorGroupsService.getPart(source.group) === editorGroupsService.mainPart) {
+			const auxiliaryGroup = editorGroupsService.parts
+				.filter(part => part !== editorGroupsService.mainPart)
+				.map(part => part.activeGroup)
+				.find(group => group.activeEditor);
+			if (!auxiliaryGroup?.activeEditor) {
+				return; // nothing is floating; Dock has nothing to do
+			}
+			source = { group: auxiliaryGroup, editors: [auxiliaryGroup.activeEditor] };
+			preserveFocus = false;
+		}
+
+		const { group, editors } = source;
+		const targetGroup = editorGroupsService.mainPart.activeGroup;
+		if (group === targetGroup) {
+			return;
+		}
+
+		group.moveEditors(prepareMoveCopyEditors(group, editors, preserveFocus), targetGroup);
+
+		targetGroup.focus();
 	}
 }
 

@@ -5,9 +5,13 @@
 
 html, body {
 	font-family: var(--markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, "Ubuntu", "Droid Sans", sans-serif);
-	font-size: var(--markdown-font-size, 14px);
+	font-size: var(--markdown-font-size, 16px);
+	/* GitHub reads its body at 400; nudge up a touch for a sturdier column of text. */
+	font-weight: 450;
 	padding: 0 26px;
-	line-height: var(--markdown-line-height, 22px);
+	line-height: var(--markdown-line-height, 1.5);
+	color: var(--md-fg, var(--vscode-editor-foreground));
+	background-color: var(--md-canvas, transparent);
 	word-wrap: break-word;
 }
 
@@ -19,6 +23,33 @@ body {
 	padding-bottom: 4em;
 }
 
+/*
+ * GitHub-themed palette, mapped onto the preview's theme body classes.
+ * Every consumer below reads these through `var(--md-*, <vscode fallback>)`,
+ * so high-contrast (which sets neither block) keeps the VS Code defaults.
+ */
+.vscode-light {
+	--md-canvas: #ffffff;
+	--md-canvas-subtle: #f6f8fa;
+	--md-fg: #1f2328;
+	--md-fg-muted: #656d76;
+	--md-border: #d0d7de;
+	--md-border-muted: #d8dee4;
+	--md-accent: #0969da;
+	--md-code-bg: rgba(175, 184, 193, 0.2);
+}
+
+.vscode-dark {
+	--md-canvas: #0d1117;
+	--md-canvas-subtle: #161b22;
+	--md-fg: #e6edf3;
+	--md-fg-muted: #8b949e;
+	--md-border: #30363d;
+	--md-border-muted: #21262d;
+	--md-accent: #2f81f7;
+	--md-code-bg: rgba(110, 118, 129, 0.4);
+}
+
 /* Reset margin top for elements */
 h1, h2, h3, h4, h5, h6,
 p, ol, ul, pre {
@@ -26,10 +57,15 @@ p, ol, ul, pre {
 }
 
 h1, h2, h3, h4, h5, h6 {
-	font-weight: 600;
+	/* GitHub headings are 600; carry the same +50 nudge as the body. */
+	font-weight: 650;
 	margin-top: 1.6em;
 	margin-bottom: 0.6em;
-	line-height: 1.3;
+	line-height: 1.25;
+}
+
+strong, b {
+	font-weight: 650;
 }
 
 h1, h2 {
@@ -317,6 +353,7 @@ img, video {
 }
 
 a {
+	color: var(--md-accent, var(--vscode-textLink-foreground));
 	text-decoration: none;
 }
 
@@ -347,10 +384,10 @@ ol {
 
 hr {
 	border: 0;
-	height: 1px;
-	border-bottom: 1px solid;
-	margin: 2.5em auto;
-	width: 60%;
+	height: 0.25em;
+	margin: 2em 0;
+	padding: 0;
+	background-color: var(--md-border, currentColor);
 }
 
 h1 {
@@ -392,26 +429,30 @@ table {
 
 th {
 	text-align: left;
-	border-bottom: 1px solid;
+	font-weight: 650;
 }
 
 th,
 td {
-	padding: 5px 10px;
+	padding: 6px 13px;
+	border: 1px solid var(--md-border, currentColor);
 }
 
-table > tbody > tr + tr > td {
-	border-top: 1px solid;
+table > tbody > tr {
+	background-color: var(--md-canvas, transparent);
+	border-top: 1px solid var(--md-border-muted, var(--md-border, currentColor));
+}
+
+table > tbody > tr:nth-child(2n) {
+	background-color: var(--md-canvas-subtle, transparent);
 }
 
 blockquote {
 	margin: 0 0 16px 0;
-	padding: 4px 16px 4px 12px;
-	border-left-width: 3px;
-	border-left-style: solid;
-	border-left-color: var(--vscode-textBlockQuote-border, rgba(127, 127, 127, 0.5));
-	background-color: var(--vscode-textBlockQuote-background, transparent);
-	border-radius: 2px;
+	padding: 0 1em;
+	color: var(--md-fg-muted, var(--vscode-descriptionForeground));
+	border-left: 0.25em solid var(--md-border, var(--vscode-textBlockQuote-border, rgba(127, 127, 127, 0.5)));
+	background-color: transparent;
 }
 
 blockquote > :last-child {
@@ -420,8 +461,11 @@ blockquote > :last-child {
 
 code {
 	font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, Menlo, Consolas, "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace);
-	font-size: 1em;
+	font-size: 0.9em;
 	line-height: 1.357em;
+	padding: 0.2em 0.4em;
+	border-radius: 6px;
+	background-color: var(--md-code-bg, var(--vscode-textPreformat-background, rgba(127, 127, 127, 0.12)));
 }
 
 body.wordWrap pre {
@@ -431,48 +475,36 @@ body.wordWrap pre {
 pre:not(.hljs),
 pre.hljs code > div {
 	padding: 16px;
-	border-radius: 3px;
+	border-radius: 6px;
 	overflow: auto;
 }
 
+/* Fenced code resets the inline-code chrome: no pill background, no padding. */
 pre code {
 	display: inline-block;
-	color: var(--vscode-editor-foreground);
+	color: var(--md-fg, var(--vscode-editor-foreground));
 	tab-size: 4;
+	padding: 0;
+	font-size: inherit;
 	background: none;
+	border-radius: 0;
 }
 
 /** Theming */
 
 pre {
-	background-color: var(--vscode-textCodeBlock-background);
-	border: 1px solid var(--vscode-widget-border);
+	background-color: var(--md-canvas-subtle, var(--vscode-textCodeBlock-background));
+	border: 1px solid var(--md-border, var(--vscode-widget-border));
 }
 
 .vscode-high-contrast h1 {
 	border-color: rgb(0, 0, 0);
 }
 
-.vscode-light th {
-	border-color: rgba(0, 0, 0, 0.69);
-}
-
-.vscode-dark th {
-	border-color: rgba(255, 255, 255, 0.69);
-}
-
-.vscode-light h1,
-.vscode-light h2,
-.vscode-light hr,
-.vscode-light td {
-	border-color: rgba(0, 0, 0, 0.18);
-}
-
-.vscode-dark h1,
-.vscode-dark h2,
-.vscode-dark hr,
-.vscode-dark td {
-	border-color: rgba(255, 255, 255, 0.18);
+/* h1/h2 underlines follow GitHub's muted border; HC keeps its own rule above. */
+h1,
+h2 {
+	border-color: var(--md-border-muted, var(--md-border, currentColor));
 }
 
 /* Frontmatter rendering */

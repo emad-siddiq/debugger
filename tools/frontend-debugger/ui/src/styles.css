@@ -338,7 +338,10 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  z-index: var(--z-toolbar);
+  /* Above the floating Inspector: the toolbar is transient chrome (auto-hides)
+     and must stay clickable when the panel drifts under the top edge —
+     otherwise the panel's ✕ swallows clicks aimed at pin/theme/etc. */
+  z-index: calc(var(--z-panel) + 1);
   transform: translateY(-110%);
   transition: transform 0.22s var(--ease-out);
 }
@@ -1848,4 +1851,408 @@ body {
   .spinner {
     animation-duration: 2s;
   }
+}
+
+/* ---- Visual editor panel (EditorPanel) ---------------------------------- */
+.editor-panel {
+  margin-bottom: 12px;
+}
+.ed-sec {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  margin-bottom: 6px;
+}
+.ed-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.ed-sec-h:hover {
+  color: var(--accent-2);
+}
+.ed-tw {
+  display: inline-block;
+  transition: transform 0.12s var(--ease-out);
+  color: var(--muted);
+  font-size: 10px;
+}
+.ed-tw.open {
+  transform: rotate(90deg);
+}
+.ed-sec-body {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--border);
+}
+.ed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  min-height: 24px;
+}
+.ed-label,
+.scrub-label {
+  flex: 0 0 64px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scrub-label {
+  cursor: ew-resize;
+  user-select: none;
+}
+.scrub-label:hover {
+  color: var(--accent-2);
+}
+.ed-control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.ed-select,
+.ed-text {
+  flex: 1;
+  min-width: 0;
+  background: var(--elev);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 4px;
+}
+.ed-select:focus,
+.ed-text:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.ed-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg-btn {
+  background: var(--elev);
+  border: 0;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border-2);
+}
+.seg-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.ed-split {
+  margin-top: 4px;
+}
+
+/* numeric field */
+.numfield {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.nf-in {
+  flex: 1;
+  min-width: 40px;
+  background: var(--elev);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.nf-in:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.nf-unit {
+  flex: 0 0 auto;
+  width: 48px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 2px 1px;
+}
+
+/* color field */
+.colorfield {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cf-swatch-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 18px;
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
+  overflow: hidden;
+  background-image: linear-gradient(45deg, #333 25%, transparent 25%, transparent 75%, #333 75%),
+    linear-gradient(45deg, #333 25%, transparent 25%, transparent 75%, #333 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+.cf-swatch {
+  position: absolute;
+  inset: 0;
+}
+.cf-picker {
+  position: absolute;
+  inset: -4px;
+  opacity: 0;
+  cursor: pointer;
+}
+.cf-text {
+  flex: 1;
+  min-width: 50px;
+  background: var(--elev);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.cf-text:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.cf-token {
+  flex: 0 0 auto;
+  max-width: 90px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 2px 1px;
+}
+.contrast-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-family: var(--mono);
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+.contrast-badge.aaa {
+  background: rgba(54, 211, 153, 0.2);
+  color: var(--ok);
+}
+.contrast-badge.aa {
+  background: rgba(54, 211, 153, 0.12);
+  color: var(--ok);
+}
+.contrast-badge.fail {
+  background: rgba(248, 114, 114, 0.18);
+  color: var(--danger);
+}
+
+/* provenance chips — colored by origin stratum */
+.prov-chip {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-family: var(--mono);
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--elev);
+  color: var(--muted);
+  cursor: pointer;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prov-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.prov-chip.component {
+  background: rgba(99, 91, 255, 0.18);
+  color: var(--accent-2);
+}
+.prov-chip.theme {
+  background: rgba(251, 189, 35, 0.15);
+  color: var(--warn);
+}
+.prov-chip.global {
+  background: rgba(127, 209, 255, 0.12);
+  color: #7fd1ff;
+}
+.prov-chip.none {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* spacing box (editable box model) */
+.ed-spacing .sp {
+  position: relative;
+  border: 1px dashed var(--border-2);
+  text-align: center;
+  padding: 18px 34px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.ed-spacing .sp-tag {
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.ed-spacing .sp.margin {
+  background: rgba(251, 189, 35, 0.07);
+}
+.ed-spacing .sp.padding {
+  background: rgba(54, 211, 153, 0.07);
+}
+.ed-spacing .sp.content {
+  background: var(--elev);
+  padding: 6px;
+  border-style: solid;
+  color: var(--muted);
+}
+.ed-spacing .sp-v {
+  position: absolute;
+  display: flex;
+  justify-content: center;
+}
+.ed-spacing .sp-v.t {
+  top: 1px;
+  left: 0;
+  right: 0;
+}
+.ed-spacing .sp-v.b {
+  bottom: 1px;
+  left: 0;
+  right: 0;
+}
+.ed-spacing .sp-v.l {
+  left: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.ed-spacing .sp-v.r {
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.bm-in {
+  width: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+  padding: 0;
+}
+.bm-in:hover,
+.bm-in:focus {
+  border-color: var(--border-2);
+  background: var(--elev);
+  outline: none;
+}
+.sp-chips {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* cascade strata + overridden decls */
+.cascade-h {
+  border: 0;
+  background: none;
+  padding: 6px 0;
+}
+.stratum {
+  margin-bottom: 4px;
+}
+.stratum > .sec-h {
+  margin: 8px 0 4px;
+}
+.stratum.theme > .sec-h {
+  color: var(--warn);
+}
+.stratum.global > .sec-h {
+  color: #7fd1ff;
+}
+.decl.overridden .prop,
+.decl.overridden .val {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.decl .override {
+  background: none;
+  border: 1px solid var(--border-2);
+  color: var(--muted);
+  border-radius: 4px;
+  font-size: 9px;
+  cursor: pointer;
+  padding: 0 5px;
+}
+.decl .override:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.inh-sel .prov-chip {
+  margin-left: 4px;
+}
+
+/* editable props */
+.jn.editable {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.prop-edit {
+  flex: 1;
+  min-width: 60px;
+  background: var(--elev);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.prop-edit:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.prop-edit.number {
+  color: #b7a6ff;
+}
+.prop-check {
+  accent-color: var(--accent);
 }

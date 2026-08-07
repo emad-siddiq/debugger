@@ -10,6 +10,7 @@ import {
 	WebviewViewProvider,
 	WebviewViewResolveContext,
 } from 'vscode';
+import { ViewHost } from './detachableView';
 import { asciiText, detectView, hexDump, toBase64, tryPrettyJson, HexRow } from './hexdump';
 import { BytePayload } from './model';
 import { nonce } from './webview';
@@ -50,13 +51,28 @@ export class VizViewProvider implements WebviewViewProvider, Disposable {
 
 	public static readonly viewId = 'burrowVizPane';
 
-	private view: WebviewView | undefined;
+	private view: ViewHost | undefined;
+	/** Set by extension.ts once the pop-out wrapper exists. */
+	public detachable: { resolve(view: WebviewView): void } | undefined;
 	private ready = false;
 	private pending: RenderState | EmptyState = { type: 'empty', message: 'Select a []byte value and run “Burrow: Visualize Value as Hex / ASCII”.' };
 	private readonly disposables: Disposable[] = [];
 
-	/** Wire the webview: strict CSP, script boot handshake, dispose tracking. */
+	/**
+	 * The rail slot. Delegated to `DetachableView` (patches/0016) so the same
+	 * content can live here or in a floating window; `attach` below is the body
+	 * this used to be, and it cannot tell which host it got.
+	 */
 	resolveWebviewView(view: WebviewView, _ctx: WebviewViewResolveContext, _token: CancellationToken): void {
+		if (this.detachable) {
+			this.detachable.resolve(view);
+			return;
+		}
+		this.attach(view);
+	}
+
+	/** Wire a host: strict CSP, script boot handshake, dispose tracking. */
+	attach(view: ViewHost): void {
 		this.view = view;
 		this.ready = false;
 		view.webview.options = { enableScripts: true };

@@ -61,7 +61,9 @@ function tabFacts(tab: Tab): TabFacts {
 	} else if (input instanceof TabInputCustom) {
 		key = `webview:${input.viewType}`;
 	}
-	return { key, isDirty: tab.isDirty, isPinned: tab.isPinned };
+	// `isAuxiliaryWindow` is Burrow's (patches/0016): the tab's group tells us
+	// whether it is in a floating window, which no other tab property can.
+	return { key, isDirty: tab.isDirty, isPinned: tab.isPinned, isAuxiliaryWindow: tab.group.isAuxiliaryWindow };
 }
 
 const SWITCH_DEBOUNCE_MS = 300;

@@ -83,6 +83,18 @@
 				"command": "burrow.agent.toggleInsights",
 				"title": "Toggle Agent Insights",
 				"category": "Burrow"
+			},
+			{
+				"command": "burrow.agent.popOut",
+				"title": "Pop Out Agent Chat",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.agent.dock",
+				"title": "Dock Agent Chat",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
 			}
 		],
 		"menus": {
@@ -96,6 +108,11 @@
 					"command": "burrow.agent.cycleSize",
 					"when": "view == burrowAgentChat",
 					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.agent.popOut",
+					"group": "navigation@99",
+					"when": "view == burrowAgentChat"
 				}
 			]
 		},

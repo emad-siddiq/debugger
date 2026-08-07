@@ -969,6 +969,19 @@ export interface MainThreadEditorTabsShape extends IDisposable {
 export interface IEditorTabGroupDto {
 	isActive: boolean;
 	viewColumn: EditorGroupColumn;
+	/**
+	 * Burrow (patches/0016): whether this group lives in an auxiliary (floating)
+	 * window. `viewColumn` cannot answer that — `editorGroupToColumn` flattens
+	 * every part main-first, so a floating group is indistinguishable from an
+	 * ordinary split.
+	 *
+	 * Optional on the wire purely so upstream's ~20 hand-built DTOs in
+	 * `extHostEditorTabs.test.ts` keep compiling — the main thread always sets
+	 * it. Absent means "not floating", which is the safe direction: the worst a
+	 * false negative costs is that a tab sweep treats a floating tab as ordinary,
+	 * exactly the behaviour before this field existed.
+	 */
+	isAuxiliaryWindow?: boolean;
 	// Decided not to go with simple index here due to opening and closing causing index shifts
 	// This allows us to patch the model without having to do full rebuilds
 	tabs: IEditorTabDto[];

@@ -50,6 +50,18 @@
 				"command": "burrow.oracle.bootstrap",
 				"title": "Bootstrap the Oracle (Agent Walk)",
 				"category": "Oracle"
+			},
+			{
+				"command": "burrow.oracle.popOutWalk",
+				"title": "Pop Out Package Walk",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.oracle.dockWalk",
+				"title": "Dock Package Walk",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
 			}
 		],
 		"keybindings": [
@@ -77,6 +89,11 @@
 				{
 					"command": "burrow.oracle.walkPackages",
 					"group": "navigation",
+					"when": "view == burrowOracleWalk"
+				},
+				{
+					"command": "burrow.oracle.popOutWalk",
+					"group": "navigation@99",
 					"when": "view == burrowOracleWalk"
 				}
 			]

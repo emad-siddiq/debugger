@@ -19,7 +19,7 @@ try {
   console.error('BLOCKED — could not launch Chromium. Run: npx playwright install chromium')
   process.exit(2)
 }
-const page = await browser.newPage({ viewport: { width: 1600, height: 950 } })
+const page = await browser.newPage({ viewport: { width: 1800, height: 950 } })
 const errs = []
 page.on('pageerror', (e) => errs.push('TOP: ' + e.message))
 
@@ -35,7 +35,10 @@ try {
   ok('agent connects to target', true)
 
   const frame = page.frameLocator('iframe.target-frame')
-  const tf = () => page.frames().find((f) => f.url().includes('/watch/app'))
+  // The embedded target's frame, independent of its base path (merkle moved
+  // from /watch/app/ to /): the only cross-origin frame is the target iframe.
+  const uiOrigin = new URL(UI).origin
+  const tf = () => page.frames().find((f) => f !== page.mainFrame() && !f.url().startsWith(uiOrigin))
 
   // --- agent-rpc checks (no toolbar needed) ---
   const data = await page.evaluate(async () => {
@@ -103,17 +106,48 @@ try {
   await page.getByRole('button', { name: /pin/i }).click()
   await page.waitForTimeout(150)
 
+  // theme flipper (renders only when GET /api/themes found [data-theme=…] themes)
+  const themeBtn = page.locator('button[title^="Cycle themes"]')
+  if (await themeBtn.count()) {
+    await themeBtn.click()
+    await page.waitForTimeout(500)
+    const theme = await tf().evaluate(() => document.documentElement.getAttribute('data-theme'))
+    ok('theme: cycle flips data-theme on the app', !!theme, String(theme))
+  }
+
   await page.getByRole('button', { name: /Pick/ }).click()
   await page.waitForTimeout(200)
-  await frame.getByText('Overview', { exact: false }).first().click({ timeout: 5000 })
+  await frame.getByText('My Fleet', { exact: false }).first().click({ timeout: 5000 })
   await page.waitForTimeout(500)
   const picked = (await page.locator('.comp-name').textContent().catch(() => '')) || ''
   ok('pick: click selects a component', picked.trim().length > 0, picked)
 
-  const s1 = await page.locator('.comp-name').textContent()
-  await page.locator('.navbtn[title^="Parent"]').click()
-  await page.waitForTimeout(400)
-  const s2 = await page.locator('.comp-name').textContent()
+  // visual editor: sectioned panel + provenance chips (fed by /css/provenance)
+  await page.getByRole('button', { name: 'Styles', exact: true }).click()
+  await page.waitForTimeout(700)
+  const sections = await page.locator('.editor-panel .ed-sec').count()
+  ok('editor: sectioned design panel renders', sections >= 5, `${sections} sections`)
+  const chips = await page.locator('.prov-chip.component, .prov-chip.theme, .prov-chip.global').count()
+  ok('editor: provenance chips resolve rules to files', chips > 0, `${chips} chips`)
+  const strata = await page.locator('.cascade .stratum').count()
+  ok('editor: cascade bucketed by origin stratum', strata > 0, `${strata} strata`)
+
+  // The merkle app re-renders on live mock-data ticks, which can invalidate a
+  // stable-path id between selection and the ↑ click (silent no-op) — reselect
+  // and retry once before judging.
+  let s1 = await page.locator('.comp-name').textContent()
+  let s2 = s1
+  for (let attempt = 0; attempt < 2 && s1 === s2; attempt++) {
+    await page.locator('.navbtn[title^="Parent"]').click()
+    await page.waitForTimeout(400)
+    s2 = await page.locator('.comp-name').textContent()
+    if (s1 === s2) {
+      await frame.getByText('My Fleet', { exact: false }).first().click({ timeout: 5000 })
+      await page.waitForTimeout(400)
+      s1 = await page.locator('.comp-name').textContent()
+      s2 = s1
+    }
+  }
   ok('nav: ↑ parent changes selection', s1 !== s2, `${s1} → ${s2}`)
 
   // hover resets on scroll
@@ -126,7 +160,7 @@ try {
   ok('hover box resets on scroll', hoverBefore === 1 && hoverAfter === 0, `${hoverBefore}→${hoverAfter}`)
 
   // Monaco JSX
-  await frame.getByText('Overview', { exact: false }).first().click({ timeout: 5000 })
+  await frame.getByText('My Fleet', { exact: false }).first().click({ timeout: 5000 })
   await page.waitForTimeout(300)
   await page.getByRole('button', { name: 'Source', exact: true }).click()
   await page.waitForTimeout(2800)
@@ -137,7 +171,12 @@ try {
   })
   ok('source: no JSX/17004 markers', jsxErr === 0 || jsxErr === -1, `markers=${jsxErr}`)
 
-  // pager + swipe
+  // pager + swipe — unpin the toolbar first: pinned it overlays the panel's
+  // top edge (toolbar chrome sits above the floating panel by design) and
+  // would swallow the ⤢ click.
+  await page.getByRole('button', { name: /pinned/ }).click()
+  await page.mouse.move(900, 500)
+  await page.waitForTimeout(600)
   const surfTx = async () => {
     const tr = await page.locator('.surface').evaluate((el) => getComputedStyle(el).transform)
     const m = tr.match(/matrix\(1, 0, 0, 1, (-?\d+(?:\.\d+)?)/)
@@ -152,6 +191,45 @@ try {
   await page.waitForTimeout(450)
   ok('swipe: two-finger over preview pages to styles', (await surfTx()) < -100)
 
+  // --- isolation harness: labeled chrome + 🎯 inspect → reveal envelope ----
+  {
+    const cfg = await fetch(UI + '/api/config').then((r) => r.json())
+    const target = new URL(cfg.targetUrl)
+    const base = target.pathname.endsWith('/') ? target.pathname : target.pathname + '/'
+    const iso = await browser.newPage()
+    await iso.goto(
+      `${target.origin}${base}__isolate?module=${encodeURIComponent('src/primitives/badge/Badge.tsx')}`,
+      { waitUntil: 'load' },
+    )
+    await iso.waitForTimeout(2200)
+    const chrome = await iso.evaluate(() => ({
+      phoneTip: [...document.querySelectorAll('.tbtn')].find((b) => b.textContent.includes('375'))?.getAttribute('title') || '',
+      inspect: !!document.getElementById('iso-inspect-btn'),
+      advanced: document.querySelector('#iso-panel summary')?.textContent || '',
+    }))
+    ok('isolation: viewport buttons are labeled', /Phone width/.test(chrome.phoneTip), chrome.phoneTip)
+    ok('isolation: inspect toggle + advanced props disclosure', chrome.inspect && /Advanced/.test(chrome.advanced))
+    const reveal = await iso.evaluate(async () => {
+      const got = []
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.__burrowIso === 1 && e.data.type === 'reveal') got.push(e.data)
+      })
+      document.getElementById('iso-inspect-btn').click()
+      const el = document.querySelector('#burrow-iso-root [data-inspect-line]')
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 }))
+      await new Promise((res) => setTimeout(res, 150))
+      return got[0] || null
+    })
+    ok(
+      'isolation: inspect click emits a stamped reveal',
+      !!reveal && /Badge\.tsx$/.test(reveal.detail.file) && reveal.detail.line > 0,
+      reveal ? `${reveal.detail.file}:${reveal.detail.line} .${(reveal.detail.classes || []).join('.')}` : 'no envelope',
+    )
+    await iso.close()
+  }
+
   // --- Mode B: flip live → preflight probes the backend → restore ---------
   // Server-level (node fetch, not the page): each flip restarts the target
   // Vite, so this runs LAST and puts the starting mode back when done.
@@ -165,7 +243,7 @@ try {
   const pf = await jfetch('/api/preflight')
   const backend = (pf.checks || []).find((c) => c.id === 'backend')
   ok('preflight: live mode probes the backend', pf.mode === 'live' && !!backend, backend && `ok=${backend.ok}`)
-  ok('preflight: backend-down carries the F5 remedy', !backend || backend.ok || /Backend IDE/.test(backend.remedy || ''))
+  ok('preflight: backend-down carries the F5 remedy', !backend || backend.ok || /F5 the Go backend|Backend IDE/.test(backend.remedy || ''))
   const rejected = await fetch(UI + '/api/mode', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'chaos' }),
   })

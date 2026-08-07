@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from '../../../../nls.js';
-import { EditorGroupLayout, GroupActivationReason, GroupDirection, GroupLocation, GroupOrientation, GroupsArrangement, GroupsOrder, IAuxiliaryEditorPart, IEditorGroupContextKeyProvider, IEditorDropTargetDelegate, IEditorGroupsService, IEditorSideGroup, IEditorWorkingSet, IFindGroupScope, IMergeGroupOptions, IEditorWorkingSetOptions, IEditorPart, IModalEditorPart, IEditorGroupActivationEvent } from '../../../services/editor/common/editorGroupsService.js';
+import { EditorGroupLayout, GroupActivationReason, GroupDirection, GroupLocation, GroupOrientation, GroupsArrangement, GroupsOrder, IAuxiliaryEditorPart, IEditorGroupContextKeyProvider, IEditorDropTargetDelegate, IEditorGroupsService, IEditorSideGroup, IEditorWorkingSet, IFindGroupScope, IMergeGroupOptions, IEditorWorkingSetOptions, IEditorWorkingSetSaveOptions, IEditorPart, IModalEditorPart, IEditorGroupActivationEvent } from '../../../services/editor/common/editorGroupsService.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { DisposableMap, DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { GroupIdentifier, IEditorPartOptions } from '../../../common/editor.js';
@@ -562,12 +562,14 @@ export class EditorParts extends MultiWindowParts<EditorPart, IEditorPartsMement
 
 	private editorWorkingSets: IEditorWorkingSetState[];
 
-	saveWorkingSet(name: string): IEditorWorkingSet {
+	saveWorkingSet(name: string, options?: IEditorWorkingSetSaveOptions): IEditorWorkingSet {
 		const workingSet: IEditorWorkingSetState = {
 			id: generateUuid(),
 			name,
 			main: this.mainPart.createState(),
-			auxiliary: this.createState()
+			// Burrow (patches/0014): `mainOnly` records no auxiliary windows, so
+			// applying this set later cannot resurrect one under the wrong owner.
+			auxiliary: options?.mainOnly ? { auxiliary: [], mru: [] } : this.createState()
 		};
 
 		this.editorWorkingSets.push(workingSet);
@@ -609,9 +611,16 @@ export class EditorParts extends MultiWindowParts<EditorPart, IEditorPartsMement
 		// editors around that need confirmation by moving them into the main part.
 		// Also, in rare cases, the auxiliary part may not be able to apply the state
 		// for certain editors that cannot move to the main part.
-		const applied = await this.applyState(workingSetState === 'empty' ? workingSetState : workingSetState.auxiliary);
-		if (!applied) {
-			return false;
+		//
+		// Burrow (patches/0014): `preserveAuxiliaryWindows` skips this half
+		// entirely. Applying an auxiliary state — and `'empty'` most of all —
+		// tears down every floating window, which is right for a working set the
+		// user chose and wrong for one swapped in behind a rail click.
+		if (!options?.preserveAuxiliaryWindows) {
+			const applied = await this.applyState(workingSetState === 'empty' ? workingSetState : workingSetState.auxiliary);
+			if (!applied) {
+				return false;
+			}
 		}
 		await this.mainPart.applyState(workingSetState === 'empty' ? workingSetState : workingSetState.main, options);
 

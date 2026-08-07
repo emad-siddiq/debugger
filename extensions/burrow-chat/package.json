@@ -27,7 +27,7 @@
 	"scripts": {
 		"compile": "gulp compile-extension:burrow-chat",
 		"watch": "gulp watch-extension:burrow-chat",
-		"test": "node test/contextFilter.test.js && node test/styleImports.test.js && node test/packModel.test.js"
+		"test": "node test/contextFilter.test.js && node test/styleImports.test.js && node test/packModel.test.js && node test/controls.test.js"
 	},
 	"contributes": {
 		"chatParticipants": [
@@ -103,18 +103,117 @@
 					"type": "string",
 					"enum": [
 						"approvals",
-						"plan",
+						"manual",
 						"acceptEdits",
+						"plan",
+						"auto",
+						"dontAsk",
 						"bypassPermissions"
 					],
 					"default": "approvals",
 					"enumDescriptions": [
 						"Follow the chat Approvals control: Default asks in chat, Auto Approve approves everything.",
-						"Claude Code plan mode: read-only analysis, no edits or commands.",
+						"Ask in chat before every tool use.",
 						"Auto-approve file edits; everything else asks.",
-						"Never ask. Equivalent to the CLI's bypassPermissions."
+						"Claude Code plan mode: read-only analysis, no edits or commands.",
+						"Claude Code's auto mode classifier decides.",
+						"Never ask; proceed without approvals.",
+						"Bypass all permission checks."
 					],
-					"description": "How tool permissions are decided for Claude Code runs."
+					"markdownDescription": "Default permission mode for new chats (`--permission-mode`). Each chat can override this from its Approvals chip."
+				},
+				"burrow.chat.effort": {
+					"type": "string",
+					"enum": [
+						"default",
+						"low",
+						"medium",
+						"high",
+						"xhigh",
+						"max"
+					],
+					"default": "default",
+					"enumDescriptions": [
+						"Whatever your Claude Code is configured to use.",
+						"Fastest, least reasoning.",
+						"Balanced.",
+						"More reasoning per turn.",
+						"Substantially more reasoning.",
+						"Maximum reasoning, slowest."
+					],
+					"markdownDescription": "Default reasoning effort for new chats (`--effort`). Each chat can override this from its Effort chip."
+				},
+				"burrow.chat.thinking": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"off",
+						"think",
+						"megathink",
+						"ultrathink"
+					],
+					"default": "auto",
+					"enumDescriptions": [
+						"Let Claude Code decide the thinking budget.",
+						"No extended thinking.",
+						"4,000 thinking tokens.",
+						"10,000 thinking tokens.",
+						"31,999 thinking tokens."
+					],
+					"markdownDescription": "Default extended-thinking budget for new chats (`MAX_THINKING_TOKENS`). Each chat can override this from its Thinking chip."
+				},
+				"burrow.chat.agent": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Default agent for new chats (`--agent`). Agents are read from `.claude/agents` in the workspace and in your home directory. Empty means Claude Code's own `agent` setting."
+				},
+				"burrow.chat.fallbackModel": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Model(s) to fall back to when the primary is overloaded (`--fallback-model`). Comma-separated, tried in order."
+				},
+				"burrow.chat.maxBudgetUsd": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"markdownDescription": "Stop a run once it has spent this many dollars (`--max-budget-usd`). `0` means uncapped."
+				},
+				"burrow.chat.systemPrompt": {
+					"type": "string",
+					"default": "",
+					"editPresentation": "multilineText",
+					"markdownDescription": "Replace Claude Code's default system prompt entirely (`--system-prompt`). Empty keeps the default."
+				},
+				"burrow.chat.appendSystemPrompt": {
+					"type": "string",
+					"default": "You are the assistant inside Burrow, a Go-focused IDE. Chat attachments arrive as workspace-relative paths (with 1-based line ranges for selections); read them with your tools before answering. A context_pack block lists the artifact the user is focused on and its immediate repo relationships as workspace-relative paths; treat it as a map — answer from it directly when it suffices, and open the listed files with your tools when you need contents.",
+					"editPresentation": "multilineText",
+					"markdownDescription": "Appended to Claude Code's system prompt (`--append-system-prompt`). This is how the model learns what Burrow puts in a message; clearing it appends nothing."
+				},
+				"burrow.chat.debug": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "CLI debug logging (`--debug`). `true` logs everything; a filter such as `api,hooks` or `!file` narrows it. Empty is off."
+				},
+				"burrow.chat.debugFile": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Write CLI debug logs to this path (`--debug-file`)."
+				},
+				"burrow.chat.extraArgs": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Extra arguments appended verbatim to every `claude` run. Quoted strings are honoured; nothing is validated. Do not pass `--bare` — it severs the CLI's OAuth login."
+				},
+				"burrow.chat.showUsage": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show each turn's token counts, cost and duration under the response."
+				},
+				"burrow.chat.logArgs": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "Echo the composed `claude` command line and environment overlay to the Burrow Chat output channel. For verifying that a control reached the CLI."
 				}
 			}
 		},
@@ -128,9 +227,21 @@
 				"command": "burrow.chat.fixSelection",
 				"title": "Fix with Burrow",
 				"category": "Burrow"
+			},
+			{
+				"command": "burrow.chat.controls.open",
+				"title": "Claude Controls",
+				"category": "Burrow",
+				"icon": "$(settings-gear)"
 			}
 		],
 		"menus": {
+			"chat/input/status": [
+				{
+					"command": "burrow.chat.controls.open",
+					"group": "navigation@1"
+				}
+			],
 			"editor/context": [
 				{
 					"command": "burrow.chat.explainSelection",

@@ -11,6 +11,7 @@ import {
 	window,
 	workspace,
 } from 'vscode';
+import { DetachableView } from './detachableView';
 import { VizModel } from './model';
 import { VizViewProvider } from './vizview';
 import { bestVisualizer, hasVisualizer } from './registry';
@@ -37,6 +38,18 @@ function maxBytes(): number {
 export function activate(context: ExtensionContext): void {
 	const models = new Map<string, VizModel>();
 	const pane = new VizViewProvider();
+	// Pop out / dock (patches/0016). A hex dump is a reference surface — the whole
+	// point is to read it while stepping, which is exactly what a 300px-wide slot
+	// under Run and Debug is worst at. The provider does not change: it renders
+	// into whichever host this hands it.
+	const detachable = new DetachableView({
+		viewId: VizViewProvider.viewId,
+		viewType: 'burrow.detached.vizPane',
+		title: 'Value Visualizer',
+		placeholderLabel: 'The value visualizer',
+		attach: (host) => pane.attach(host),
+	}, context.workspaceState);
+	pane.detachable = detachable;
 
 	/**
 	 * The slice's one real action: prompt for an expression, evaluate it in the
@@ -90,8 +103,12 @@ export function activate(context: ExtensionContext): void {
 
 	context.subscriptions.push(
 		pane,
+		detachable,
 		window.registerWebviewViewProvider(VizViewProvider.viewId, pane),
+		detachable.register(),
 		commands.registerCommand('burrow.viz.hexdump', () => visualize()),
+		commands.registerCommand('burrow.viz.popOut', () => detachable.popOut()),
+		commands.registerCommand('burrow.viz.dock', () => detachable.dock()),
 		debug.onDidStartDebugSession((session: DebugSession) => {
 			if (session.type === GO_DEBUG_TYPE) {
 				models.set(session.id, new VizModel(session));
@@ -99,6 +116,12 @@ export function activate(context: ExtensionContext): void {
 		}),
 		debug.onDidTerminateDebugSession((session: DebugSession) => {
 			models.delete(session.id);
+			// The container view's `when` hides it when the session ends; a floating
+			// window has no such rule and would sit there showing a dead session's
+			// bytes as if they were live. Dock it back instead of lying.
+			if (models.size === 0) {
+				void detachable.dock();
+			}
 		}),
 	);
 }

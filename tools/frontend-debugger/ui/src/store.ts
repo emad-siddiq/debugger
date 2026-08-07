@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import type { A11yResult, Box, ChildBox, Detail, HoverState, RoutesInfo, TokensResult, TreeNode } from './protocol'
+import type { A11yResult, Box, ChildBox, Detail, HoverState, RoutesInfo, TokenInfo, TokensResult, TreeNode } from './protocol'
 import type { AppRoute } from './appRoutes'
+import type { ProvMap } from './styleModel'
 import { hostFullScreen, openInBurrow } from './host'
 
 export type Mode = 'interact' | 'pick' | 'theater'
@@ -49,6 +50,11 @@ export interface StyleEdit {
   value: string
   original: string
   existed: boolean
+  // Save destination from provenance (src-relative). null → resolved at save
+  // time: /css/locate first, then /css/ensure a component-scoped rule.
+  file: string | null
+  // The rule may not exist on disk yet (fresh component-scoped selector).
+  ensure?: boolean
 }
 
 export interface Toast {
@@ -128,6 +134,19 @@ interface State {
 
   styleEdits: Record<string, StyleEdit>
   toasts: Toast[]
+
+  // Rule → file:line:origin map for the current selection (POST /css/provenance).
+  provenance: ProvMap
+  // The target's --* design tokens (agent `tokenList`) for the color controls.
+  tokenList: TokenInfo[]
+  // Theme catalog (GET /api/themes) + the theme the debugger last applied.
+  themes: string[]
+  themeName: string | null
+
+  setProvenance: (p: ProvMap) => void
+  setTokenList: (t: TokenInfo[]) => void
+  setThemes: (t: string[]) => void
+  setThemeName: (n: string | null) => void
 
   setTargetMode: (m: TargetMode | null) => void
   setModeFlipping: (b: boolean) => void
@@ -231,6 +250,16 @@ export const useStore = create<State>((set, get) => ({
   styleEdits: {},
   toasts: [],
 
+  provenance: {},
+  tokenList: [],
+  themes: [],
+  themeName: null,
+
+  setProvenance: (p) => set({ provenance: p }),
+  setTokenList: (t) => set({ tokenList: t }),
+  setThemes: (t) => set({ themes: t }),
+  setThemeName: (n) => set({ themeName: n }),
+
   setTargetMode: (m) => set({ targetMode: m }),
   setModeFlipping: (b) => set({ modeFlipping: b }),
   setBackendDown: (b) => set({ backendDown: b }),
@@ -323,5 +352,7 @@ export const useStore = create<State>((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }))
 
-export const editKey = (selectorText: string, media: string | null, prop: string) =>
-  `${selectorText}|${media || ''}|${prop}`
+// File-aware: the same selector can exist in two stylesheets, and each edit
+// must remember which file it saves into ('?' = resolve at save time).
+export const editKey = (file: string | null, selectorText: string, media: string | null, prop: string) =>
+  `${file || '?'}|${selectorText}|${media || ''}|${prop}`

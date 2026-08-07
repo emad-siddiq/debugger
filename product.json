@@ -83,6 +83,18 @@
 	],
 	"onboardingThemes": [
 		{
+			"id": "github-dark",
+			"label": "GitHub Dark",
+			"themeId": "GitHub Dark",
+			"type": "dark"
+		},
+		{
+			"id": "github-light",
+			"label": "GitHub Light",
+			"themeId": "GitHub Light",
+			"type": "light"
+		},
+		{
 			"id": "dark-2026",
 			"label": "Dark 2026",
 			"themeId": "Dark 2026",

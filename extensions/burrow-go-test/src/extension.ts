@@ -5,11 +5,11 @@
 
 import { ExtensionContext, commands, window, workspace } from 'vscode';
 import { GoTestController } from './controller';
-import { GoProfiler } from './profile';
+import { GoProfiler, PROFILE_VIEW_TYPE } from './profile';
 import { TestLab } from './lab';
 import { failedNames } from './labModel';
 import { TestsProvider } from './testsTree';
-import { announceOnVisible, claimSurface } from './toolSurface';
+import { announceOnVisible, claimSurface, detachable } from './toolSurface';
 
 // burrow-go-test — first-class Go tests (architecture task 11). This first slice
 // wires the native Testing API to a real `go test` runner:
@@ -94,6 +94,9 @@ export function activate(context: ExtensionContext): void {
 		announceOnVisible('run', view),
 		view.onDidChangeVisibility(() => void rescanIfEmpty()),
 		claimSurface('run', { viewType: TestLab.viewType }),
+		// Pop out / dock (patches/0016).
+		detachable(TestLab.viewType),
+		detachable(PROFILE_VIEW_TYPE),
 		// Panel persistence (WO-60): the lab comes back with the verdict set it was
 		// showing, labelled as a record rather than a fresh run.
 		lab.register(context),

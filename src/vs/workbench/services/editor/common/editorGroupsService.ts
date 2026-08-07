@@ -611,6 +611,25 @@ export interface IEditorWorkingSet {
 
 export interface IEditorWorkingSetOptions {
 	readonly preserveFocus?: boolean;
+
+	/**
+	 * Burrow (patches/0014): leave auxiliary (floating) windows exactly as they
+	 * are and apply only to the main part. Set by callers that swap the editor
+	 * area on a UI gesture the user did not aim at their second monitor — a rail
+	 * switch must not close a window they deliberately pulled out.
+	 */
+	readonly preserveAuxiliaryWindows?: boolean;
+}
+
+export interface IEditorWorkingSetSaveOptions {
+
+	/**
+	 * Burrow (patches/0014): capture only the main part. The counterpart to
+	 * `preserveAuxiliaryWindows` — a set that never applies to auxiliary windows
+	 * must not record them either, or a reload restores a floating window under
+	 * whichever set happened to be saved last.
+	 */
+	readonly mainOnly?: boolean;
 }
 
 export interface IEditorGroupContextKeyProvider<T extends ContextKeyValue> {
@@ -695,7 +714,7 @@ export interface IEditorGroupsService extends IEditorGroupsContainer {
 	 * Save a new editor working set from the currently opened
 	 * editors and group layout.
 	 */
-	saveWorkingSet(name: string): IEditorWorkingSet;
+	saveWorkingSet(name: string, options?: IEditorWorkingSetSaveOptions): IEditorWorkingSet;
 
 	/**
 	 * Returns all known editor working sets.

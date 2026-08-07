@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 // The type-along guide's one rule: positional first, unique-anchor resync
-// second, SILENCE on ambiguity. The silence cases are the ones worth the most —
-// a wrong ghost suggestion in a learning tool is worse than none, so half of
-// these assert `undefined`.
+// second, and on divergence a CORRECTION rather than silence — the guide
+// survives a typo, and only `burrow.scratch.ghostText` turns it off. The
+// remaining `undefined` cases are the ones worth the most: they are where there
+// is genuinely nothing to say, and a guess would be the tool arguing.
 // Run: `npm test` (after a compile) or `node test/ghost.test.js`.
 
 'use strict';
@@ -29,27 +30,45 @@ const REF = ghostLines([
 
 const at = (docText, line, character) => ghostSuggestion(REF, ghostLines(docText), line, character);
 
+/** The karaoke case: an insertion at the cursor, rendered as ghost text. */
+const insertion = (text, character) => ({ text, start: character, end: character, correction: false });
+
+/** The persistence case: a replacement of the diverged tail, rendered as an inline edit. */
+const correction = (text, start, end) => ({ text, start, end, correction: true });
+
 const cases = {
 	'the remainder of the current line, positionally': () => {
-		assert.strictEqual(at('package', 0, 7), ' main\n\nimport (');
+		assert.deepStrictEqual(at('package', 0, 7), insertion(' main\n\nimport (', 7));
 	},
 
 	'lookahead extends only on the document\'s last line': () => {
 		// Same prefix, but lines already exist below the cursor — suggesting the
 		// next reference lines would stack them on top of what is written.
-		assert.strictEqual(at('package\n\nimport (', 0, 7), ' main');
+		assert.deepStrictEqual(at('package\n\nimport (', 0, 7), insertion(' main', 7));
 	},
 
 	'an empty last line suggests the whole next reference line': () => {
-		assert.strictEqual(at('package main\n', 1, 0), '\nimport (\n\t"encoding/json"');
+		assert.deepStrictEqual(at('package main\n', 1, 0), insertion('\nimport (\n\t"encoding/json"', 0));
 	},
 
-	'divergence is silence, not correction': () => {
-		assert.strictEqual(at('package wrong', 0, 13), undefined);
+	'a typo does not end the guide — it becomes a correction': () => {
+		// The whole point of WO-82b: `wrong` for `main` used to leave the learner
+		// with nothing. The reference tail replaces from where the lines part.
+		assert.deepStrictEqual(at('package wrong', 0, 13), correction('main', 8, 13));
 	},
 
-	'a mid-line cursor is silence': () => {
-		// Auto-closing pairs park text after the cursor; v1 answers quietly.
+	'a typo in the first character still corrects, pinned by the shared tail': () => {
+		assert.deepStrictEqual(at('Package main', 0, 12), correction('package main', 0, 12));
+	},
+
+	'the correction covers text to the RIGHT of the cursor': () => {
+		// What an auto-closing pair leaves behind: `)` parked past the cursor. The
+		// replacement runs to end-of-line, so the pair is absorbed, not fatal.
+		const doc = 'package main\n\nimport (\n\t"encoding/json"\n\t"log"\n)\n\nfunc main() {\n\tlog.Println()';
+		assert.deepStrictEqual(ghostSuggestion(REF, ghostLines(doc), 8, 13), correction('"hi")', 13, 14));
+	},
+
+	'a mid-line cursor on a line that already matches says nothing': () => {
 		assert.strictEqual(at('package main', 0, 4), undefined);
 	},
 
@@ -58,18 +77,27 @@ const cases = {
 		// alignment is off by one from line 3 onward. Cursor on the line after
 		// `\t"encoding/json"` — its unique anchor.
 		const doc = 'package main\n\n\nimport (\n\t"encoding/json"\n\t"lo';
-		assert.strictEqual(ghostSuggestion(REF, ghostLines(doc), 5, 4), 'g"\n)');
+		assert.deepStrictEqual(ghostSuggestion(REF, ghostLines(doc), 5, 4), insertion('g"\n)', 4));
 	},
 
-	'a common previous line (`}`, blank) pins nothing — silence': () => {
-		// Prefix under 3 chars and the previous line is blank: no anchor, no guess.
+	'a typo on a shifted line corrects against the anchored line, not the positional one': () => {
+		// Same off-by-one document, and `\t"lig"` for `\t"log"`. The previous line
+		// pins reference line 4, so the correction comes from there.
+		const doc = 'package main\n\n\nimport (\n\t"encoding/json"\n\t"lig"';
+		assert.deepStrictEqual(ghostSuggestion(REF, ghostLines(doc), 5, 6), correction('og"', 3, 6));
+	},
+
+	'a line with nothing in common is left alone': () => {
+		// `im` shares no head and no tail with `\t"encoding/json"`: the learner is
+		// writing something of their own, and a correction would be an argument.
 		const doc = 'package main\n\n\nim';
 		assert.strictEqual(ghostSuggestion(REF, ghostLines(doc), 3, 2), undefined);
 	},
 
-	'an ambiguous prefix inside the window is silence': () => {
+	'an ambiguous prefix inside the window falls back to the position, not a guess': () => {
 		// Two reference lines start with `\t"` inside the window and the previous
-		// line does not disambiguate them.
+		// line does not disambiguate them. Positional is `b`, which shares nothing
+		// with what is typed — so silence, as before.
 		const ambiguous = ghostLines('a\n\t"x"\nb\n\t"y"\nc');
 		assert.strictEqual(ghostSuggestion(ambiguous, ghostLines('a\nzzz\n\t"'), 2, 2), undefined);
 	},
@@ -79,7 +107,7 @@ const cases = {
 	},
 
 	'a finished line at the end of the document previews what Enter leads to': () => {
-		assert.strictEqual(at('package main\n\nimport (', 2, 8), '\n\t"encoding/json"\n\t"log"');
+		assert.deepStrictEqual(at('package main\n\nimport (', 2, 8), insertion('\n\t"encoding/json"\n\t"log"', 8));
 	},
 
 	'a finished line with lines below it suggests nothing': () => {
@@ -92,7 +120,7 @@ const cases = {
 
 	'CRLF references compare clean': () => {
 		const crlf = ghostLines('package main\r\nimport (\r\n');
-		assert.strictEqual(ghostSuggestion(crlf, ghostLines('package'), 0, 7), ' main\nimport (');
+		assert.deepStrictEqual(ghostSuggestion(crlf, ghostLines('package'), 0, 7), insertion(' main\nimport (', 7));
 	},
 };
 

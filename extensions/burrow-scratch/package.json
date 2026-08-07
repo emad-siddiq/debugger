@@ -11,6 +11,9 @@
 	"categories": [
 		"Other"
 	],
+	"enabledApiProposals": [
+		"inlineCompletionsAdditions"
+	],
 	"activationEvents": [
 		"onStartupFinished",
 		"onWebviewPanel:burrow.scratch.step"
@@ -231,7 +234,7 @@
 					"type": "boolean",
 					"default": true,
 					"scope": "window",
-					"markdownDescription": "Show the next characters of the reference as faded ghost text while typing a step. The guide goes quiet when your file diverges from the reference — on purpose."
+					"markdownDescription": "Show the next characters of the reference as faded ghost text while typing a step. It stays with you through typos: when your line diverges, the guide switches to an inline edit showing the reference line, which `Tab` accepts. This setting is the only thing that turns it off."
 				},
 				"burrow.scratch.notesDir": {
 					"type": "string",

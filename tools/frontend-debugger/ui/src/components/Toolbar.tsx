@@ -55,6 +55,34 @@ function ModePill() {
   )
 }
 
+// Theme flipper: the server scans the target's stylesheets for
+// `[data-theme=…]` values (GET /api/themes); picking one has the agent flip the
+// attribute on <html> live — selection survives (stable path identity), so you
+// can page through themes while inspecting one component. Ephemeral by design.
+function ThemePicker({ ready }: { ready: boolean }) {
+  const themes = useStore((s) => s.themes)
+  const themeName = useStore((s) => s.themeName)
+  if (!themes.length) return null
+  const apply = (name: string) => {
+    ipc.send('setTheme', { name })
+    useStore.getState().toast('info', `theme → ${name}`)
+  }
+  const cycle = () => {
+    const i = themeName ? themes.indexOf(themeName) : -1
+    apply(themes[(i + 1) % themes.length])
+  }
+  return (
+    <button
+      className={'btn ghost icon' + (themeName ? ' active' : '')}
+      disabled={!ready}
+      title={`Cycle themes: ${themes.join(' → ')} (now: ${themeName || 'app default'}) — live data-theme flip, does not persist`}
+      onClick={cycle}
+    >
+      🎭
+    </button>
+  )
+}
+
 export function Toolbar() {
   const ready = useStore((s) => s.ready)
   const mode = useStore((s) => s.mode)
@@ -191,6 +219,8 @@ export function Toolbar() {
       >
         🎨 Tokens
       </button>
+
+      <ThemePicker ready={ready} />
 
       <div className="sep" />
 

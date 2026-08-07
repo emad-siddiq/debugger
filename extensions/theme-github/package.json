@@ -1,0 +1,30 @@
+{
+	"name": "theme-github",
+	"displayName": "GitHub Theme for Burrow",
+	"description": "GitHub-flavored Dark and Light color themes for Burrow — Primer palette across the workbench, terminal, and syntax. Matches the GitHub-themed markdown preview.",
+	"version": "0.1.0",
+	"publisher": "burrow",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.128.0"
+	},
+	"categories": [
+		"Themes"
+	],
+	"contributes": {
+		"themes": [
+			{
+				"id": "GitHub Dark",
+				"label": "GitHub Dark",
+				"uiTheme": "vs-dark",
+				"path": "./themes/github-dark.json"
+			},
+			{
+				"id": "GitHub Light",
+				"label": "GitHub Light",
+				"uiTheme": "vs",
+				"path": "./themes/github-light.json"
+			}
+		]
+	}
+}

@@ -33,6 +33,18 @@
 				"title": "Visualize Value as Hex / ASCII",
 				"category": "Burrow",
 				"icon": "$(file-binary)"
+			},
+			{
+				"command": "burrow.viz.popOut",
+				"title": "Pop Out Value Visualizer",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.viz.dock",
+				"title": "Dock Value Visualizer",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
 			}
 		],
 		"keybindings": [
@@ -55,6 +67,21 @@
 				{
 					"command": "burrow.viz.hexdump",
 					"when": "inDebugMode && debugType == go"
+				},
+				{
+					"command": "burrow.viz.popOut",
+					"when": "inDebugMode && debugType == go"
+				},
+				{
+					"command": "burrow.viz.dock",
+					"when": "inDebugMode && debugType == go"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.viz.popOut",
+					"group": "navigation@99",
+					"when": "view == burrowVizPane"
 				}
 			]
 		},

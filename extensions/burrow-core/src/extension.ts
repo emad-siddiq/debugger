@@ -5,6 +5,7 @@
 
 import { ExtensionContext, commands, window, version as vscodeVersion } from 'vscode';
 import { BurrowToolsApi, createToolsApi } from './tools';
+import { BurrowWindowsApi, createWindowsApi } from './windows';
 
 // burrow-core is the first built-in extension (layer 4 of the fork strategy).
 // For task 01 it exists only to prove the built-in path: it compiles in the
@@ -16,6 +17,8 @@ import { BurrowToolsApi, createToolsApi } from './tools';
 export interface BurrowCoreApi {
 	/** Tool-surface isolation registry — see ./tools.ts (docs/plans/02 §6). */
 	readonly tools: BurrowToolsApi;
+	/** Pop out / dock registry for tool surfaces — see ./windows.ts (patches/0016). */
+	readonly windows: BurrowWindowsApi;
 }
 
 export function activate(context: ExtensionContext): BurrowCoreApi {
@@ -42,7 +45,7 @@ export function activate(context: ExtensionContext): BurrowCoreApi {
 			commands.executeCommand('workbench.action.exitZenMode'),
 		),
 	);
-	return { tools: createToolsApi(context) };
+	return { tools: createToolsApi(context), windows: createWindowsApi(context) };
 }
 
 export function deactivate(): void {

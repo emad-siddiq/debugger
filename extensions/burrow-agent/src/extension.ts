@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { PanelSizer } from './layout';
 import { AgentPanel } from './panel';
 import { SessionStore } from './sessions';
+import { DetachableView } from './detachableView';
 
 // burrow-agent — the right-hand agent panel (docs/plans/03). Phase A was the
 // panel, the CLI transport, sessions and the size states; phases B–E added the
@@ -24,9 +25,24 @@ export function activate(context: vscode.ExtensionContext): void {
 	const sessions = new SessionStore(context.workspaceState);
 	const sizer = new PanelSizer();
 	const panel = new AgentPanel(context, sessions, sizer);
+	// Pop out / dock (patches/0016). Chat beside code is the whole ergonomic
+	// argument for a second monitor, and the secondary sidebar is the narrowest
+	// place in the workbench to hold a transcript.
+	const chatDetachable = new DetachableView({
+		viewId: AgentPanel.viewId,
+		viewType: 'burrow.detached.agentChat',
+		title: 'Agent',
+		placeholderLabel: 'The agent chat',
+		attach: (host) => panel.attach(host),
+	}, context.workspaceState);
+	panel.detachable = chatDetachable;
 
 	context.subscriptions.push(
 		panel,
+		chatDetachable,
+		chatDetachable.register(),
+		vscode.commands.registerCommand('burrow.agent.popOut', () => chatDetachable.popOut()),
+		vscode.commands.registerCommand('burrow.agent.dock', () => chatDetachable.dock()),
 		vscode.window.registerWebviewViewProvider(AgentPanel.viewId, panel, {
 			// The transcript survives being hidden; re-rendering it from state on
 			// every reveal would also lose the scroll position mid-conversation.

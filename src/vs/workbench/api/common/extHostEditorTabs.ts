@@ -135,6 +135,12 @@ class ExtHostEditorTabGroup {
 				get viewColumn() {
 					return typeConverters.ViewColumn.to(that._dto.viewColumn);
 				},
+				get isAuxiliaryWindow() {
+					// Burrow (patches/0016). Deliberately its own bit rather than a
+					// column sentinel: `viewColumn` is a grid index over every part,
+					// so there is no value it could take that means "floating".
+					return that._dto.isAuxiliaryWindow === true;
+				},
 				get activeTab() {
 					return that._tabs.find(tab => tab.tabId === that._activeTabId)?.apiObject;
 				},

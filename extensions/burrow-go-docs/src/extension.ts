@@ -16,9 +16,10 @@ import {
 	languages,
 	window,
 } from 'vscode';
-import { DocViewer } from './viewer';
+import { detachable } from './toolSurface';
+import { DOCS_VIEW_TYPE, DocViewer } from './viewer';
 import { parseDocTarget } from './godoc';
-import { GoplsWebPage, GoplsWebPanel } from './webPanel';
+import { GoplsWebPage, GoplsWebPanel, WEB_VIEW_TYPE } from './webPanel';
 import { registerBrowseCommand } from './browse';
 
 // burrow-go-docs — offline Go docs + hover → fullscreen viewer (architecture
@@ -55,6 +56,10 @@ export function activate(context: ExtensionContext): void {
 		// pages. Not in the palette — its argument is a parsed page object, so a
 		// reader invoking it by hand has nothing useful to pass.
 		commands.registerCommand('burrow.goDocs.openWeb', (page: GoplsWebPage) => web.show(page)),
+		// Pop out / dock (patches/0016). Reference on a second monitor is the whole
+		// point of a docs pane, so both readers register.
+		detachable(DOCS_VIEW_TYPE),
+		detachable(WEB_VIEW_TYPE),
 		registerBrowseCommand(),
 		// NO `claimSurface` here, and the claim it used to make was `files`.
 		//

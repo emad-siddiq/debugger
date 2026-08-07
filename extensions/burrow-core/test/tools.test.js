@@ -51,3 +51,29 @@ test('activating a tool with no claims sweeps every other tool; empty registry c
 	assert.deepStrictEqual(selectTabsToClose(c, 'run', [tab('webview:burrow.db.grid')]), [0]);
 	assert.deepStrictEqual(selectTabsToClose(new Map(), 'run', [tab('webview:burrow.db.grid')]), []);
 });
+
+// --- pop out / dock (patches/0016) ---------------------------------------
+//
+// `window.tabGroups.all` includes auxiliary-window groups, so a surface the
+// user pulled onto a second monitor is an ordinary sweep candidate unless
+// something spares it. `TabGroup.isAuxiliaryWindow` is that something.
+
+const floating = (key, opts = {}) => ({ key, isDirty: !!opts.dirty, isPinned: !!opts.pinned, isAuxiliaryWindow: true });
+
+test('a tab in a floating window is never swept, however it got there', () => {
+	const c = claims({ data: ['webview:burrow.db.grid', 'webview:burrow.db.pgadmin'] });
+	// Both belong to the inactive Data tool; only the grid is floating.
+	const tabs = [floating('webview:burrow.db.grid'), tab('webview:burrow.db.pgadmin')];
+	assert.deepStrictEqual(selectTabsToClose(c, 'components', tabs), [1]);
+});
+
+test('the flag is per tab: the docked twin of a floating surface still closes', () => {
+	const c = claims({ data: ['webview:burrow.db.grid'] });
+	const tabs = [floating('webview:burrow.db.grid'), tab('webview:burrow.db.grid')];
+	assert.deepStrictEqual(selectTabsToClose(c, 'components', tabs), [1]);
+});
+
+test('omitting the flag keeps the pre-0016 behaviour exactly', () => {
+	const c = claims({ data: ['webview:burrow.db.grid'] });
+	assert.deepStrictEqual(selectTabsToClose(c, 'components', [tab('webview:burrow.db.grid')]), [0]);
+});

@@ -5,7 +5,7 @@
 
 import { ExtensionContext, QuickPickItem, StatusBarAlignment, commands, window, workspace } from 'vscode';
 import { describeDsn, parsePostgresUrl, pickConnectionString } from './dsn';
-import { announceOnVisible, claimSurface } from './toolSurface';
+import { announceOnVisible, claimSurface, detachable } from './toolSurface';
 import { findWorkspaceDatabaseUrl } from './workspaceDsn';
 import { PgQueryClient, QueryClient } from './query';
 import { StarterQuery, buildColumnsSql, buildPreviewSql, loadSchemaTree, starterQueries } from './catalog';
@@ -152,6 +152,10 @@ export function activate(context: ExtensionContext): BurrowDbApi {
 		dbView,
 		announceOnVisible('data', dbView),
 		claimSurface('data', { viewType: 'burrow.db.grid' }),
+		// Pop out / dock (patches/0016): both Data surfaces can live on a second
+		// monitor. Registration is by viewType, so it holds across close/reopen.
+		detachable(GridPanel.viewType),
+		detachable(PgAdmin.viewType),
 		// Panel persistence (WO-60): both Data surfaces come back with their rail,
 		// a reload and a relaunch. Neither reconnects on the way in — the grid
 		// restores holding its SQL, pgAdmin restores stopped.

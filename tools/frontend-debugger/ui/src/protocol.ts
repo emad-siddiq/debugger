@@ -45,6 +45,9 @@ export interface ComputedBox {
   margin: [string, string, string, string]
   padding: [string, string, string, string]
   border: [string, string, string, string]
+  // Additional longhands (EXTRA_COMPUTED in agent.js) keyed by css property —
+  // the editor panel's fallback when no authored rule defines a control's prop.
+  extra?: Record<string, string>
 }
 
 export interface InheritedRule {
@@ -71,8 +74,11 @@ export interface Detail {
   id: string
   name: string
   tag: string | null
+  className?: string | null
   box: Box | null
   source: SourceLoc | null
+  // Where the component is USED — prop edits land in the owner's file.
+  owner?: SourceLoc | null
   path: PathItem[]
   css: MatchedRule[]
   allMedia: Record<string, boolean>
@@ -108,6 +114,12 @@ export interface TokensResult {
   offenders: TokenOffender[]
 }
 
+// ---- Design-token catalog (agent event `tokenList`) ------------------------
+export interface TokenInfo {
+  name: string // --token-name
+  value: string // currently-resolved value on :root
+}
+
 // ---- Discovered route catalog (agent event `routes`) -----------------------
 // Read from the target's live react-router fibers, so the picker + navigation
 // basename come from whatever app is loaded — not a hardcoded nodewatch catalog.
@@ -117,6 +129,9 @@ export interface DiscoveredRoute {
   label: string
   group: 'Primary' | 'Secondary'
   dynamic: boolean
+  // The route element's component name when statically knowable (null for
+  // lazy() routes) — "Show in App" matches usage-graph names against this.
+  name?: string | null
 }
 export interface RoutesInfo {
   source: 'live' | 'none'

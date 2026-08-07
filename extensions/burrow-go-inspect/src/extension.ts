@@ -21,6 +21,7 @@ import { WatchProvider } from './watch';
 import { FramesProvider } from './frames';
 import { registerBreakpointsCommand } from './breakpoints';
 import { AdapterCapabilities, adapterNameFrom } from './capabilities';
+import { DetachableView } from './detachableView';
 
 // burrow-go-inspect — the IX inspector (architecture task 05). The slices:
 //   WO-3  path-addressed DAP value model + per-Go-type summary renderer (model.ts, summary.ts)
@@ -93,10 +94,28 @@ export function activate(context: ExtensionContext): void {
 		},
 	};
 
+	// Pop out / dock (patches/0016). The three debug panes share one rail slot
+	// each in a container that is 300px wide by default; a stack, a Miller
+	// column set and a watch list all want more. Each can move to a floating
+	// window and each leaves a placeholder with a Dock button behind.
+	const detachables = [
+		new DetachableView({ viewId: FramesProvider.viewId, viewType: 'burrow.detached.frames', title: 'Frames', placeholderLabel: 'Frames', attach: (host) => frames.attach(host) }, context.workspaceState),
+		new DetachableView({ viewId: MillerInspectorProvider.viewId, viewType: 'burrow.detached.inspector', title: 'Inspector', placeholderLabel: 'The inspector', attach: (host) => miller.attach(host) }, context.workspaceState),
+		new DetachableView({ viewId: WatchProvider.viewId, viewType: 'burrow.detached.watch', title: 'Watch', placeholderLabel: 'Watch', attach: (host) => watch.attach(host) }, context.workspaceState),
+	];
+	frames.detachable = detachables[0];
+	miller.detachable = detachables[1];
+	watch.detachable = detachables[2];
+
 	context.subscriptions.push(
 		miller,
 		watch,
 		frames,
+		...detachables,
+		...detachables.map(d => d.register()),
+		commands.registerCommand('burrow.inspect.popOutFrames', () => detachables[0].popOut()),
+		commands.registerCommand('burrow.inspect.popOutInspector', () => detachables[1].popOut()),
+		commands.registerCommand('burrow.inspect.popOutWatch', () => detachables[2].popOut()),
 		registerBreakpointsCommand(capabilities),
 		window.registerWebviewViewProvider(FramesProvider.viewId, frames),
 		window.registerWebviewViewProvider(MillerInspectorProvider.viewId, miller),
@@ -113,6 +132,14 @@ export function activate(context: ExtensionContext): void {
 			models.delete(session.id);
 			miller.reset();
 			watch.refresh();
+			// The debug container's `when` hides these views when the last session
+			// ends. A floating window has no such rule, and a stack frame view of a
+			// dead session is a lie — dock them rather than leave them lying.
+			if (models.size === 0) {
+				for (const d of detachables) {
+					void d.dock();
+				}
+			}
 			frames.refresh();
 		}),
 		// A frame switch invalidates the current drill path (refs are frame-scoped),

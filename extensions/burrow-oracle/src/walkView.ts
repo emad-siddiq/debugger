@@ -18,6 +18,7 @@ import {
 	commands,
 } from 'vscode';
 import { GoPackage, PackageTreeNode } from './golist';
+import { ViewHost } from './detachableView';
 
 /** A random nonce for the strict inline-script CSP (same idiom as the inspector). */
 function nonce(): string {
@@ -46,13 +47,29 @@ interface RevealMessage {
 export class OracleWalkProvider implements WebviewViewProvider {
 	static readonly viewId = 'burrowOracleWalk';
 
-	private view?: WebviewView;
+	private view?: ViewHost;
+	/** Set by extension.ts once the pop-out wrapper exists (patches/0016). */
+	public detachable: { resolve(view: WebviewView): void } | undefined;
 	private tree?: PackageTreeNode;
 	private count = 0;
 	private status = 'Run “Oracle: Walk Go Packages” to map this codebase.';
 
 	/** Wire the webview: strict CSP, and a click → reveal-in-explorer bridge. */
+	/**
+	 * The rail slot. Delegated to `DetachableView` (patches/0016) when a pop-out
+	 * wrapper is wired, so the same content can live here or in a floating
+	 * window; `attach` below is the body this used to be.
+	 */
 	resolveWebviewView(view: WebviewView, _context: WebviewViewResolveContext, _token: CancellationToken): void {
+		if (this.detachable) {
+			this.detachable.resolve(view);
+			return;
+		}
+		this.attach(view);
+	}
+
+	/** Wire a host — a rail slot or a popped-out panel; this cannot tell which. */
+	attach(view: ViewHost): void {
 		this.view = view;
 		view.webview.options = { enableScripts: true };
 		view.webview.onDidReceiveMessage((message: RevealMessage) => {

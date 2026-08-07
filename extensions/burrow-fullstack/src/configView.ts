@@ -14,6 +14,7 @@ import {
 	WebviewViewResolveContext,
 } from 'vscode';
 import { Toggle, ToggleManifest } from './toggles';
+import { ViewHost } from './detachableView';
 
 function nonce(): string {
 	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -39,7 +40,9 @@ interface ViewMessage {
 export class DebugConfigProvider implements WebviewViewProvider {
 	static readonly viewId = 'burrowDebugConfig';
 
-	private view?: WebviewView;
+	private view?: ViewHost;
+	/** Set by extension.ts once the pop-out wrapper exists (patches/0016). */
+	public detachable: { resolve(view: WebviewView): void } | undefined;
 	private manifest: ToggleManifest = { toggles: [] };
 	private state: Record<string, boolean> = {};
 	private sessionActive = false;
@@ -51,7 +54,21 @@ export class DebugConfigProvider implements WebviewViewProvider {
 		private readonly onStop: () => void,
 	) { }
 
+	/**
+	 * The rail slot. Delegated to `DetachableView` (patches/0016) when a pop-out
+	 * wrapper is wired, so the same content can live here or in a floating
+	 * window; `attach` below is the body this used to be.
+	 */
 	resolveWebviewView(view: WebviewView, _context: WebviewViewResolveContext, _token: CancellationToken): void {
+		if (this.detachable) {
+			this.detachable.resolve(view);
+			return;
+		}
+		this.attach(view);
+	}
+
+	/** Wire a host — a rail slot or a popped-out panel; this cannot tell which. */
+	attach(view: ViewHost): void {
 		this.view = view;
 		view.webview.options = { enableScripts: true };
 		view.webview.onDidReceiveMessage((message: ViewMessage) => {

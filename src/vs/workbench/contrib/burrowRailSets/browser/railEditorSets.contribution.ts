@@ -13,7 +13,6 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { registerWorkbenchContribution2, WorkbenchPhase, type IWorkbenchContribution } from '../../../common/contributions.js';
 import { ViewContainerLocation } from '../../../common/views.js';
 import { IEditorGroupsService, IEditorWorkingSet } from '../../../services/editor/common/editorGroupsService.js';
-import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 
 export const PER_RAIL_EDITOR_SETS_SETTING = 'burrow.workbench.perRailEditorSets';
@@ -65,7 +64,6 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 	constructor(
 		@IPaneCompositePartService paneCompositePartService: IPaneCompositePartService,
 		@IEditorGroupsService private readonly _editorGroupsService: IEditorGroupsService,
-		@IEditorService private readonly _editorService: IEditorService,
 		@IStorageService private readonly _storageService: IStorageService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 	) {
@@ -128,8 +126,13 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 		if (existing && existing !== 'empty') {
 			this._editorGroupsService.deleteWorkingSet(existing);
 		}
-		if (this._editorService.visibleEditors.length > 0) {
-			this._setsByKey.set(key, this._editorGroupsService.saveWorkingSet(`rail-working-set:${key}`));
+		// Main part only, both in the test and in the save. Floating windows are
+		// the user's, not a rail's: a rail holding nothing but a popped-out panel
+		// is empty as far as the editor area is concerned, and recording the
+		// floating window into this set would let a later reload restore it under
+		// whichever rail happened to save last. See patches/0014 and 0016.
+		if (this._editorGroupsService.mainPart.groups.some(group => group.count > 0)) {
+			this._setsByKey.set(key, this._editorGroupsService.saveWorkingSet(`rail-working-set:${key}`, { mainOnly: true }));
 		} else {
 			// Remember emptiness explicitly, so returning to this rail clears the
 			// editor area instead of inheriting the previous rail's tabs.
@@ -141,7 +144,10 @@ export class RailEditorSetsContribution extends Disposable implements IWorkbench
 		const workingSet = this._setsByKey.get(key) ?? 'empty';
 		this._applying = true;
 		try {
-			await this._editorGroupsService.applyWorkingSet(workingSet, { preserveFocus: true });
+			// `preserveAuxiliaryWindows`: a rail click is not a gesture aimed at the
+			// second monitor. Without it, `'empty'` — the set every rail the user
+			// has not visited yet resolves to — closes every floating window.
+			await this._editorGroupsService.applyWorkingSet(workingSet, { preserveFocus: true, preserveAuxiliaryWindows: true });
 		} finally {
 			this._applying = false;
 		}

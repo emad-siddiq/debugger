@@ -18,9 +18,12 @@ import { missingCliMessage, resolveClaudeCli } from './claudeCli';
 import { admitAttachment, isCliOwnedContext } from './contextFilter';
 import { buildContextPack } from './contextPack';
 import { resolveViewContext, ViewContext } from './contextResolver';
+import { TurnUsage, buildTurn, policyFor, renderUsage } from './controls';
+import { ControlsStore } from './controlsStore';
 import { FocusTracker } from './focusTracker';
+import { cliAliasFor } from './modelProvider';
 import { renderContextPack, shouldEmitPack } from './packModel';
-import { ClaudeSession, ParkedPermission, PermissionPolicy, TRACE_PROMPT, TurnDelegate, TurnOutcome, tracePrompt } from './session';
+import { ClaudeSession, ParkedPermission, TRACE_PROMPT, TurnDelegate, TurnOutcome, tracePrompt } from './session';
 import { collectWorkbenchContext } from './workbenchContext';
 
 const PERMISSION_DATA_KIND = 'burrow.claude.permission';
@@ -50,8 +53,12 @@ export class BurrowChatParticipant {
 	 *  at submit time the chat input holds focus and this fork reports
 	 *  activeTextEditor as undefined, so "editing X" = last active + still visible. */
 	private readonly tracker = new FocusTracker();
+	private lastKey: string | undefined;
 
-	constructor(private readonly context: vscode.ExtensionContext) { }
+	constructor(
+		private readonly context: vscode.ExtensionContext,
+		private readonly controls: ControlsStore,
+	) { }
 
 	register(): vscode.Disposable {
 		this.context.subscriptions.push(this.tracker);
@@ -120,13 +127,17 @@ export class BurrowChatParticipant {
 			new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 500)),
 		]).then(v => v, () => undefined) : undefined;
 		const prompt = await this.composePrompt(request, viewCtx) + this.workbenchBlock(sessionKey);
+		const state = this.controls.resolve(sessionKey);
+		const wire = buildTurn(state, cliAliasFor(request.model?.id));
 		const outcome = await session.startTurn(prompt, {
 			cliPath: cli.path,
 			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
-			model: this.cliModelOf(request),
-			...this.permissionsOf(request),
-			appendSystemPrompt: 'You are the assistant inside Burrow, a Go-focused IDE. Chat attachments arrive as workspace-relative paths (with 1-based line ranges for selections); read them with your tools before answering. A context_pack block lists the artifact the user is focused on and its immediate repo relationships as workspace-relative paths; treat it as a map — answer from it directly when it suffices, and open the listed files with your tools when you need contents.',
+			extraArgs: wire.args,
+			env: wire.env,
+			policy: policyFor(state.permissionMode, (request as any).permissionLevel),
 		}, this.delegateFor(stream, session));
+		// --fork-session rides exactly one turn.
+		this.controls.consumeForkNext(sessionKey);
 		return this.settle(outcome, stream, sessionKey, token);
 	}
 
@@ -147,7 +158,7 @@ export class BurrowChatParticipant {
 					stream.warning(friendly);
 					return { errorDetails: { message: friendly } };
 				}
-				return {};
+				return this.usageResult(stream, outcome.usage);
 
 			case 'parked': {
 				this.pushConfirmation(stream, outcome.permission, sessionKey);
@@ -161,6 +172,28 @@ export class BurrowChatParticipant {
 				stream.warning(outcome.error);
 				return { errorDetails: { message: outcome.error } };
 		}
+	}
+
+	/**
+	 * The CLI's `result` event carries the turn's real cost and token counts. Feed the
+	 * numbers to the stock context-usage widget and the human line to the response's
+	 * trailing details. Gated by `burrow.chat.showUsage`; a turn with no numbers renders
+	 * nothing at all.
+	 */
+	private usageResult(stream: vscode.ChatResponseStream, usage: TurnUsage | undefined): vscode.ChatResult {
+		if (!usage || !vscode.workspace.getConfiguration('burrow.chat').get<boolean>('showUsage', true)) {
+			return {};
+		}
+		const promptTokens = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+		if (promptTokens > 0 || usage.outputTokens) {
+			try {
+				stream.usage({ promptTokens, completionTokens: usage.outputTokens ?? 0 });
+			} catch {
+				// usage display is decoration; never let it break the turn
+			}
+		}
+		const details = renderUsage(usage);
+		return details ? { details } : {};
 	}
 
 	private pushConfirmation(stream: vscode.ChatResponseStream, permission: ParkedPermission, sessionKey: string): void {
@@ -275,33 +308,6 @@ export class BurrowChatParticipant {
 		return parts.join('\n\n') || 'Continue.';
 	}
 
-	private cliModelOf(request: vscode.ChatRequest): string | undefined {
-		const model = request.model;
-		if (!model) { return undefined; }
-		switch (model.id) {
-			case 'claude-fable': return 'fable';
-			case 'claude-opus': return 'opus';
-			case 'claude-sonnet': return 'sonnet';
-			case 'claude-haiku': return 'haiku';
-			default: return undefined; // claude-default: the CLI's own configured model
-		}
-	}
-
-	private permissionsOf(request: vscode.ChatRequest): { policy: PermissionPolicy; cliPermissionMode?: string } {
-		const configured = vscode.workspace.getConfiguration('burrow.chat').get<string>('permissionMode', 'approvals');
-		switch (configured) {
-			case 'plan': return { policy: 'ask', cliPermissionMode: 'plan' };
-			case 'acceptEdits': return { policy: 'ask', cliPermissionMode: 'acceptEdits' };
-			case 'bypassPermissions': return { policy: 'allowAll', cliPermissionMode: 'bypassPermissions' };
-			default: {
-				// Follow the chat input's Approvals control.
-				const level = (request as any).permissionLevel as string | undefined;
-				const allowAll = level === 'autoApprove' || level === 'autopilot';
-				return { policy: allowAll ? 'allowAll' : 'ask' };
-			}
-		}
-	}
-
 	/**
 	 * The workbench-state block for this turn, or '' when nothing is live or
 	 * nothing changed since the block last rode this session.
@@ -322,7 +328,13 @@ export class BurrowChatParticipant {
 
 	private sessionKeyOf(request: vscode.ChatRequest): string {
 		const resource = (request as any).sessionResource as vscode.Uri | undefined;
-		return resource ? resource.toString() : 'workspace';
+		this.lastKey = resource ? resource.toString() : 'workspace';
+		return this.lastKey;
+	}
+
+	/** The tab the controls hub edits when the workbench cannot say which is focused. */
+	lastSessionKey(): string | undefined {
+		return this.lastKey;
 	}
 
 	private sessionFor(key: string, hasHistory: boolean): ClaudeSession {

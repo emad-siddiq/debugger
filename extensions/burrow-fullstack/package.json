@@ -42,6 +42,18 @@
 				"command": "burrow.fullstack.stop",
 				"title": "Stop Full Stack",
 				"category": "Burrow"
+			},
+			{
+				"command": "burrow.fullstack.popOutConfig",
+				"title": "Pop Out Debug Config",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.fullstack.dockConfig",
+				"title": "Dock Debug Config",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
 			}
 		],
 		"configuration": {
@@ -149,6 +161,11 @@
 					"command": "burrow.fullstack.stop",
 					"when": "view == burrowFullStackStatus",
 					"group": "navigation@2"
+				},
+				{
+					"command": "burrow.fullstack.popOutConfig",
+					"group": "navigation@99",
+					"when": "view == burrowDebugConfig"
 				}
 			]
 		}

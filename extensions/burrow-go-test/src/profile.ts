@@ -50,7 +50,8 @@ import {
 	traceEnv,
 } from './profileArgs';
 
-const VIEW_TYPE = 'burrowGoProfile';
+export const PROFILE_VIEW_TYPE = 'burrowGoProfile';
+const VIEW_TYPE = PROFILE_VIEW_TYPE;
 
 /** How long to wait for a viewer to announce its address before giving up. */
 const VIEWER_TIMEOUT_MS = 30_000;

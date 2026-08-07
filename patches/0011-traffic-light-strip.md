@@ -178,6 +178,33 @@ interactive child of that bar needs an explicit `no-drag` or it stops responding
 Fullscreen hides the traffic lights; the `fullscreen` class already on the
 workbench turns the strip back off via `:not(.fullscreen)`.
 
+## The drag region was dead for a month (2026-08-06)
+
+Item 5 above says the drag lives on the editor title bar with `no-drag` on the
+interactive children. One of those children was **`.tabs-container`**, and it is
+`flex: 1` — it fills the title bar from the first tab to the toolbar. So "the
+empty run to the right of the tabs" is *inside* the container that had just been
+excluded, and the rule protected the entire bar from itself.
+
+Measured on the running dev build, hit-testing five x-positions at three heights
+in the main window and in a floating one: **every point resolved `no-drag`** —
+the ancestor walk reached `.tabs-container` before it reached `.title`. Neither
+window could be moved by any point in its chrome. It surfaced as a pop-out
+complaint ("once it's dragged out I can't move it around") only because the main
+window is normally left where it is.
+
+The fix moves `no-drag` off the container and onto `.tabs-container > .tab`,
+which is where it is actually needed — a tab is dragged, clicked and
+middle-clicked — plus `.scrollbar`, so an overflowing tab strip can still be
+scrubbed. Re-measured after: the empty run reports `drag` at every probe and the
+traffic-light footprint (x &lt; 64) still reports `no-drag`, because in a floating
+window the first tab covers it.
+
+What a drag region costs, and this one now costs it: the empty run stops being a
+**drop target** for a tab dragged from another group, and double-click there no
+longer opens an untitled editor — macOS zooms the window instead. Dropping onto
+a tab, or into the editor body, is unaffected.
+
 ## Known edges
 
 - The buttons span x=7…61 and the activity bar is 48px, so they overhang the

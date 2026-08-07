@@ -12,6 +12,7 @@ import { PanelSizer } from './layout';
 import { contractReminders } from './memoryModel';
 import { Session, SessionStore, Turn } from './sessions';
 import { Transport, TransportEvent } from './transport';
+import { ViewHost } from './detachableView';
 
 // The panel itself: the transcript, the composer, the vertical session rail
 // (docs/plans/03 §8). It owns one Transport per session — created on that
@@ -63,7 +64,9 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 
 	public static readonly viewId = 'burrowAgentChat';
 
-	private view: vscode.WebviewView | undefined;
+	private view: ViewHost | undefined;
+	/** Set by extension.ts once the pop-out wrapper exists (patches/0016). */
+	public detachable: { resolve(view: vscode.WebviewView): void } | undefined;
 	private readonly transports = new Map<string, Transport>();
 	/** The turn currently being written into, and whose session it belongs to. */
 	private streaming: { readonly sessionId: string; readonly turn: Turn; text: string } | undefined;
@@ -105,7 +108,21 @@ export class AgentPanel implements vscode.WebviewViewProvider, vscode.Disposable
 		this.render();
 	}
 
+	/**
+	 * The secondary-sidebar slot. Delegated to `DetachableView` (patches/0016) so
+	 * the chat can move to a floating window; `attach` below is the body this
+	 * used to be, and it cannot tell which host it got.
+	 */
 	resolveWebviewView(view: vscode.WebviewView): void {
+		if (this.detachable) {
+			this.detachable.resolve(view);
+			return;
+		}
+		this.attach(view);
+	}
+
+	/** Wire a host — a sidebar slot or a popped-out panel. */
+	attach(view: ViewHost): void {
 		this.view = view;
 		view.webview.options = { enableScripts: true };
 		view.webview.html = html(nonce());

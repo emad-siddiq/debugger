@@ -265,17 +265,33 @@
 	So the empty run of the editor title bar to the right of the tabs is the
 	drag handle, which is where a macOS user reaches for a window anyway. Every
 	interactive child is explicitly `no-drag`, or it would stop responding:
-	drag regions swallow mouse events whole. */
+	drag regions swallow mouse events whole.
+
+	The `no-drag` list used to name `.tabs-container`, and that made the whole
+	rule dead: the container is `flex: 1` and fills the title bar edge to edge,
+	so the "empty run to the right of the tabs" is INSIDE it and inherited
+	`no-drag` with everything else. Measured 2026-08-06, main window and a
+	floating one: a hit test at five x-positions across the title bar resolved
+	`no-drag` at every single one — neither window could be moved at all, which
+	is how the popped-out surface came to be reported as stuck. So the tabs
+	themselves carry `no-drag` (they must: a tab is dragged, clicked and
+	middle-clicked), and the empty run they leave behind carries the drag.
+
+	The cost is what a drag region always costs — the empty run stops being a
+	drop target for a tab dragged from another group, and double-click there no
+	longer opens an untitled editor; macOS zooms the window instead. Dropping
+	onto a tab or into the editor body is unaffected. */
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title {
 	-webkit-app-region: drag;
 }
 
-.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .tabs-container,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .tabs-container > .tab,
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .title-actions,
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .editor-actions,
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .label-container,
 .monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-breadcrumbs,
-.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-toolbar {
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .monaco-toolbar,
+.monaco-workbench.mac.window-controls-inset:not(.fullscreen) .part.editor > .content .editor-group-container > .title .scrollbar {
 	-webkit-app-region: no-drag;
 }
 

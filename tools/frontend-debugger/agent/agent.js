@@ -320,12 +320,52 @@
     }
     return idx
   }
+  // Compute the child-index path CONSISTENTLY WITH fiberByPath's walk-down.
+  // A naive walk-up over `.return` can traverse stale ALTERNATE parents after a
+  // commit (React double-buffers fibers), yielding indices from the previous
+  // tree — then fiberByPath(pathId(f)) resolves elsewhere or not at all, and
+  // selection silently breaks on any live-ticking app. So: collect the ancestor
+  // chain, then re-walk DOWN the current tree matching each level by identity
+  // or alternate, recording the walk-down index.
   function pathOfFiber(fiber) {
-    var path = []
+    var chain = []
     var cur = fiber
-    while (cur && cur.return) {
-      path.unshift(indexAmongSiblings(cur))
+    while (cur) {
+      chain.unshift(cur)
       cur = cur.return
+    }
+    var roots = getRoots()
+    var top = roots[0] || null
+    for (var r = 0; r < roots.length; r++) {
+      if (roots[r] === chain[0] || roots[r].alternate === chain[0]) {
+        top = roots[r]
+        break
+      }
+    }
+    var path = []
+    var node = top
+    for (var i = 1; i < chain.length; i++) {
+      var want = chain[i]
+      var found = null
+      var idx = 0
+      var c = node ? node.child : null
+      while (c) {
+        if (c === want || c.alternate === want) {
+          found = c
+          break
+        }
+        c = c.sibling
+        idx++
+      }
+      if (found) {
+        path.push(idx)
+        node = found
+      } else {
+        // Level not present in the current tree (mid-commit / unmounted):
+        // fall back to the stale sibling count so the path stays comparable.
+        path.push(indexAmongSiblings(want))
+        node = want
+      }
     }
     return path
   }
@@ -412,11 +452,44 @@
     return last.charAt(0).toUpperCase() + last.slice(1).replace(/[-_]/g, ' ')
   }
 
+  // The route's page-component name, when statically knowable: data-router
+  // routes carry `element` (a React element) or `Component` (the type itself);
+  // JSX <Route> props carry `element`. Route elements are often WRAPPED
+  // (<RequireAuth><FleetPage/></RequireAuth>) — descend through single-element
+  // children chains and keep the DEEPEST named type, else every guarded route
+  // reports the guard's name and route matching degenerates. lazy() routes
+  // resolve to null — the client falls back to locate-after-navigate.
+  function routeElementName(routeObj) {
+    try {
+      if (!routeObj) return null
+      if (routeObj.Component) return nameFromType(routeObj.Component)
+      var el = routeObj.element
+      var name = null
+      var guard = 0
+      while (el && typeof el === 'object' && el.type && guard++ < 6) {
+        var n = nameFromType(el.type)
+        if (n) name = n
+        var kids = el.props && el.props.children
+        el = kids && typeof kids === 'object' && !Array.isArray(kids) && kids.type ? kids : null
+      }
+      return name
+    } catch (e) {
+      return null
+    }
+  }
+
   function pushRoute(out, seen, routeObj, full) {
     if (!full || seen[full]) return
     seen[full] = true
     var label = (routeObj && routeObj.handle && routeObj.handle.label) || prettyRouteLabel(full)
-    out.push({ id: full, path: full, label: label, group: 'Primary', dynamic: /[:*]/.test(full) })
+    out.push({
+      id: full,
+      path: full,
+      label: label,
+      group: 'Primary',
+      dynamic: /[:*]/.test(full),
+      name: routeElementName(routeObj),
+    })
   }
 
   // Data-router (createBrowserRouter): walk the resolved route objects.
@@ -707,11 +780,30 @@
     }
     return { matched: matched, allMedia: allMedia }
   }
+  // Longhands the editor panel needs beyond the box-model basics. Captured as a
+  // flat map so the UI can fall back to the computed value for any control whose
+  // property no authored rule defines.
+  var EXTRA_COMPUTED = [
+    'top', 'right', 'bottom', 'left', 'z-index', 'overflow-x', 'overflow-y', 'box-sizing',
+    'flex-direction', 'justify-content', 'align-items', 'align-self', 'flex-wrap',
+    'row-gap', 'column-gap', 'flex-grow', 'flex-shrink', 'flex-basis',
+    'grid-template-columns', 'grid-template-rows',
+    'min-width', 'min-height', 'max-width', 'max-height',
+    'background-image',
+    'border-top-style', 'border-top-color', 'outline-width', 'outline-style', 'outline-color',
+    'border-top-left-radius', 'border-top-right-radius',
+    'border-bottom-right-radius', 'border-bottom-left-radius',
+    'opacity', 'box-shadow', 'filter', 'backdrop-filter', 'transform',
+    'font-weight', 'line-height', 'letter-spacing',
+    'text-align', 'text-transform', 'text-decoration-line',
+  ]
   function computedBox(el) {
     var cs = getComputedStyle(el)
     var g = function (p) {
       return cs.getPropertyValue(p)
     }
+    var extra = {}
+    for (var x = 0; x < EXTRA_COMPUTED.length; x++) extra[EXTRA_COMPUTED[x]] = g(EXTRA_COMPUTED[x])
     return {
       width: g('width'),
       height: g('height'),
@@ -724,6 +816,7 @@
       margin: [g('margin-top'), g('margin-right'), g('margin-bottom'), g('margin-left')],
       padding: [g('padding-top'), g('padding-right'), g('padding-bottom'), g('padding-left')],
       border: [g('border-top-width'), g('border-right-width'), g('border-bottom-width'), g('border-left-width')],
+      extra: extra,
     }
   }
 
@@ -957,19 +1050,29 @@
     currentEl = el
     var id = pathId(fiber)
     // Track this id so its boundary follows the component as the app scrolls.
-    // A live-watch re-describe (keepTracked) must NOT reset tracked/watchId —
-    // that would clobber theater drill boxes and hijack the watched component.
-    if (!opts.keepTracked) {
+    // A live-watch re-describe (keepTracked) must NOT reset `tracked` — that
+    // would clobber theater drill boxes — but it DOES refresh watchId/watchFiber:
+    // live app re-renders can shift sibling indices, and the watched component's
+    // path must track its fiber, not the other way round (see currentOf).
+    if (opts.keepTracked) {
+      if (watchId && watchId !== id && tracked.has(watchId)) {
+        tracked.delete(watchId)
+        tracked.add(id)
+      }
+    } else {
       tracked = new Set([id])
-      watchId = id
     }
+    watchId = id
+    watchFiber = fiber
     var css = el ? matchedRulesFor(el) : { matched: [], allMedia: {} }
     return {
       id: id,
       name: getComponentName(fiber),
       tag: el ? el.tagName.toLowerCase() : null,
+      className: el && el.getAttribute ? el.getAttribute('class') : null,
       box: boxOfFiber(fiber),
       source: sourceOfFiber(fiber) || (el ? sourceOfElement(el) : null),
+      owner: ownerSourceOf(fiber),
       path: ancestorChain(fiber),
       css: css.matched,
       allMedia: css.allMedia,
@@ -981,13 +1084,34 @@
     }
   }
 
+  // Where the selected component is USED (the `<Component …>` call site lives in
+  // the owner's file — that's the file prop edits must land in). _debugOwner is
+  // dev-only but survives in React 19; fall back to the parent component fiber.
+  function ownerSourceOf(fiber) {
+    try {
+      var o = fiber._debugOwner
+      if (o) {
+        var s = sourceOfFiber(o)
+        if (s) return s
+      }
+      var p = parentComponentFiber(fiber)
+      return p ? sourceOfFiber(p) : null
+    } catch (e) {
+      return null
+    }
+  }
+
   // ---- Scroll/resize tracking (keep boundaries glued to components) --------
   // The selection box (and theater drill boxes) are viewport-relative rects; if
   // the app scrolls or resizes, they must be recomputed or they drift/vanish.
   var tracked = new Set()
   // Live Watch: the currently-inspected component's id, re-emitted on each React
   // commit (throttled via watchTimer) so its props/hooks/value pane update live.
+  // watchFiber is the same component BY REFERENCE — when a live re-render shifts
+  // sibling indices and invalidates the path id, currentOf(watchFiber) recovers
+  // the live fiber (via the double-buffer alternate) and the id is recomputed.
   var watchId = null
+  var watchFiber = null
   var watchTimer = null
   var lastMoveX = -1
   var lastMoveY = -1
@@ -1348,6 +1472,37 @@
     } catch (e) {}
     return { map: map, count: count }
   }
+  // Every --* custom property with its currently-resolved value — the editor's
+  // ColorField offers these as `var(--…)` candidates. Same authored-rule scan as
+  // readTokens (custom props aren't enumerable via getComputedStyle length).
+  function tokenCatalog() {
+    var out = []
+    try {
+      var cs = getComputedStyle(document.documentElement)
+      var names = {}
+      var sheets = document.styleSheets
+      for (var s = 0; s < sheets.length; s++) {
+        var rules
+        try { rules = sheets[s].cssRules } catch (e) { continue }
+        if (!rules) continue
+        for (var i = 0; i < rules.length; i++) {
+          var rule = rules[i]
+          if (rule.type !== 1 || !rule.style) continue
+          for (var j = 0; j < rule.style.length; j++) {
+            var prop = rule.style[j]
+            if (prop.indexOf('--') === 0) names[prop] = 1
+          }
+        }
+      }
+      var keys = Object.keys(names).sort()
+      for (var k = 0; k < keys.length; k++) {
+        var raw = cs.getPropertyValue(keys[k]).trim()
+        if (raw) out.push({ name: keys[k], value: raw })
+      }
+    } catch (e) {}
+    return out
+  }
+
   function auditTokens() {
     var offenders = []
     var CAP = 200
@@ -1489,8 +1644,36 @@
     } catch (e) {}
   }
 
-  function describeById(id, preferEl) {
+  // Recover the live fiber behind a possibly-stale reference: React double-
+  // buffers fibers (alternate pairs), and the current one is the one whose
+  // recomputed path resolves back to itself. Returns null when the component
+  // unmounted entirely.
+  function currentOf(fiber) {
+    var candidates = [fiber, fiber ? fiber.alternate : null]
+    for (var i = 0; i < 2; i++) {
+      var c = candidates[i]
+      if (!c) continue
+      try {
+        var resolved = fiberByPath(pathId(c))
+        if (resolved === c) return c
+        if (resolved && resolved.alternate === c) return resolved
+      } catch (e) {}
+    }
+    return null
+  }
+
+  // Resolve an id from the UI; when the app re-rendered and shifted sibling
+  // indices, the path goes stale — fall back to the watched fiber, since every
+  // selection-scoped command operates on the current selection and the UI's id
+  // can lag the refreshed watchId by a commit.
+  function resolveId(id) {
     var f = fiberByPath(id)
+    if (f) return f
+    return watchFiber ? currentOf(watchFiber) : null
+  }
+
+  function describeById(id, preferEl) {
+    var f = resolveId(id)
     return f ? describeFiber(f, preferEl) : null
   }
 
@@ -1509,9 +1692,12 @@
   function emitWatchUpdate() {
     try {
       if (!watchId) return
-      var f = fiberByPath(watchId)
+      var prevId = watchId
+      var f = fiberByPath(watchId) || currentOf(watchFiber)
       if (!f) return
-      send({ type: 'inspectUpdate', detail: describeFiber(f, null, { keepTracked: true }) })
+      // prevId lets the UI match this update against a selection whose id just
+      // went stale (describeFiber refreshes watchId to the fiber's current path).
+      send({ type: 'inspectUpdate', prevId: prevId, detail: describeFiber(f, null, { keepTracked: true }) })
     } catch (e) {}
   }
 
@@ -1542,7 +1728,7 @@
           break
         }
         case 'selectRelative': {
-          var base = fiberByPath(d.id)
+          var base = resolveId(d.id)
           if (!base) break
           var rel = relativeFiber(base, d.dir)
           if (rel) send({ type: 'selected', detail: describeFiber(rel) })
@@ -1622,6 +1808,54 @@
           break
         case 'getRoutes':
           send({ type: 'routes', detail: detectRoutes(), url: location.href })
+          break
+        case 'locate': {
+          // Show in App: find mounted instances of a component by its authored
+          // source file. The inspectorPlugin stamps host JSX with
+          // data-inspect-file (the file the JSX literal lives in), so elements
+          // stamped with the component's file ARE its rendered markup; the
+          // nearest component fiber above one is the instance. `name` refines
+          // the match (inline same-file subcomponents share the stamp). DOM-less
+          // matches (portal-only, fragment-only) fall back to a fiber-name walk.
+          var locIds = []
+          var locSeen = {}
+          var pushLocated = function (f) {
+            var lid = pathId(f)
+            if (lid && !locSeen[lid]) {
+              locSeen[lid] = true
+              locIds.push(lid)
+            }
+          }
+          if (d.file) {
+            var sel = '[data-inspect-file="' + String(d.file).replace(/["\\]/g, '\\$&') + '"]'
+            var stamped = document.querySelectorAll(sel)
+            for (var si = 0; si < stamped.length && locIds.length < 20; si++) {
+              var lf = nearestComponentFiber(getFiberFromDom(stamped[si]))
+              if (lf && (!d.name || getComponentName(lf) === d.name)) pushLocated(lf)
+            }
+          }
+          if (!locIds.length && d.name) {
+            var locRoots = getRoots()
+            for (var lri = 0; lri < locRoots.length; lri++)
+              walkAllFibers(locRoots[lri], function (f) {
+                if (locIds.length < 20 && isComponentFiber(f) && getComponentName(f) === d.name)
+                  pushLocated(f)
+              })
+          }
+          send({ type: 'located', ids: locIds, file: d.file || null, name: d.name || null })
+          break
+        }
+        case 'setTheme': {
+          // Flip the target's theme live: the app keys its theme css off
+          // `[data-theme=…]` on <html>. Ephemeral by design — the app's own
+          // theme store still owns the durable choice.
+          if (d.name) document.documentElement.setAttribute('data-theme', d.name)
+          else document.documentElement.removeAttribute('data-theme')
+          send({ type: 'themeSet', name: d.name || null })
+          break
+        }
+        case 'getTokens':
+          send({ type: 'tokenList', tokens: tokenCatalog() })
           break
       }
     } catch (err) {

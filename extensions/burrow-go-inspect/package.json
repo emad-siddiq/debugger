@@ -33,6 +33,24 @@
 				"title": "Breakpoints…",
 				"category": "Burrow",
 				"icon": "$(debug-breakpoint)"
+			},
+			{
+				"command": "burrow.inspect.popOutFrames",
+				"title": "Pop Out Frames",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.inspect.popOutInspector",
+				"title": "Pop Out Inspector",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.inspect.popOutWatch",
+				"title": "Pop Out Watch",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
 			}
 		],
 		"keybindings": [
@@ -55,6 +73,23 @@
 				{
 					"command": "burrow.breakpoints.manage",
 					"when": "debuggersAvailable"
+				}
+			],
+			"view/title": [
+				{
+					"command": "burrow.inspect.popOutFrames",
+					"group": "navigation@99",
+					"when": "view == burrowFrames"
+				},
+				{
+					"command": "burrow.inspect.popOutInspector",
+					"group": "navigation@99",
+					"when": "view == burrowInspectorMiller"
+				},
+				{
+					"command": "burrow.inspect.popOutWatch",
+					"group": "navigation@99",
+					"when": "view == burrowWatch"
 				}
 			]
 		},

@@ -27,6 +27,9 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
+import { PermissionPolicy, TurnUsage, usageOfResult } from './controls';
+
+export type { PermissionPolicy };
 
 /** Outgoing-prompt tracing (plan chat/01 step 1). Off in shipped builds; Phase 4's
  *  E2E matrix flips it on to assert byte-identical packs and message contents. */
@@ -40,6 +43,16 @@ export function tracePrompt(tag: string, text: string): void {
 	try { fs.appendFileSync('/tmp/burrow-chat-trace.log', entry + '\n'); } catch { /* capture is best-effort */ }
 }
 
+/** `burrow.chat.logArgs`: echo the composed command line so a control can be proven on the wire. */
+let spawnChannel: vscode.OutputChannel | undefined;
+function logSpawn(cliPath: string, args: readonly string[], env: Readonly<Record<string, string>>): void {
+	if (!vscode.workspace.getConfiguration('burrow.chat').get<boolean>('logArgs', false)) { return; }
+	spawnChannel ??= vscode.window.createOutputChannel('Burrow Chat');
+	const quoted = args.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(' ');
+	const envBits = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ');
+	spawnChannel.appendLine(`${new Date().toISOString()}  ${envBits ? envBits + ' ' : ''}${cliPath} ${quoted}`);
+}
+
 export interface ParkedPermission {
 	readonly controlRequestId: string;
 	readonly toolName: string;
@@ -49,7 +62,7 @@ export interface ParkedPermission {
 }
 
 export type TurnOutcome =
-	| { kind: 'result'; subtype: string; isError: boolean; text: string }
+	| { kind: 'result'; subtype: string; isError: boolean; text: string; usage?: TurnUsage }
 	| { kind: 'parked'; permission: ParkedPermission }
 	| { kind: 'died'; error: string };
 
@@ -61,16 +74,14 @@ export interface TurnDelegate {
 	onToolEnd(id: string, ok: boolean, summary: string): void;
 }
 
-export type PermissionPolicy = 'ask' | 'allowAll';
-
 export interface TurnOptions {
 	readonly cliPath: string;
 	readonly cwd: string;
-	readonly model?: string;
-	/** Extra CLI --permission-mode (plan | acceptEdits | bypassPermissions). */
-	readonly cliPermissionMode?: string;
+	/** Control-derived argv (model, effort, permission mode, …) — see controls.buildTurn. */
+	readonly extraArgs: readonly string[];
+	/** Control-derived environment overlay, applied after the inherited env is scrubbed. */
+	readonly env: Readonly<Record<string, string>>;
 	readonly policy: PermissionPolicy;
-	readonly appendSystemPrompt?: string;
 }
 
 export class ClaudeSession {
@@ -106,18 +117,19 @@ export class ClaudeSession {
 			'--include-partial-messages',
 			'--permission-prompt-tool', 'stdio',
 		];
-		if (opts.cliPermissionMode) { args.push('--permission-mode', opts.cliPermissionMode); }
-		if (opts.model) { args.push('--model', opts.model); }
 		if (this.sessionId) { args.push('--resume', this.sessionId); }
-		if (opts.appendSystemPrompt) { args.push('--append-system-prompt', opts.appendSystemPrompt); }
+		args.push(...opts.extraArgs);
 
-		const env = { ...process.env };
+		const env: NodeJS.ProcessEnv = { ...process.env };
 		delete env['ELECTRON_RUN_AS_NODE'];
 		// An ANTHROPIC_* var inherited from whatever shell launched the IDE would
 		// silently switch the CLI from the user's login to API-key billing.
 		for (const key of Object.keys(env)) {
 			if (key.startsWith('ANTHROPIC_')) { delete env[key]; }
 		}
+		// The controls overlay lands after the scrub, so the scrub can never undo it.
+		Object.assign(env, opts.env);
+		logSpawn(opts.cliPath, args, opts.env);
 
 		const child = spawn(opts.cliPath, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env });
 		this.child = child;
@@ -295,7 +307,13 @@ export class ClaudeSession {
 				const child = this.child;
 				this.child = undefined;
 				child?.kill();
-				s?.({ kind: 'result', subtype: ev.subtype ?? 'success', isError: !!ev.is_error, text: String(ev.result ?? '') });
+				s?.({
+					kind: 'result',
+					subtype: ev.subtype ?? 'success',
+					isError: !!ev.is_error,
+					text: String(ev.result ?? ''),
+					usage: usageOfResult(ev),
+				});
 				break;
 			}
 		}

@@ -6,7 +6,7 @@
 - **New Burrow-owned files:** `src/vs/workbench/contrib/burrowRailSets/browser/railEditorSets.{contribution.ts,md}`
 - **Size:** 1 line in the upstream file
 - **Last verified against:** upstream 1.128.0
-- **Amended:** WO-60b, 2026-07-29 — see *Amendment* below
+- **Amended:** WO-60b, 2026-07-29; floating windows, 2026-08-06 — see *Amendment* sections below
 
 ## Why
 
@@ -127,6 +127,46 @@ register a serializer and come back with their rail, their window and their
 state. Nothing in this patch changed for it. The dependency runs one way — a new
 tool surface without a serializer silently drops out of every set its rail
 saves. See `docs/architecture/17-panel-persistence.md`.
+
+## Amendment — 2026-08-06: rail switches destroyed floating windows
+
+**Upstream files this amendment adds to the entry:**
+`src/vs/workbench/browser/parts/editor/editorParts.ts`,
+`src/vs/workbench/services/editor/common/editorGroupsService.ts`.
+**Size:** ~15 lines.
+
+Pop out / dock (patches/0016) made this a user-visible bug rather than a latent
+one, but the fault is this patch's and it was always there for an ordinary
+editor moved into a floating window.
+
+**The fault, both halves.** `EditorParts.applyWorkingSet` applies to auxiliary
+parts *first*, by design — it is how upstream keeps editors needing confirmation
+alive by folding them into the main part. A rail the user has not visited
+resolves to `'empty'`, so `_apply` was handing every floating window an empty
+state and tearing it down. And `saveWorkingSet` captures `{main, auxiliary}`, so
+`_save` was recording floating windows into whichever rail happened to be
+outgoing — a reload then restored them under an owner the user never chose.
+`_save`'s emptiness test compounded it: `visibleEditors.length > 0` counts
+auxiliary editors, so a rail holding *nothing but* a popped-out panel recorded a
+non-empty set and cleared the main area on return.
+
+**The fix.** Two options plumbed through `IEditorGroupsService`:
+`IEditorWorkingSetOptions.preserveAuxiliaryWindows` (skip the auxiliary
+`applyState` entirely; still apply to `mainPart`) and a new
+`IEditorWorkingSetSaveOptions.mainOnly` (store an empty auxiliary state). This
+contribution passes both, and its emptiness test becomes
+`mainPart.groups.some(g => g.count > 0)`.
+
+Plumbed through core rather than worked around here because
+`save`/`applyWorkingSet` exist only on `IEditorGroupsService`, and
+`createState`/`applyState` are class-private to `EditorPart` — the alternative
+was a cast into workbench internals, which is worse than 15 lines of honest
+option. `IEditorService` is no longer injected into the contribution; the
+emptiness test reads the editor groups service it already had.
+
+The rule this encodes, worth keeping if the code changes shape: **a working set
+swapped in behind a UI gesture the user did not aim at their second monitor must
+not touch that monitor.** A working set the user explicitly applies still should.
 
 ## Rebase notes
 

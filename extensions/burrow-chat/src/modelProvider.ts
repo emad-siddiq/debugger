@@ -27,6 +27,14 @@ const MODELS: ClaudeModelInfo[] = [
 	{ id: 'claude-haiku', name: 'Haiku 4.5', family: 'claude-haiku', version: '4.5', maxInputTokens: 200000, maxOutputTokens: 32000, capabilities: CAPS, cliAlias: 'haiku', isUserSelectable: true } as ClaudeModelInfo,
 ];
 
+/**
+ * The `--model` value behind a picked model id, or undefined for "whatever the CLI is
+ * configured to use". Derived from MODELS so adding a model here is the only edit needed.
+ */
+export function cliAliasFor(modelId: string | undefined): string | undefined {
+	return MODELS.find(m => m.id === modelId)?.cliAlias;
+}
+
 export class ClaudeModelProvider implements vscode.LanguageModelChatProvider<ClaudeModelInfo> {
 
 	provideLanguageModelChatInformation(_options: vscode.PrepareLanguageModelChatModelOptions, _token: vscode.CancellationToken): ClaudeModelInfo[] {

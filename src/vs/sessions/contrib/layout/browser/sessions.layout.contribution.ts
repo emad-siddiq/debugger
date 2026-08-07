@@ -16,6 +16,7 @@ import { LayoutController, RESPONSIVE_SIDEBAR_SETTING } from './desktopSessionLa
 import { MobileLayoutController } from './mobileSessionLayoutController.js';
 import { DOCK_DETAIL_PANEL_SETTING } from '../../../common/sessionConfig.js';
 import { SinglePaneDesktopSessionLayoutController } from './singlePaneDesktopSessionLayoutController.js';
+import { CompositeEditorSetsController, PER_ACTIVITY_EDITOR_SETS_SETTING } from './compositeEditorSetsController.js';
 
 class SessionsLayoutContribution extends Disposable implements IWorkbenchContribution {
 
@@ -26,6 +27,10 @@ class SessionsLayoutContribution extends Disposable implements IWorkbenchContrib
 		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
+
+		// Per-activity-icon editor sets work under every layout flavor — it only
+		// swaps working sets inside the (shared) editor part.
+		this._register(instantiationService.createInstance(CompositeEditorSetsController));
 
 		if (isWeb && isMobile) {
 			this._register(instantiationService.createInstance(MobileLayoutController));
@@ -57,6 +62,11 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			markdownDescription: localize('sessions.layout.singlePaneDetailPanel', "Controls whether the Agents window docks the detail panel inside the editor so a single editor tab bar spans across the editor and the detail panel. Requires a window reload to take effect."),
 			default: false,
 			tags: ['experimental'],
+		},
+		[PER_ACTIVITY_EDITOR_SETS_SETTING]: {
+			type: 'boolean',
+			markdownDescription: localize('sessions.layout.perActivityEditorSets', "Give each activity-bar icon (Components, Database, API Flows, Full Stack, Docker, Files) its own set of editor tabs: switching icons saves the current tabs and restores that icon's own set. Editors with unsaved changes are never closed by a switch — they carry over into the incoming icon's set until saved."),
+			default: true,
 		},
 	},
 });

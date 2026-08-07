@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../store'
-import type { HookEntry } from '../protocol'
+import { apiPost } from '../ipc'
+import type { Detail, HookEntry } from '../protocol'
 
 // Renders a single value: primitives inline, arrays/objects as a collapsible
 // subtree. The agent has already bounded depth/size, so this is pure display.
@@ -51,6 +52,92 @@ function hookLabel(h: HookEntry): string {
   return `#${h.index} ${h.kind}`
 }
 
+// A primitive prop is editable when we know the file that USES the component
+// (the owner's stamped source) — the edit rewrites the literal at the
+// `<Component …>` call site (POST /api/jsx/edit) and Vite Fast Refresh does
+// the rest. Dynamic/ambiguous call sites come back as structured refusals.
+function isEditable(selection: Detail, k: string, v: unknown): boolean {
+  if (!selection.owner?.file) return false
+  if (k === 'children') return typeof v === 'string' && !v.startsWith('«') && !v.startsWith('ƒ')
+  const t = typeof v
+  if (t === 'string') return !(v as string).startsWith('«') && !(v as string).startsWith('ƒ')
+  return t === 'number' || t === 'boolean'
+}
+
+function PropEditor({ selection, k, v }: { selection: Detail; k: string; v: unknown }) {
+  const toast = useStore((s) => s.toast)
+  const openInSource = useStore((s) => s.openInSource)
+  const [text, setText] = useState(String(v))
+  const [busy, setBusy] = useState(false)
+
+  const commit = async (next: string) => {
+    if (next === String(v)) return
+    setBusy(true)
+    try {
+      const body =
+        k === 'children'
+          ? { file: selection.owner!.file, component: selection.name, op: 'setText', text: next }
+          : {
+              file: selection.owner!.file,
+              component: selection.name,
+              op: 'setAttribute',
+              name: k,
+              value: next,
+              kind: typeof v === 'string' ? 'string' : typeof v === 'number' ? 'number' : 'boolean',
+            }
+      const res = await apiPost('/jsx/edit', body)
+      if (res.ok) toast('ok', `${k} saved → ${selection.owner!.file.split('/').pop()}`)
+      else {
+        toast('error', res.reason || 'edit refused')
+        const line = res.candidates?.[0]?.line || selection.owner!.line
+        openInSource(selection.owner!.file, line)
+      }
+    } catch (err: any) {
+      toast('error', 'prop edit failed: ' + (err.message || err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (typeof v === 'boolean')
+    return (
+      <label className="jn leaf editable">
+        <span className="jn-key">{k}</span>
+        <span className="jn-colon">:</span>
+        <input
+          type="checkbox"
+          className="prop-check"
+          checked={text === 'true'}
+          disabled={busy}
+          onChange={(e) => {
+            setText(String(e.target.checked))
+            commit(String(e.target.checked))
+          }}
+        />
+      </label>
+    )
+
+  return (
+    <div className="jn leaf editable">
+      <span className="jn-key">{k}</span>
+      <span className="jn-colon">:</span>
+      <input
+        className={'prop-edit ' + typeof v}
+        value={text}
+        disabled={busy}
+        spellCheck={false}
+        title={`Saves to the <${selection.name}> call site in ${selection.owner!.file}`}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => commit(text)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit(text)
+          if (e.key === 'Escape') setText(String(v))
+        }}
+      />
+    </div>
+  )
+}
+
 export function PropsTab() {
   const selection = useStore((s) => s.selection)
   if (!selection) return <div className="empty-tab">Select a component to inspect its props & hooks.</div>
@@ -70,9 +157,13 @@ export function PropsTab() {
           </div>
         ) : (
           <div className="json-tree">
-            {propKeys.map((k) => (
-              <JsonNode key={k} k={k} v={props![k]} />
-            ))}
+            {propKeys.map((k) =>
+              isEditable(selection, k, props![k]) ? (
+                <PropEditor key={k + String(props![k])} selection={selection} k={k} v={props![k]} />
+              ) : (
+                <JsonNode key={k} k={k} v={props![k]} />
+              ),
+            )}
           </div>
         )}
       </section>

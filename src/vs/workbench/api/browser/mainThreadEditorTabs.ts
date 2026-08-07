@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { mainWindow } from '../../../base/browser/window.js';
 import { Event } from '../../../base/common/event.js';
 import { DisposableMap, DisposableStore } from '../../../base/common/lifecycle.js';
 import { isEqual } from '../../../base/common/resources.js';
@@ -510,6 +511,7 @@ export class MainThreadEditorTabs implements MainThreadEditorTabsShape {
 				groupId: group.id,
 				isActive: group.id === this._editorGroupsService.activeGroup.id,
 				viewColumn: editorGroupToColumn(this._editorGroupsService, group),
+				isAuxiliaryWindow: group.windowId !== mainWindow.vscodeWindowId,
 				tabs: []
 			};
 			group.editors.forEach((editor, editorIndex) => {

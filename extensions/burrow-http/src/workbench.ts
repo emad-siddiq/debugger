@@ -44,6 +44,23 @@ export class HttpWorkbench implements Disposable {
 	private panel: WebviewPanel | undefined;
 	/** The `.http` document the panel is bound to; re-read on each send. */
 	private docUri: Uri | undefined;
+	/**
+	 * The last response this panel rendered, held **in memory only** (patches/0016).
+	 *
+	 * Moving a webview between windows destroys and rebuilds its iframe:
+	 * `OverlayWebview.claim` clears on a window change and `_show` re-applies the
+	 * HTML. Every other Burrow surface survives that because it renders from
+	 * extension-side state; this one painted its response pane by `postMessage`
+	 * alone, so popping the workbench out arrived showing an empty pane — the one
+	 * thing the user was looking at, gone because they moved the window.
+	 *
+	 * This does NOT weaken the WO-60 rule above it. That rule is about
+	 * `setState`, which is serialized to disk and revived in a later session; a
+	 * body that could be megabytes or carry a token still never goes there. This
+	 * field lives and dies with the extension host, is never written to state,
+	 * and is dropped the moment the panel binds to a different file.
+	 */
+	private lastResponseHtml: string | undefined;
 	private readonly disposables: Disposable[] = [];
 
 	/**
@@ -57,6 +74,7 @@ export class HttpWorkbench implements Disposable {
 		return window.registerWebviewPanelSerializer(HTTP_WORKBENCH_VIEW_TYPE, {
 			deserializeWebviewPanel: async (panel: WebviewPanel, state: unknown): Promise<void> => {
 				const saved = (state ?? {}) as HttpPanelState;
+				this.lastResponseHtml = undefined; // a revived tab has sent nothing
 				this.panel?.dispose();
 				this.panel = panel;
 				this.wire(panel);
@@ -95,6 +113,12 @@ export class HttpWorkbench implements Disposable {
 	 * `sendLine` is given, e.g. from a codelens) immediately send that request.
 	 */
 	public open(document: TextDocument, sendLine?: number): void {
+		if (this.docUri?.toString() !== document.uri.toString()) {
+			// Rebinding to a different file. The cached response belongs to the old
+			// one, and a pane that answers about a file you have left is worse than
+			// an empty pane (patches/0016).
+			this.lastResponseHtml = undefined;
+		}
 		this.docUri = document.uri;
 		if (!this.panel) {
 			this.panel = window.createWebviewPanel(
@@ -117,14 +141,28 @@ export class HttpWorkbench implements Disposable {
 		}
 	}
 
-	/** Handle a message posted from the webview (`send` with a request index, or
-	 *  the Esc bridge's `exitFocus`). */
+	/** Handle a message posted from the webview (`send` with a request index, the
+	 *  Esc bridge's `exitFocus`, or the post-boot `ready` handshake). */
 	private onMessage(message: { type?: string; index?: number }): void {
 		if (message.type === 'send' && typeof message.index === 'number') {
 			void this.send(message.index);
 		} else if (message.type === 'exitFocus') {
 			void commands.executeCommand('burrow.focus.exit');
+		} else if (message.type === 'ready') {
+			// The iframe just booted. If that was a rebuild — a pop-out, a dock, a
+			// re-render of the same document — put the response back. On a genuine
+			// revive there is nothing to put back: a fresh extension host has no
+			// `lastResponseHtml`, so a restored tab still comes up empty and says so.
+			if (this.lastResponseHtml) {
+				void this.panel?.webview.postMessage({ type: 'response', html: this.lastResponseHtml });
+			}
 		}
+	}
+
+	/** Render a response into the pane and remember it for an iframe rebuild. */
+	private renderInto(panel: WebviewPanel, html: string): void {
+		this.lastResponseHtml = html;
+		void panel.webview.postMessage({ type: 'response', html });
 	}
 
 	/** Re-read the bound document, resolve variables, send request `index`, render the result. */
@@ -137,14 +175,14 @@ export class HttpWorkbench implements Disposable {
 		try {
 			document = await workspace.openTextDocument(this.docUri);
 		} catch (err) {
-			panel.webview.postMessage({ type: 'response', html: renderError(String(err)) });
+			this.renderInto(panel, renderError(String(err)));
 			return;
 		}
 
 		const parsed = parseHttpFile(document.getText());
 		const request = parsed.requests[index];
 		if (!request) {
-			panel.webview.postMessage({ type: 'response', html: renderError(`No request at index ${index}.`) });
+			this.renderInto(panel, renderError(`No request at index ${index}.`));
 			return;
 		}
 
@@ -154,7 +192,7 @@ export class HttpWorkbench implements Disposable {
 
 		try {
 			const result = await sendRequest(resolved, { timeoutMs: this.timeoutMs() });
-			panel.webview.postMessage({ type: 'response', html: renderResponse(result) });
+			this.renderInto(panel, renderResponse(result));
 			// The API view's Requests section shows what the last few sends
 			// answered (docs/plans/02 §3.5) — recorded here, where the result is.
 			rememberResponse({
@@ -167,7 +205,7 @@ export class HttpWorkbench implements Disposable {
 			});
 		} catch (err) {
 			const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-			panel.webview.postMessage({ type: 'response', html: renderError(message) });
+			this.renderInto(panel, renderError(message));
 		}
 	}
 
@@ -290,6 +328,12 @@ export class HttpWorkbench implements Disposable {
 				result.innerHTML = msg.html;
 			}
 		});
+		// Say we are up (patches/0016). Moving this panel to another window rebuilds
+		// the iframe from the same HTML, and the response pane is the one part of
+		// this page that is painted by message rather than by markup — so the host
+		// re-sends it here. Deliberately the LAST line: the listener above must
+		// already exist when the reply comes back.
+		vscode.postMessage({ type: 'ready' });
 	</script>
 </body>
 </html>`;

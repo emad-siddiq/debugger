@@ -47,6 +47,18 @@
 				"command": "burrow.focus.exit",
 				"title": "Exit Focus Mode",
 				"category": "Burrow"
+			},
+			{
+				"command": "burrow.window.popOut",
+				"title": "Pop Out",
+				"category": "Burrow",
+				"icon": "$(multiple-windows)"
+			},
+			{
+				"command": "burrow.window.dock",
+				"title": "Dock",
+				"category": "Burrow",
+				"icon": "$(screen-normal)"
 			}
 		],
 		"menus": {
@@ -55,6 +67,11 @@
 					"command": "burrow.focus.toggle",
 					"group": "navigation@100",
 					"when": "editorIsOpen || activeWebviewPanelId"
+				},
+				{
+					"command": "burrow.window.popOut",
+					"group": "navigation@99",
+					"when": "activeWebviewPanelId in burrow.window.detachable && !isAuxiliaryWindow"
 				}
 			],
 			"view/title": [

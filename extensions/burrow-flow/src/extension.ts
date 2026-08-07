@@ -12,13 +12,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { armSymbolBreakpoint, openSymbol } from './breakpoints';
-import { DiagramPanel } from './diagramPanel';
+import { DIAGRAM_VIEW_TYPE, DiagramPanel } from './diagramPanel';
 import { generateHttp, parseContractFence } from './httpgen';
 import { loadSeedProfile } from './seedProfile';
 import { flowsOf, handlerOf, railMessage, sharedMiddlewareDepth, unfollowedOf } from './model';
 import { cachedDigestFile, cachedFlowsFile, detectProject, flowState, refreshFlows } from './project';
 import { FlowItem, FlowsTree } from './routesTree';
 import { noBackendMessage, whereIs } from './spine';
+import { detachable } from './toolSurface';
 
 /** The open folder's name, for messages that should say where they looked. */
 function folderName(): string | undefined {
@@ -43,6 +44,9 @@ export function activate(context: vscode.ExtensionContext): BurrowFlowApi {
 	const tree = new FlowsTree();
 	const panel = new DiagramPanel();
 	context.subscriptions.push(log, tree, panel);
+	// Pop out / dock (patches/0016): the Wire Diagram is the one Burrow surface
+	// people most want beside the handler it describes, on another screen.
+	context.subscriptions.push(detachable(DIAGRAM_VIEW_TYPE));
 	// `createTreeView`, not `registerTreeDataProvider`, for one reason: `message`.
 	//
 	// A router flowscan recognised and could not follow has to be VISIBLE, and the
